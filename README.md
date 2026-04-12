@@ -65,30 +65,6 @@ tables:
       - name: users_email_idx
         columns: [email]
         unique: true
-
-  posts:
-    name: posts
-    columns:
-      - name: id
-        type: serial
-        nullable: false
-        primary_key: true
-      - name: user_id
-        type: integer
-        nullable: false
-        references:
-          table: users
-          column: id
-      - name: title
-        type: text
-        nullable: false
-      - name: body
-        type: text
-        nullable: true
-    indexes:
-      - name: posts_user_id_idx
-        columns: [user_id]
-        unique: false
 ```
 
 ### 4. Generate and apply migrations
@@ -205,149 +181,76 @@ Print the resolved configuration and exit. Useful for debugging env var and flag
 
 ## Schema YAML Format
 
-### Column
+Column shorthand — `primary_key: true`, inline `references`, and inline `check` are normalized before diffing; you never need to write the expanded forms by hand. Column types are passed verbatim to the database.
 
 ```yaml
-- name: price
-  type: numeric(10,2)
-  nullable: false
-  default: "0.00"
-  primary_key: false # shorthand — gaman emits a constraint, not a column modifier
-  references: # inline FK sugar — normalized into foreign_keys by gaman
-    table: products
-    column: id
-    name: fk_order_items_product # optional constraint name
-  check: "price >= 0" # inline check sugar
-```
-
-**Supported shorthand:** `primary_key: true` on a column and inline `references` / `check` are normalized away by `schema.normalize()` before diffing. You never have to write the expanded form by hand.
-
-**Column types are passed directly to the database.** Gaman does not map, validate, or normalise type names — whatever you write in `type:` is emitted verbatim in the generated SQL. This means types are database-specific (`serial`, `timestamptz`, `jsonb`, `uuid`, etc. are all PostgreSQL types). Cross-database type portability is explicitly not a goal.
-
-### Foreign Key (expanded form)
-
-```yaml
-foreign_keys:
-  - name: fk_posts_user
-    columns: [user_id]
-    to_table: users
-    to_column: id
-    on_delete: cascade # restrict | set_null | set_default | no_action | cascade
-```
-
-### Index
-
-```yaml
-indexes:
-  - name: users_email_idx
-    columns: [email]
-    unique: true
-  - name: orders_status_created_idx
-    columns: [status, created_at]
-    unique: false
-    predicate: "status != 'archived'" # partial index
-```
-
-### Constraint
-
-```yaml
-constraints:
-  - kind: unique
-    name: users_email_unique
-    columns: [email]
-  - kind: check
-    name: positive_price
-    expression: "price > 0"
-```
-
-### View
-
-```yaml
+tables:
+  orders:
+    name: orders
+    columns:
+      - name: id
+        type: serial
+        nullable: false
+        primary_key: true
+      - name: user_id
+        type: integer
+        nullable: false
+        references: { table: users, column: id } # inline FK sugar
+      - name: total
+        type: numeric(10,2)
+        nullable: false
+        default: "0.00"
+        check: "total >= 0" # inline check sugar
+    indexes:
+      - name: orders_user_id_idx
+        columns: [user_id]
+        unique: false
+        predicate: "total > 0" # partial index
+    foreign_keys: # expanded FK form
+      - name: fk_orders_user
+        columns: [user_id]
+        to_table: users
+        to_column: id
+        on_delete: cascade
+    constraints:
+      - kind: check
+        name: positive_total
+        expression: "total >= 0"
 views:
-  active_users:
-    name: active_users
-    definition: "SELECT id, email FROM users WHERE active = true"
-```
-
-### Function
-
-```yaml
+  recent_orders:
+    name: recent_orders
+    definition: "SELECT id, user_id FROM orders ORDER BY id DESC LIMIT 100"
 functions:
-  notify_on_insert:
-    name: notify_on_insert
+  notify_order:
+    name: notify_order
     arguments: ""
     returns: trigger
     language: plpgsql
     body: |
       BEGIN
-        PERFORM pg_notify('inserts', row_to_json(NEW)::text);
+        PERFORM pg_notify('orders', row_to_json(NEW)::text);
         RETURN NEW;
       END;
-    volatility: volatile # volatile (default) | stable | immutable
+    volatility: volatile
     security_definer: false
 ```
 
-### Trigger
+Triggers live inside the table definition. Use `function_name` to reference an existing function, or provide `body` + `language` inline (gaman generates a synthetic function for it automatically):
 
 ```yaml
-# Triggers live inside the table definition.
 triggers:
-  - name: notify_users_insert
-    timing: after # before | after | instead_of
-    events: [insert] # insert | update | delete | truncate
-    scope: row # row | statement
-    function_name: notify_on_insert
-
-  # Inline sugar — body + language are converted to a synthetic function by normalize()
-  - name: audit_update
+  - name: notify_order_insert
     timing: after
-    events: [update]
+    events: [insert]
     scope: row
-    language: plpgsql
-    body: |
-      BEGIN
-        INSERT INTO audit_log(table_name, changed_at) VALUES (TG_TABLE_NAME, now());
-        RETURN NEW;
-      END;
+    function_name: notify_order
 ```
 
 ---
 
 ## Migration File Format
 
-Generated migrations are YAML files in the migrations directory. They are human-readable and can be hand-edited.
-
-```yaml
-# migrations/0003_add_posts.yaml
-id: 0003_add_posts
-dependencies:
-  - 0002_add_email
-operations:
-  - type: create_table
-    table:
-      name: posts
-      columns:
-        - name: id
-          type: serial
-          nullable: false
-        - name: user_id
-          type: integer
-          nullable: false
-        - name: title
-          type: text
-          nullable: false
-      foreign_keys:
-        - name: fk_posts_user
-          columns: [user_id]
-          to_table: users
-          to_column: id
-      indexes: []
-      constraints: []
-```
-
-### Arbitrary SQL and subprocess invocations
-
-Two escape hatches are available for operations gaman can't express as structured operations:
+Generated migrations are YAML files — human-readable and hand-editable. Each operation maps directly to a DDL statement. Two escape hatches exist for operations gaman can't express structurally:
 
 ```yaml
 operations:
@@ -428,21 +331,9 @@ Integration tests create and destroy isolated schemas (`gaman_test_N`) automatic
 
 Early development. The core engine is stable and well-tested. PostgreSQL is the only supported database. The public API may change before 1.0.
 
-Implemented:
-
-- Schema state model (tables, columns, indexes, FKs, constraints, views, functions, triggers)
-- Offline diff engine with deterministic operation ordering
-- Migration DAG with topological replay, conflict detection, and merge migrations
-- `make_migration`, `migrate`, `show_migrations`, `sql_migrate`, `inspect_db`, `config` commands
-- Per-migration transactions with partial-failure isolation
-- `--fake`, `--check`, `--dry-run`, `--plan` flags
-- Live database introspection (`inspect_db`) with replay verification
-- Schema drift detection (`verify_db`)
-
 Not yet implemented:
 
 - Rename detection (currently emits `drop + create`)
-- Migration locking (`pg_try_advisory_lock`)
 - `squashmigrations`
 
 ## Known Limitations

@@ -1,4 +1,5 @@
 /target
 /.github
+/migrations
 .env
 output.txt
