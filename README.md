@@ -142,6 +142,20 @@ gaman migrate --fake 0001_initial       # adopt an existing DB without re-runnin
 gaman migrate --check                   # CI gate: fail if migrations are pending
 ```
 
+### `verify_db`
+
+Compare the live database against the replayed migration state and report any structural drift. Exits non-zero if drift is found. Views and functions are excluded — their SQL representation in `pg_catalog` rarely round-trips cleanly against the YAML definition.
+
+| Flag                   | Description                                          |
+| ---------------------- | ---------------------------------------------------- |
+| `--database-url <url>` | Override `DATABASE_URL`                              |
+| `--schema <name>`      | Schema to verify (default: `public`)                 |
+
+```bash
+gaman verify_db
+gaman verify_db --schema myschema
+```
+
 ### `show_migrations`
 
 List all known migrations with their applied status.
@@ -426,10 +440,10 @@ Implemented:
 - Per-migration transactions with partial-failure isolation
 - `--fake`, `--check`, `--dry-run`, `--plan` flags
 - Live database introspection (`inspect_db`) with replay verification
+- Schema drift detection (`verify_db`)
 
 Not yet implemented:
 
-- Schema drift detection (`migrate --verify`)
 - Rename detection (currently emits `drop + create`)
 - Migration locking (`pg_try_advisory_lock`)
 - `squashmigrations`

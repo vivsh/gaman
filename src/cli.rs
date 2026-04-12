@@ -35,6 +35,7 @@ pub enum Command {
     SqlMigrate(SqlMigrateCmd),
     Config(ShowConfigCmd),
     InspectDb(InspectDbCmd),
+    VerifyDb(VerifyDbCmd),
 }
 
 /// Print the resolved configuration and exit
@@ -112,10 +113,19 @@ pub struct MigrateCmd {
     /// check for unapplied migrations without applying them
     #[argh(switch)]
     pub check: bool,
+}
 
-    /// compare the live database against the replayed schema and report drift
-    #[argh(switch)]
-    pub verify: bool,
+/// Compare the live database against the replayed migration state and report drift
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "verify_db")]
+pub struct VerifyDbCmd {
+    /// database connection string (overrides DATABASE_URL env var)
+    #[argh(option)]
+    pub database_url: Option<String>,
+
+    /// schema to verify (default: public)
+    #[argh(option)]
+    pub schema: Option<String>,
 }
 
 /// Introspect a live database and print the schema state as YAML
@@ -187,6 +197,10 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
             config.database_url = Some(url.clone());
         }
     if let Command::InspectDb(ref cmd) = args.command
+        && let Some(url) = &cmd.database_url {
+            config.database_url = Some(url.clone());
+        }
+    if let Command::VerifyDb(ref cmd) = args.command
         && let Some(url) = &cmd.database_url {
             config.database_url = Some(url.clone());
         }
@@ -266,18 +280,6 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
                         Ok(())
                     }
                 })
-            } else if cmd.verify {
-                let schemas: &[&str] = &["public"];
-                let drift = migrator.verify(&mut executor, schemas[0]).map_err(CommandError::from)?;
-                if drift.is_empty() {
-                    println!("No drift detected.");
-                    Ok(())
-                } else {
-                    for op in &drift {
-                        println!("  drift: {}", op.type_name());
-                    }
-                    Err(CommandError::Config(format!("{} drift operation(s) detected", drift.len())))
-                }
             } else {
                 migrator.migrate(&mut executor, Some(&invoker), cmd.target.as_deref(), cmd.fake).map_err(CommandError::from)
             }
@@ -380,6 +382,29 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
                 None => print!("{yaml}"),
             }
             Ok(())
+        }
+        Command::VerifyDb(cmd) => {
+            let url = migrator
+                .config
+                .database_url
+                .as_deref()
+                .ok_or_else(|| CommandError::Config(
+                    "DATABASE_URL is not set — pass --database-url or set it in .env".into(),
+                ))?
+                .to_string();
+            let client = Client::connect(&url, NoTls)?;
+            let mut executor = PostgresExecutor::new(client);
+            let schema = cmd.schema.as_deref().unwrap_or("public");
+            let drift = migrator.verify(&mut executor, schema).map_err(CommandError::from)?;
+            if drift.is_empty() {
+                println!("No drift detected.");
+                Ok(())
+            } else {
+                for op in &drift {
+                    println!("  drift: {}", op.type_name());
+                }
+                Err(CommandError::Config(format!("{} drift operation(s) detected", drift.len())))
+            }
         }
     }
 }
