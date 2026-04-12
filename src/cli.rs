@@ -22,6 +22,10 @@ pub struct GamanArgs {
     #[argh(option, short = 's')]
     pub schema_file: Option<String>,
 
+    /// database connection string (overrides DATABASE_URL env var)
+    #[argh(option, short = 'd')]
+    pub database_url: Option<String>,
+
     #[argh(subcommand)]
     pub command: Command,
 }
@@ -71,11 +75,7 @@ pub struct MakeMigrationsCmd {
 /// Show all migrations with [X] applied / [ ] pending markers
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "show_migrations")]
-pub struct ShowMigrationsCmd {
-    /// database connection string (overrides DATABASE_URL env var)
-    #[argh(option)]
-    pub database_url: Option<String>,
-}
+pub struct ShowMigrationsCmd {}
 
 /// Print the SQL statements for one or all migrations — no database connection required
 #[derive(FromArgs, Debug)]
@@ -94,10 +94,6 @@ pub struct SqlMigrateCmd {
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "migrate")]
 pub struct MigrateCmd {
-    /// database connection string (overrides DATABASE_URL env var)
-    #[argh(option)]
-    pub database_url: Option<String>,
-
     /// target migration id to migrate forward or backward to
     #[argh(option)]
     pub target: Option<String>,
@@ -119,10 +115,6 @@ pub struct MigrateCmd {
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "verify_db")]
 pub struct VerifyDbCmd {
-    /// database connection string (overrides DATABASE_URL env var)
-    #[argh(option)]
-    pub database_url: Option<String>,
-
     /// schema to verify (default: public)
     #[argh(option)]
     pub schema: Option<String>,
@@ -132,10 +124,6 @@ pub struct VerifyDbCmd {
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "inspect_db")]
 pub struct InspectDbCmd {
-    /// database connection string (overrides DATABASE_URL env var)
-    #[argh(option)]
-    pub database_url: Option<String>,
-
     /// schemas to introspect; may be repeated (default: public)
     #[argh(option)]
     pub schema: Vec<String>,
@@ -168,6 +156,17 @@ impl fmt::Display for CommandError {
     }
 }
 
+impl std::error::Error for CommandError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            CommandError::Migrator(e) => Some(e),
+            CommandError::Db(e) => Some(e),
+            CommandError::Config(_) => None,
+            CommandError::Io(e) => Some(e),
+        }
+    }
+}
+
 impl From<MigratorError> for CommandError {
     fn from(e: MigratorError) -> Self {
         CommandError::Migrator(e)
@@ -188,22 +187,9 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
     if let Some(schema) = args.schema_file {
         config.schema_file = std::path::PathBuf::from(schema);
     }
-    if let Command::Migrate(ref cmd) = args.command
-        && let Some(url) = &cmd.database_url {
-            config.database_url = Some(url.clone());
-        }
-    if let Command::ShowMigrations(ref cmd) = args.command
-        && let Some(url) = &cmd.database_url {
-            config.database_url = Some(url.clone());
-        }
-    if let Command::InspectDb(ref cmd) = args.command
-        && let Some(url) = &cmd.database_url {
-            config.database_url = Some(url.clone());
-        }
-    if let Command::VerifyDb(ref cmd) = args.command
-        && let Some(url) = &cmd.database_url {
-            config.database_url = Some(url.clone());
-        }
+    if let Some(url) = args.database_url {
+        config.database_url = Some(url);
+    }
     let config = Arc::new(config);
 
     let source = Box::new(YamlAdapter { directory: config.migrations_dir.clone() });

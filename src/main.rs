@@ -1,3 +1,5 @@
+use std::error::Error;
+
 use gaman::cli::{GamanArgs, handle_cmd};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -24,7 +26,12 @@ fn main() {
     let args: GamanArgs = argh::from_env();
 
     if let Err(e) = handle_cmd(args) {
-        eprintln!("Error: {e}");
+        eprintln!("error: {e}");
+        let mut source = e.source();
+        while let Some(s) = source {
+            eprintln!("  caused by: {s}");
+            source = s.source();
+        }
         std::process::exit(1);
     }
 }

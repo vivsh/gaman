@@ -6,6 +6,10 @@ use crate::states::{
 };
 use super::{Executor, ExecutorError, Introspectable};
 
+// Stable advisory lock key for all gaman instances. Session-scoped — released automatically
+// when the connection closes, so a crashed process can never leave a stale lock.
+const GAMAN_LOCK_KEY: i64 = 7242068691819328000;
+
 /// Wraps a live Postgres client and manages transaction boundaries explicitly.
 /// Call `begin()` before a migration and `commit()` or `rollback()` after.
 pub struct PostgresExecutor {
@@ -45,6 +49,23 @@ impl Executor for PostgresExecutor {
 
     fn rollback(&mut self) -> Result<(), ExecutorError> {
         self.client.execute("ROLLBACK", &[]).map_err(|e| ExecutorError::Transaction(e.to_string()))?;
+        Ok(())
+    }
+
+    fn acquire_lock(&mut self) -> Result<(), ExecutorError> {
+        self.client
+            .execute("SET lock_timeout = '30s'", &[])
+            .map_err(|e| ExecutorError::Execute(e.to_string()))?;
+        self.client
+            .execute(&format!("SELECT pg_advisory_lock({GAMAN_LOCK_KEY})"), &[])
+            .map_err(|e| ExecutorError::Execute(format!("could not acquire migration lock: {e}")))?;
+        Ok(())
+    }
+
+    fn release_lock(&mut self) -> Result<(), ExecutorError> {
+        self.client
+            .execute(&format!("SELECT pg_advisory_unlock({GAMAN_LOCK_KEY})"), &[])
+            .map_err(|e| ExecutorError::Execute(format!("could not release migration lock: {e}")))?;
         Ok(())
     }
 }

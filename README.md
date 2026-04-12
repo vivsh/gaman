@@ -1,6 +1,10 @@
 # Gaman
 
+> **Not production ready — still in active development. APIs and file formats may change.**
+
 A PostgreSQL-first, offline schema migration tool written in Rust. Inspired by Django migrations — declare your schema in YAML, let `gaman` figure out what changed, and apply it.
+
+Pronounced _guh-MUN_ (गमन, /ɡəˈmən/) — Sanskrit for "movement" or "going forward".
 
 ---
 
@@ -104,7 +108,7 @@ gaman migrate
 
 ## CLI Reference
 
-All commands accept `-m <dir>` to override the migrations directory and `-s <file>` to override the schema file.
+All commands accept `-m <dir>` to override the migrations directory, `-s <file>` to override the schema file, and `-d <url>` to override the database URL. These are global flags and must appear **before** the subcommand name.
 
 ### `make_migration [name]`
 
@@ -127,13 +131,12 @@ gaman make_migration --empty hotfix   # empty shell for a hand-written migration
 
 Apply pending migrations to the database in topological order. Each migration runs in its own transaction — a failure rolls back only that migration.
 
-| Flag                   | Description                                                   |
-| ---------------------- | ------------------------------------------------------------- |
-| `--database-url <url>` | Override `DATABASE_URL`                                       |
-| `--target <id>`        | Migrate forward or backward to a specific migration ID        |
-| `--fake`               | Record migrations as applied without executing DDL            |
-| `--plan`               | List which migrations would be applied, then exit             |
-| `--check`              | Exit non-zero if there are unapplied migrations; do not apply |
+| Flag            | Description                                                   |
+| --------------- | ------------------------------------------------------------- |
+| `--target <id>` | Migrate forward or backward to a specific migration ID        |
+| `--fake`        | Record migrations as applied without executing DDL            |
+| `--plan`        | List which migrations would be applied, then exit             |
+| `--check`       | Exit non-zero if there are unapplied migrations; do not apply |
 
 ```bash
 gaman migrate
@@ -146,10 +149,9 @@ gaman migrate --check                   # CI gate: fail if migrations are pendin
 
 Compare the live database against the replayed migration state and report any structural drift. Exits non-zero if drift is found. Views and functions are excluded — their SQL representation in `pg_catalog` rarely round-trips cleanly against the YAML definition.
 
-| Flag                   | Description                          |
-| ---------------------- | ------------------------------------ |
-| `--database-url <url>` | Override `DATABASE_URL`              |
-| `--schema <name>`      | Schema to verify (default: `public`) |
+| Flag              | Description                          |
+| ----------------- | ------------------------------------ |
+| `--schema <name>` | Schema to verify (default: `public`) |
 
 ```bash
 gaman verify_db
@@ -165,10 +167,6 @@ List all known migrations with their applied status.
 [X] 0002_add_email
 [ ] 0003_add_posts
 ```
-
-| Flag                   | Description             |
-| ---------------------- | ----------------------- |
-| `--database-url <url>` | Override `DATABASE_URL` |
 
 ### `sql_migrate [id]`
 
@@ -188,12 +186,11 @@ gaman sql_migrate 0003_add_posts --backwards
 
 Introspect a live PostgreSQL database and emit a schema state as YAML. Useful for adopting an existing database or auditing drift.
 
-| Flag                   | Description                                          |
-| ---------------------- | ---------------------------------------------------- |
-| `--database-url <url>` | Override `DATABASE_URL`                              |
-| `--schema <name>`      | Schema to introspect (repeatable; default: `public`) |
-| `--table <name>`       | Restrict output to a single table                    |
-| `--output <file>`      | Write to a file instead of stdout                    |
+| Flag              | Description                                          |
+| ----------------- | ---------------------------------------------------- |
+| `--schema <name>` | Schema to introspect (repeatable; default: `public`) |
+| `--table <name>`  | Restrict output to a single table                    |
+| `--output <file>` | Write to a file instead of stdout                    |
 
 ```bash
 gaman inspect_db > schema.yaml
@@ -408,7 +405,7 @@ The diff is then `CurrentState (schema.yaml) − PreviousState`. This makes migr
 | `MIGRATIONS_DIR` | `migrations`  | Directory containing migration files  |
 | `SCHEMA_FILE`    | `schema.yaml` | Path to the desired schema definition |
 
-All three can be overridden per-command via CLI flags.
+All three can be overridden via global CLI flags: `-d`, `-m`, `-s`.
 
 ---
 
@@ -447,3 +444,7 @@ Not yet implemented:
 - Rename detection (currently emits `drop + create`)
 - Migration locking (`pg_try_advisory_lock`)
 - `squashmigrations`
+
+## Known Limitations
+
+- **Single-column primary keys and foreign keys only.** Composite PKs (multiple `primary_key: true` columns) and multi-column FKs are not supported. Attempting to define them will produce a validation error.

@@ -43,6 +43,13 @@ pub enum ReplayError {
     ViewAlreadyExists(String),
     #[error("view '{0}' not found")]
     ViewNotFound(String),
+    #[error("in migration '{migration}' (operation {op_num})")]
+    WithContext {
+        migration: String,
+        op_num: usize,
+        #[source]
+        inner: Box<ReplayError>,
+    },
 }
 
 #[derive(Debug, Error)]

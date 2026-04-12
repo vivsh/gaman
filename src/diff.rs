@@ -11,12 +11,15 @@ pub enum DiffError {}
 /// Compares two schema states and produces an ordered list of operations
 /// to transform `previous` into `current`.
 ///
-/// Ordering guarantees:
-///   1. DropTable for removed tables (reverse-sorted for determinism)
-///   2. CreateTable for new tables (sorted)
-///   3. Per-table changes in sorted table-name order:
-///      DropConstraint, DropIndex, DropForeignKey, DropColumn (removals first)
-///      AddColumn, AlterColumn, AddForeignKey, AddIndex, AddConstraint (additions after)
+/// Safe execution order for PostgreSQL:
+///   1. DropView — before drops/changes so dependent views don't block table ops
+///   2. DropTable — reverse-sorted for determinism
+///   3. CreateFunction / AlterFunction — before tables that reference them in triggers
+///   4. CreateTable — FK-topo sorted; mutually-referencing pairs have one FK deferred
+///   5. AddForeignKey — deferred FKs from cycles, after all participants are created
+///   6. Per-table changes in sorted order (drops before adds within each table)
+///   7. DropFunction — after trigger drops that already ran in per-table changes
+///   8. CreateView — last; depends on tables and functions
 ///
 /// RenameTable / RenameColumn are Phase 2 — this diff emits Drop+Create pairs instead.
 pub struct DiffEngine;
@@ -61,26 +64,21 @@ impl DiffEngine {
             }
         }
 
-        // FK-order the creates so referenced tables come before referencing tables.
         let new_names: HashSet<&str> = new_tables.iter().map(|t| t.name.as_str()).collect();
-        let creates: Vec<Operation> = fk_topo_sort(new_tables, &new_names)
-            .into_iter()
-            .map(|t| Operation::CreateTable { table: t.clone() })
-            .collect();
-
-        // Drops collected in sorted order → emit reversed for determinism
-        let mut result = Vec::with_capacity(drops.len() + creates.len() + changes.len());
+        let (creates, deferred_fk_adds) = fk_topo_sort(new_tables, &new_names);
         let (fn_creates, fn_drops) = diff_functions(current, previous);
         let (view_creates, view_drops) = diff_views(current, previous);
-        result.extend(fn_creates);
-        result.extend(view_creates);
+        let mut result = Vec::with_capacity(drops.len() + creates.len() + changes.len());
+        result.extend(view_drops);
         for table in drops.iter().rev() {
             result.push(Operation::DropTable { table: (*table).clone() });
         }
+        result.extend(fn_creates);
         result.extend(creates);
+        result.extend(deferred_fk_adds);
         result.extend(changes);
         result.extend(fn_drops);
-        result.extend(view_drops);
+        result.extend(view_creates);
         Ok(result)
     }
 }
@@ -264,46 +262,81 @@ fn diff_views(current: &SchemaState, previous: &SchemaState) -> (Vec<Operation>,
     (creates, drops)
 }
 
-fn fk_topo_sort<'a>(tables: Vec<&'a Table>, new_names: &HashSet<&str>) -> Vec<&'a Table> {
-    let by_name: HashMap<&str, &'a Table> = tables.iter().map(|t| (t.name.as_str(), *t)).collect();
-    let mut visited: HashSet<&str> = HashSet::new();
-    let mut result: Vec<&'a Table> = Vec::new();
+// Returns (ordered CreateTable ops, deferred AddForeignKey ops for cyclic pairs).
+// Uses grey/black DFS coloring: a back edge to a grey node means a cycle — the FK
+// causing it is stripped from the inline CreateTable and emitted as AddForeignKey after
+// all tables in the cycle exist.
+fn fk_topo_sort<'a>(tables: Vec<&'a Table>, new_names: &HashSet<&str>) -> (Vec<Operation>, Vec<Operation>) {
+    let by_name: HashMap<&'a str, &'a Table> = tables.iter().map(|t| (t.name.as_str(), *t)).collect();
+    let mut colors: HashMap<&'a str, u8> = HashMap::new(); // 0=unvisited, 1=in-stack, 2=done
+    let mut order: Vec<&'a Table> = Vec::new();
+    let mut cyclic: HashSet<(String, String)> = HashSet::new(); // (table_name, fk_name)
     let mut sorted = tables;
     sorted.sort_by_key(|t| t.name.as_str());
     for table in sorted {
-        fk_topo_visit(table, &by_name, new_names, &mut visited, &mut result);
+        if colors.get(table.name.as_str()).copied().unwrap_or(0) == 0 {
+            fk_topo_visit(table, &by_name, new_names, &mut colors, &mut order, &mut cyclic);
+        }
     }
-    result
+    let mut creates: Vec<Operation> = Vec::with_capacity(order.len());
+    let mut deferred: Vec<Operation> = Vec::new();
+    for table in order {
+        let has_cyclic = cyclic.iter().any(|(t, _)| t == &table.name);
+        if has_cyclic {
+            let mut t = table.clone();
+            t.foreign_keys.retain(|fk| !cyclic.contains(&(table.name.clone(), fk.name.clone())));
+            creates.push(Operation::CreateTable { table: t });
+        } else {
+            creates.push(Operation::CreateTable { table: table.clone() });
+        }
+        for fk in &table.foreign_keys {
+            if cyclic.contains(&(table.name.clone(), fk.name.clone())) {
+                deferred.push(Operation::AddForeignKey {
+                    table_name: table.name.clone(),
+                    foreign_key: fk.clone(),
+                });
+            }
+        }
+    }
+    (creates, deferred)
 }
 
 fn fk_topo_visit<'a>(
     table: &'a Table,
-    by_name: &HashMap<&str, &'a Table>,
+    by_name: &HashMap<&'a str, &'a Table>,
     new_names: &HashSet<&str>,
-    visited: &mut HashSet<&'a str>,
+    colors: &mut HashMap<&'a str, u8>,
     result: &mut Vec<&'a Table>,
+    cyclic: &mut HashSet<(String, String)>,
 ) {
-    if visited.contains(table.name.as_str()) {
-        return;
-    }
-    visited.insert(table.name.as_str());
-    let mut deps: Vec<&str> = table.foreign_keys.iter()
-        .map(|fk| fk.to_table.as_str())
-        .filter(|&n| new_names.contains(n))
+    colors.insert(table.name.as_str(), 1);
+    let mut deps: Vec<(&str, &str)> = table.foreign_keys.iter()
+        .filter(|fk| new_names.contains(fk.to_table.as_str()) && fk.to_table != table.name)
+        .map(|fk| (fk.to_table.as_str(), fk.name.as_str()))
         .collect();
     deps.sort();
-    for dep in deps {
-        if let Some(&dep_table) = by_name.get(dep) {
-            fk_topo_visit(dep_table, by_name, new_names, visited, result);
+    for (dep_name, fk_name) in deps {
+        match colors.get(dep_name).copied().unwrap_or(0) {
+            0 => {
+                if let Some(&dep) = by_name.get(dep_name) {
+                    fk_topo_visit(dep, by_name, new_names, colors, result, cyclic);
+                }
+            }
+            1 => {
+                // back edge — cycle; defer this FK to after all tables are created
+                cyclic.insert((table.name.to_string(), fk_name.to_string()));
+            }
+            _ => {}
         }
     }
+    colors.insert(table.name.as_str(), 2);
     result.push(table);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::states::{Column, Constraint, ForeignKey, FunctionDef, Index, Table, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming, Volatility};
+    use crate::states::{Column, Constraint, ForeignKey, FunctionDef, Index, Table, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming, ViewDef, Volatility};
 
     fn engine() -> DiffEngine {
         DiffEngine::new()
@@ -816,5 +849,73 @@ mod tests {
         assert_eq!(ops.len(), 2);
         assert!(matches!(&ops[0], Operation::CreateFunction { .. }), "first op should be CreateFunction");
         assert!(matches!(&ops[1], Operation::CreateTable { .. }), "second op should be CreateTable");
+    }
+
+    /// DropView must precede DropTable so a view over a dropped table doesn't block the op.
+    #[test]
+    fn view_drops_before_table_drops() {
+        let mut prev = SchemaState::default();
+        prev.tables.insert("users".to_string(), empty_table("users"));
+        prev.views.insert("v_users".to_string(), ViewDef {
+            name: "v_users".to_string(),
+            schema: None,
+            definition: "SELECT * FROM users".to_string(),
+        });
+        let curr = SchemaState::default();
+        let ops = engine().diff(&curr, &prev).unwrap();
+        assert_eq!(ops.len(), 2);
+        let drop_view_pos = ops.iter().position(|op| matches!(op, Operation::DropView { .. })).unwrap();
+        let drop_table_pos = ops.iter().position(|op| matches!(op, Operation::DropTable { .. })).unwrap();
+        assert!(drop_view_pos < drop_table_pos, "DropView must precede DropTable");
+    }
+
+    /// CreateView must follow CreateTable so the table already exists when the view is created.
+    #[test]
+    fn view_creates_after_table_creates() {
+        let prev = SchemaState::default();
+        let mut curr = SchemaState::default();
+        curr.tables.insert("users".to_string(), empty_table("users"));
+        curr.views.insert("v_users".to_string(), ViewDef {
+            name: "v_users".to_string(),
+            schema: None,
+            definition: "SELECT * FROM users".to_string(),
+        });
+        let ops = engine().diff(&curr, &prev).unwrap();
+        assert_eq!(ops.len(), 2);
+        let create_table_pos = ops.iter().position(|op| matches!(op, Operation::CreateTable { .. })).unwrap();
+        let create_view_pos = ops.iter().position(|op| matches!(op, Operation::CreateView { .. })).unwrap();
+        assert!(create_table_pos < create_view_pos, "CreateTable must precede CreateView");
+    }
+
+    /// Two tables referencing each other: both are created (one with its back-edge FK stripped)
+    /// and the deferred FK is emitted as AddForeignKey after both tables exist.
+    #[test]
+    fn mutual_fk_cycle_resolved_with_deferred_add() {
+        let prev = SchemaState::default();
+        let mut curr = SchemaState::default();
+        let mut a = empty_table("a");
+        a.foreign_keys.push(ForeignKey {
+            name: "fk_a_b".to_string(),
+            from_column: "b_id".to_string(),
+            to_table: "b".to_string(),
+            to_column: "id".to_string(),
+        });
+        let mut b = empty_table("b");
+        b.foreign_keys.push(ForeignKey {
+            name: "fk_b_a".to_string(),
+            from_column: "a_id".to_string(),
+            to_table: "a".to_string(),
+            to_column: "id".to_string(),
+        });
+        curr.tables.insert("a".to_string(), a);
+        curr.tables.insert("b".to_string(), b);
+        let ops = engine().diff(&curr, &prev).unwrap();
+        let creates: Vec<_> = ops.iter().filter(|op| matches!(op, Operation::CreateTable { .. })).collect();
+        let fk_adds: Vec<_> = ops.iter().filter(|op| matches!(op, Operation::AddForeignKey { .. })).collect();
+        assert_eq!(creates.len(), 2, "both tables must be created");
+        assert_eq!(fk_adds.len(), 1, "exactly one FK must be deferred to break the cycle");
+        let fk_add_pos = ops.iter().position(|op| matches!(op, Operation::AddForeignKey { .. })).unwrap();
+        let last_create_pos = ops.iter().rposition(|op| matches!(op, Operation::CreateTable { .. })).unwrap();
+        assert!(last_create_pos < fk_add_pos, "both CreateTable ops must precede the deferred AddForeignKey");
     }
 }

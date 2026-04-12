@@ -24,6 +24,8 @@ pub trait Executor {
     fn begin(&mut self) -> Result<(), ExecutorError>;
     fn commit(&mut self) -> Result<(), ExecutorError>;
     fn rollback(&mut self) -> Result<(), ExecutorError>;
+    fn acquire_lock(&mut self) -> Result<(), ExecutorError> { Ok(()) }
+    fn release_lock(&mut self) -> Result<(), ExecutorError> { Ok(()) }
 }
 
 pub trait Invoker {

@@ -15,19 +15,19 @@ use crate::states::{ReplayError, SchemaState};
 
 #[derive(Debug, Error)]
 pub enum MigratorError {
-    #[error("adapter error: {0}")]
+    #[error("failed to load migration files: {0}")]
     Adapter(#[from] AdapterError),
-    #[error("graph error: {0}")]
+    #[error("migration dependency error: {0}")]
     Graph(#[from] GraphError),
-    #[error("diff error: {0}")]
+    #[error("schema diff failed: {0}")]
     Diff(#[from] DiffError),
     #[error("dialect error: {0}")]
     Dialect(#[from] DialectError),
-    #[error("executor error: {0}")]
+    #[error("database operation failed: {0}")]
     Executor(#[from] ExecutorError),
-    #[error("replay error: {0}")]
+    #[error("migration replay failed")]
     Replay(#[from] ReplayError),
-    #[error("invoke error: {0}")]
+    #[error("subprocess invocation failed: {0}")]
     Invoke(#[from] InvokerError),
     #[error("configuration error: {0}")]
     Config(String),
@@ -94,8 +94,12 @@ impl Migrator {
         let mut state = SchemaState::default();
         for id in order {
             if let Some(migration) = self.graph.get(id) {
-                for op in &migration.operations {
-                    state.apply(op)?;
+                for (i, op) in migration.operations.iter().enumerate() {
+                    state.apply(op).map_err(|e| ReplayError::WithContext {
+                        migration: id.to_string(),
+                        op_num: i + 1,
+                        inner: Box::new(e),
+                    })?;
                 }
             }
         }
@@ -154,11 +158,11 @@ impl Migrator {
     ) -> Result<(), MigratorError> {
         if !direction_forward {
             for m in migrations {
-                for op in &m.operations {
+                for (i, op) in m.operations.iter().enumerate() {
                     if op.inverse().is_none() {
                         return Err(MigratorError::Config(format!(
-                            "migration '{}' is not reversible: operation '{}' has no inverse",
-                            m.id, op.type_name()
+                            "migration '{}' (operation {}): operation '{}' has no inverse",
+                            m.id, i + 1, op.type_name()
                         )));
                     }
                 }
@@ -173,14 +177,14 @@ impl Migrator {
             std::collections::HashMap::new();
 
         for m in migrations {
-            for op in &m.operations {
+            for (i, op) in m.operations.iter().enumerate() {
                 match op {
                     crate::operations::Operation::CreateTable { table } => {
                         for fk in &table.foreign_keys {
                             if !state.tables.contains_key(&fk.to_table) {
                                 return Err(MigratorError::Config(format!(
-                                    "migration '{}': foreign key '{}' references unknown table '{}'",
-                                    m.id, fk.name, fk.to_table
+                                    "migration '{}' (operation {}): foreign key '{}' references unknown table '{}'",
+                                    m.id, i + 1, fk.name, fk.to_table
                                 )));
                             }
                         }
@@ -188,8 +192,8 @@ impl Migrator {
                             let entry = index_names.entry(table.name.clone()).or_default();
                             if !entry.insert(idx.name.clone()) {
                                 return Err(MigratorError::Config(format!(
-                                    "migration '{}': duplicate index name '{}' on table '{}'",
-                                    m.id, idx.name, table.name
+                                    "migration '{}' (operation {}): duplicate index name '{}' on table '{}'",
+                                    m.id, i + 1, idx.name, table.name
                                 )));
                             }
                         }
@@ -197,8 +201,8 @@ impl Migrator {
                             let entry = constraint_names.entry(table.name.clone()).or_default();
                             if !entry.insert(c.name().to_string()) {
                                 return Err(MigratorError::Config(format!(
-                                    "migration '{}': duplicate constraint name '{}' on table '{}'",
-                                    m.id, c.name(), table.name
+                                    "migration '{}' (operation {}): duplicate constraint name '{}' on table '{}'",
+                                    m.id, i + 1, c.name(), table.name
                                 )));
                             }
                         }
@@ -206,8 +210,8 @@ impl Migrator {
                     crate::operations::Operation::AddForeignKey { table_name: _, foreign_key } => {
                         if !state.tables.contains_key(&foreign_key.to_table) {
                             return Err(MigratorError::Config(format!(
-                                "migration '{}': foreign key '{}' references unknown table '{}'",
-                                m.id, foreign_key.name, foreign_key.to_table
+                                "migration '{}' (operation {}): foreign key '{}' references unknown table '{}'",
+                                m.id, i + 1, foreign_key.name, foreign_key.to_table
                             )));
                         }
                     }
@@ -215,8 +219,8 @@ impl Migrator {
                         let entry = index_names.entry(table_name.clone()).or_default();
                         if !entry.insert(index.name.clone()) {
                             return Err(MigratorError::Config(format!(
-                                "migration '{}': duplicate index name '{}' on table '{}'",
-                                m.id, index.name, table_name
+                                "migration '{}' (operation {}): duplicate index name '{}' on table '{}'",
+                                m.id, i + 1, index.name, table_name
                             )));
                         }
                     }
@@ -224,14 +228,18 @@ impl Migrator {
                         let entry = constraint_names.entry(table_name.clone()).or_default();
                         if !entry.insert(constraint.name().to_string()) {
                             return Err(MigratorError::Config(format!(
-                                "migration '{}': duplicate constraint name '{}' on table '{}'",
-                                m.id, constraint.name(), table_name
+                                "migration '{}' (operation {}): duplicate constraint name '{}' on table '{}'",
+                                m.id, i + 1, constraint.name(), table_name
                             )));
                         }
                     }
                     _ => {}
                 }
-                state.apply(op)?;
+                state.apply(op).map_err(|e| ReplayError::WithContext {
+                    migration: m.id.clone(),
+                    op_num: i + 1,
+                    inner: Box::new(e),
+                })?;
             }
         }
         Ok(())
@@ -295,6 +303,7 @@ impl Migrator {
         self.validate_plan(&all_migrations, true)?;
 
         self.install(executor)?;
+        executor.acquire_lock()?;
 
         if let Some(target_id) = target {
             if self.graph.get(target_id).is_none() {
@@ -364,6 +373,7 @@ impl Migrator {
                 executor.commit()?;
             }
 
+            executor.release_lock()?;
             return Ok(());
         }
 
@@ -386,6 +396,7 @@ impl Migrator {
             }
             executor.commit()?;
         }
+        executor.release_lock()?;
         Ok(())
     }
 
@@ -516,10 +527,11 @@ mod tests {
 
     struct NullExecutor {
         applied: Vec<String>,
+        lock_count: usize,
     }
 
     impl NullExecutor {
-        fn empty() -> Self { Self { applied: vec![] } }
+        fn empty() -> Self { Self { applied: vec![], lock_count: 0 } }
     }
 
     impl Executor for NullExecutor {
@@ -532,6 +544,8 @@ mod tests {
         fn begin(&mut self) -> Result<(), ExecutorError> { Ok(()) }
         fn commit(&mut self) -> Result<(), ExecutorError> { Ok(()) }
         fn rollback(&mut self) -> Result<(), ExecutorError> { Ok(()) }
+        fn acquire_lock(&mut self) -> Result<(), ExecutorError> { self.lock_count += 1; Ok(()) }
+        fn release_lock(&mut self) -> Result<(), ExecutorError> { self.lock_count -= 1; Ok(()) }
     }
 
     /// Regression test: migrate() on a multi-migration chain must not fail at validate_plan.
@@ -547,6 +561,18 @@ mod tests {
         ]);
         m.migrate(&mut NullExecutor::empty(), None, None, false)
             .expect("migrate must succeed on a valid multi-migration chain");
+    }
+
+    /// Verifies that migrate() acquires and then releases the advisory lock exactly once,
+    /// leaving lock_count at zero after a successful run.
+    #[test]
+    fn migrate_acquires_and_releases_lock() {
+        let m = migrator_from(vec![
+            migration_with_ops("0001_init", &[], vec![Operation::CreateTable { table: simple_table("t", &["id"]) }]),
+        ]);
+        let mut ex = NullExecutor::empty();
+        m.migrate(&mut ex, None, None, false).expect("migrate should succeed");
+        assert_eq!(ex.lock_count, 0, "lock must be released after migrate completes");
     }
     // we build the Migrator manually to keep a reference to the inner saved vec.
     fn migrator_with_source(migrations: Vec<Migration>) -> (Migrator, Arc<MockSourceShared>) {
@@ -1015,7 +1041,7 @@ mod tests {
             migration_with_ops("0001_create_users", &[], vec![Operation::CreateTable { table: users }]),
             migration_with_ops("0002_add_email", &["0001_create_users"], vec![]),
         ]);
-        let mut exec = NullExecutor { applied: vec!["0001_create_users".to_string()] };
+        let mut exec = NullExecutor { applied: vec!["0001_create_users".to_string()], lock_count: 0 };
         let rows = m.show_migrations(&mut exec).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0], ("0001_create_users".to_string(), true));
