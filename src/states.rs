@@ -1335,4 +1335,255 @@ tables:
         s.tables.insert("users".to_string(), table);
         assert!(s.validate().unwrap_err().contains("no function_name"));
     }
+
+    // --- determinism tests ---
+
+    /// Tables are stored in a BTreeMap so keys are always alphabetical regardless of creation order.
+    #[test]
+    fn tables_always_in_alphabetical_order() {
+        let mut s = SchemaState::default();
+        for name in &["zebra", "alpha", "mango", "bravo"] {
+            apply_ok(&mut s, Operation::CreateTable { table: basic_table(name) });
+        }
+        let keys: Vec<&str> = s.tables.keys().map(String::as_str).collect();
+        assert_eq!(keys, vec!["alpha", "bravo", "mango", "zebra"]);
+    }
+
+    /// Columns are stored in a Vec so insertion order is always preserved.
+    #[test]
+    fn columns_preserve_insertion_order() {
+        let mut s = SchemaState::default();
+        apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
+        for name in &["c", "a", "b"] {
+            apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col(name) });
+        }
+        let names: Vec<&str> = s.tables["users"].columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["c", "a", "b"]);
+    }
+
+    /// Dropping the middle column preserves surrounding columns in their original positions.
+    #[test]
+    fn drop_middle_column_preserves_order() {
+        let mut s = SchemaState::default();
+        apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
+        for name in &["first", "middle", "last"] {
+            apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col(name) });
+        }
+        apply_ok(&mut s, Operation::DropColumn { table_name: "users".to_string(), column: text_col("middle"), cascade: false });
+        let names: Vec<&str> = s.tables["users"].columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["first", "last"]);
+    }
+
+    /// CreateTable with inline columns produces the same state as CreateTable + AddColumn for each.
+    #[test]
+    fn create_table_inline_vs_incremental_are_equal() {
+        let cols = vec![text_col("name"), text_col("email"), text_col("bio")];
+        let mut s1 = SchemaState::default();
+        apply_ok(&mut s1, Operation::CreateTable {
+            table: Table { name: "users".to_string(), schema: None, columns: cols.clone(), foreign_keys: vec![], indexes: vec![], constraints: vec![], triggers: vec![] },
+        });
+
+        let mut s2 = SchemaState::default();
+        apply_ok(&mut s2, Operation::CreateTable { table: basic_table("users") });
+        for col in cols {
+            apply_ok(&mut s2, Operation::AddColumn { table_name: "users".to_string(), column: col });
+        }
+
+        assert_eq!(s1, s2);
+    }
+
+    /// Applying inverse(op) immediately after op restores the original state for all invertible ops.
+    #[test]
+    fn inverse_restores_state_for_all_invertible_ops() {
+        let fk = ForeignKey { name: "fk_x".to_string(), from_column: "col".to_string(), to_table: "other".to_string(), to_column: "id".to_string() };
+        let idx = Index { name: "idx_col".to_string(), columns: vec!["col".to_string()], unique: true, predicate: None };
+        let chk = Constraint::Check { name: "chk_col".to_string(), expression: "col != ''".to_string() };
+
+        // helper: build a state, take a snapshot, apply op, apply inverse, verify restored
+        let verify = |mut s: SchemaState, op: Operation| {
+            let before = s.clone();
+            s.apply(&op).expect("op should apply");
+            s.apply(&op.inverse().expect("should be invertible")).expect("inverse should apply");
+            assert_eq!(s, before, "inverse of '{}' did not restore state", op.type_name());
+        };
+
+        // CreateTable / DropTable
+        verify(SchemaState::default(), Operation::CreateTable { table: basic_table("users") });
+
+        // AddColumn / DropColumn
+        let mut s = SchemaState::default();
+        apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
+        verify(s.clone(), Operation::AddColumn { table_name: "users".to_string(), column: text_col("col") });
+
+        // AddForeignKey / DropForeignKey
+        apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("col") });
+        verify(s.clone(), Operation::AddForeignKey { table_name: "users".to_string(), foreign_key: fk });
+
+        // AddIndex / DropIndex
+        verify(s.clone(), Operation::AddIndex { table_name: "users".to_string(), index: idx });
+
+        // AddConstraint / DropConstraint
+        verify(s.clone(), Operation::AddConstraint { table_name: "users".to_string(), constraint: chk });
+
+        // RenameTable
+        verify(s.clone(), Operation::RenameTable { old_name: "users".to_string(), new_name: "accounts".to_string() });
+
+        // AlterColumn
+        verify(s.clone(), Operation::AlterColumn { table_name: "users".to_string(), old: text_col("col"), new: Column { name: "col".to_string(), col_type: "varchar(100)".to_string(), nullable: true, ..Default::default() }, cast_expr: None });
+
+        // RenameColumn
+        verify(s.clone(), Operation::RenameColumn { table_name: "users".to_string(), old_name: "col".to_string(), new_name: "alias".to_string() });
+    }
+
+    /// RenameTable followed by its inverse restores original state.
+    #[test]
+    fn rename_table_inverse_restores_state() {
+        let mut s = SchemaState::default();
+        apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
+        let before = s.clone();
+        let op = Operation::RenameTable { old_name: "users".to_string(), new_name: "accounts".to_string() };
+        apply_ok(&mut s, op.clone());
+        apply_ok(&mut s, op.inverse().unwrap());
+        assert_eq!(s, before);
+    }
+
+    /// RenameColumn followed by its inverse restores original state.
+    #[test]
+    fn rename_column_inverse_restores_state() {
+        let mut s = SchemaState::default();
+        apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
+        apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") });
+        let before = s.clone();
+        let op = Operation::RenameColumn { table_name: "users".to_string(), old_name: "email".to_string(), new_name: "email_address".to_string() };
+        apply_ok(&mut s, op.clone());
+        apply_ok(&mut s, op.inverse().unwrap());
+        assert_eq!(s, before);
+    }
+
+    /// AlterColumn followed by its inverse restores original state.
+    #[test]
+    fn alter_column_inverse_restores_state() {
+        let mut s = SchemaState::default();
+        apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
+        apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("bio") });
+        let before = s.clone();
+        let new_col = Column { name: "bio".to_string(), col_type: "varchar(500)".to_string(), nullable: true, ..Default::default() };
+        let op = Operation::AlterColumn { table_name: "users".to_string(), old: text_col("bio"), new: new_col, cast_expr: None };
+        apply_ok(&mut s, op.clone());
+        apply_ok(&mut s, op.inverse().unwrap());
+        assert_eq!(s, before);
+    }
+
+    /// Replay is idempotent: applying the same operation sequence on two fresh states gives identical results.
+    #[test]
+    fn replay_is_idempotent() {
+        let ops = vec![
+            Operation::CreateTable { table: basic_table("users") },
+            Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") },
+            Operation::CreateTable { table: basic_table("posts") },
+            Operation::AddColumn { table_name: "posts".to_string(), column: text_col("title") },
+            Operation::AddForeignKey { table_name: "posts".to_string(), foreign_key: ForeignKey { name: "fk_posts_user".to_string(), from_column: "user_id".to_string(), to_table: "users".to_string(), to_column: "id".to_string() } },
+        ];
+        let mut s1 = SchemaState::default();
+        let mut s2 = SchemaState::default();
+        for op in &ops {
+            s1.apply(op).unwrap();
+            s2.apply(op).unwrap();
+        }
+        assert_eq!(s1, s2);
+    }
+
+    /// Full multi-operation replay produces the exact expected state.
+    #[test]
+    fn full_replay_produces_exact_state() {
+        let mut s = SchemaState::default();
+        apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
+        apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") });
+        apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: Column { name: "age".to_string(), col_type: "integer".to_string(), nullable: true, ..Default::default() } });
+        apply_ok(&mut s, Operation::CreateTable { table: basic_table("posts") });
+        apply_ok(&mut s, Operation::AddColumn { table_name: "posts".to_string(), column: text_col("title") });
+        apply_ok(&mut s, Operation::AddColumn { table_name: "posts".to_string(), column: text_col("user_id") });
+        apply_ok(&mut s, Operation::AddForeignKey {
+            table_name: "posts".to_string(),
+            foreign_key: ForeignKey { name: "fk_posts_user_id".to_string(), from_column: "user_id".to_string(), to_table: "users".to_string(), to_column: "id".to_string() },
+        });
+        apply_ok(&mut s, Operation::AddIndex {
+            table_name: "users".to_string(),
+            index: Index { name: "users_email_idx".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None },
+        });
+        apply_ok(&mut s, Operation::DropColumn { table_name: "users".to_string(), column: Column { name: "age".to_string(), col_type: "integer".to_string(), nullable: true, ..Default::default() }, cascade: false });
+
+        assert_eq!(s.tables.len(), 2);
+        let users = &s.tables["users"];
+        assert_eq!(users.columns.len(), 1);
+        assert_eq!(users.columns[0].name, "email");
+        assert_eq!(users.indexes.len(), 1);
+
+        let posts = &s.tables["posts"];
+        assert_eq!(posts.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["title", "user_id"]);
+        assert_eq!(posts.foreign_keys[0].name, "fk_posts_user_id");
+    }
+
+    /// Statement and Invoke operations are transparent — they do not mutate existing state.
+    #[test]
+    fn statement_and_invoke_are_transparent_to_existing_state() {
+        let mut s = SchemaState::default();
+        apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
+        apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") });
+        let before = s.clone();
+
+        apply_ok(&mut s, Operation::Statement { up: "UPDATE users SET email = 'x'".to_string(), down: None });
+        apply_ok(&mut s, Operation::Invoke { up: "./seed.sh".to_string(), down: None });
+
+        assert_eq!(s, before);
+    }
+
+    /// schema_qualified_key: None and "public" both produce the bare table name.
+    #[test]
+    fn schema_qualified_key_public_and_none_are_bare() {
+        assert_eq!(schema_qualified_key("users", None), "users");
+        assert_eq!(schema_qualified_key("users", Some("public")), "users");
+    }
+
+    /// schema_qualified_key: any non-public schema produces "schema.name".
+    #[test]
+    fn schema_qualified_key_non_public_is_qualified() {
+        assert_eq!(schema_qualified_key("users", Some("myapp")), "myapp.users");
+        assert_eq!(schema_qualified_key("orders", Some("billing")), "billing.orders");
+    }
+
+    /// CreateView and DropView use schema_qualified_key for their map key.
+    #[test]
+    fn create_view_key_respects_schema() {
+        let mut s = SchemaState::default();
+        apply_ok(&mut s, Operation::CreateView { view: ViewDef { name: "active_users".to_string(), schema: None, definition: "SELECT 1".to_string() } });
+        apply_ok(&mut s, Operation::CreateView { view: ViewDef { name: "summary".to_string(), schema: Some("reporting".to_string()), definition: "SELECT 2".to_string() } });
+        assert!(s.views.contains_key("active_users"), "public view uses bare key");
+        assert!(s.views.contains_key("reporting.summary"), "non-public view uses qualified key");
+    }
+
+    /// Applying all operations in order then replaying the chain produces an identical state.
+    #[test]
+    fn sequential_replay_matches_single_pass() {
+        let ops = vec![
+            Operation::CreateTable { table: basic_table("users") },
+            Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") },
+            Operation::AddConstraint { table_name: "users".to_string(), constraint: Constraint::Unique { name: "uq_email".to_string(), columns: vec!["email".to_string()] } },
+            Operation::CreateTable { table: basic_table("orders") },
+            Operation::RenameTable { old_name: "orders".to_string(), new_name: "purchases".to_string() },
+        ];
+
+        let apply_all = |ops: &Vec<Operation>| {
+            let mut s = SchemaState::default();
+            for op in ops { s.apply(op).unwrap(); }
+            s
+        };
+
+        let s1 = apply_all(&ops);
+        let s2 = apply_all(&ops);
+        assert_eq!(s1, s2);
+        assert!(!s1.tables.contains_key("orders"), "renamed table should not exist under old name");
+        assert!(s1.tables.contains_key("purchases"));
+        assert_eq!(s1.tables["users"].constraints[0].name(), "uq_email");
+    }
 }

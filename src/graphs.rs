@@ -386,4 +386,75 @@ mod tests {
         let err = g.topological_order().unwrap_err();
         assert!(matches!(err, GraphError::UnknownDependency { dep, .. } if dep == "0001_ghost"));
     }
+
+    /// topological_order is stable regardless of the order nodes were added.
+    #[test]
+    fn topological_order_stable_regardless_of_insertion_order() {
+        let mut g1 = MigrationGraph::new();
+        g1.add(migration("0003_add_posts", &["0002_add_users"])).unwrap();
+        g1.add(migration("0001_initial", &[])).unwrap();
+        g1.add(migration("0002_add_users", &["0001_initial"])).unwrap();
+
+        let mut g2 = MigrationGraph::new();
+        g2.add(migration("0001_initial", &[])).unwrap();
+        g2.add(migration("0002_add_users", &["0001_initial"])).unwrap();
+        g2.add(migration("0003_add_posts", &["0002_add_users"])).unwrap();
+
+        assert_eq!(g1.topological_order().unwrap(), g2.topological_order().unwrap());
+        assert_eq!(g1.topological_order().unwrap(), vec!["0001_initial", "0002_add_users", "0003_add_posts"]);
+    }
+
+    /// Parallel branches are always ordered alphabetically (not by HashMap iteration).
+    #[test]
+    fn topological_order_parallel_branches_alphabetical() {
+        let mut g = MigrationGraph::new();
+        g.add(migration("0001_initial", &[])).unwrap();
+        g.add(migration("0003_feature_b", &["0001_initial"])).unwrap();
+        g.add(migration("0002_feature_a", &["0001_initial"])).unwrap();
+        g.add(migration("0004_merge", &["0002_feature_a", "0003_feature_b"])).unwrap();
+        let order = g.topological_order().unwrap();
+        assert_eq!(order[0], "0001_initial");
+        assert_eq!(order[3], "0004_merge");
+        let pos = |id: &str| order.iter().position(|&s| s == id).unwrap();
+        assert!(pos("0002_feature_a") < pos("0003_feature_b"), "0002 should come before 0003 alphabetically");
+        assert!(pos("0002_feature_a") < pos("0004_merge"));
+        assert!(pos("0003_feature_b") < pos("0004_merge"));
+    }
+
+    /// topological_order called multiple times on the same graph returns identical results.
+    #[test]
+    fn topological_order_is_stable_across_calls() {
+        let mut g = MigrationGraph::new();
+        g.add(migration("0001_initial", &[])).unwrap();
+        g.add(migration("0003_z_feature", &["0001_initial"])).unwrap();
+        g.add(migration("0002_a_feature", &["0001_initial"])).unwrap();
+        g.add(migration("0004_merge", &["0002_a_feature", "0003_z_feature"])).unwrap();
+        let first = g.topological_order().unwrap();
+        let second = g.topological_order().unwrap();
+        assert_eq!(first, second);
+        let pos = |id: &str| first.iter().position(|&s| s == id).unwrap();
+        assert!(pos("0002_a_feature") < pos("0003_z_feature"));
+    }
+
+    /// create_merge_migration always produces sorted dependencies regardless of heads() order.
+    #[test]
+    fn create_merge_migration_deps_are_always_sorted() {
+        let mut g = MigrationGraph::new();
+        g.add(migration("0001_initial", &[])).unwrap();
+        g.add(migration("0002_zzz_last", &["0001_initial"])).unwrap();
+        g.add(migration("0003_aaa_first", &["0001_initial"])).unwrap();
+        let merge = g.create_merge_migration("0004_merge".to_string()).unwrap();
+        assert_eq!(merge.dependencies, vec!["0002_zzz_last", "0003_aaa_first"]);
+    }
+
+    /// validate_id rejects empty strings and strings with invalid characters.
+    #[test]
+    fn validate_id_rejects_invalid() {
+        assert!(MigrationGraph::validate_id("").is_err());
+        assert!(MigrationGraph::validate_id("has space").is_err());
+        assert!(MigrationGraph::validate_id("HasUpper").is_err());
+        assert!(MigrationGraph::validate_id("has-dash").is_err());
+        assert!(MigrationGraph::validate_id("0001_ok").is_ok());
+        assert!(MigrationGraph::validate_id("abc123").is_ok());
+    }
 }
