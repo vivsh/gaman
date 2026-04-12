@@ -110,12 +110,12 @@ All commands accept `-m <dir>` to override the migrations directory and `-s <fil
 
 Generate a new migration by diffing `schema.yaml` against the replayed state of all existing migrations. Writes a new YAML file into the migrations directory.
 
-| Flag | Description |
-|---|---|
-| `--empty` | Create an empty migration (no auto-detected operations) |
-| `--merge` | Create a merge migration to resolve multiple heads |
-| `--check` | Exit with a non-zero code if there are pending schema changes; do not write files |
-| `--dry-run` | Print what would be generated without writing files |
+| Flag        | Description                                                                       |
+| ----------- | --------------------------------------------------------------------------------- |
+| `--empty`   | Create an empty migration (no auto-detected operations)                           |
+| `--merge`   | Create a merge migration to resolve multiple heads                                |
+| `--check`   | Exit with a non-zero code if there are pending schema changes; do not write files |
+| `--dry-run` | Print what would be generated without writing files                               |
 
 ```bash
 gaman make_migration add_posts
@@ -127,13 +127,13 @@ gaman make_migration --empty hotfix   # empty shell for a hand-written migration
 
 Apply pending migrations to the database in topological order. Each migration runs in its own transaction — a failure rolls back only that migration.
 
-| Flag | Description |
-|---|---|
-| `--database-url <url>` | Override `DATABASE_URL` |
-| `--target <id>` | Migrate forward or backward to a specific migration ID |
-| `--fake` | Record migrations as applied without executing DDL |
-| `--plan` | List which migrations would be applied, then exit |
-| `--check` | Exit non-zero if there are unapplied migrations; do not apply |
+| Flag                   | Description                                                   |
+| ---------------------- | ------------------------------------------------------------- |
+| `--database-url <url>` | Override `DATABASE_URL`                                       |
+| `--target <id>`        | Migrate forward or backward to a specific migration ID        |
+| `--fake`               | Record migrations as applied without executing DDL            |
+| `--plan`               | List which migrations would be applied, then exit             |
+| `--check`              | Exit non-zero if there are unapplied migrations; do not apply |
 
 ```bash
 gaman migrate
@@ -152,16 +152,16 @@ List all known migrations with their applied status.
 [ ] 0003_add_posts
 ```
 
-| Flag | Description |
-|---|---|
+| Flag                   | Description             |
+| ---------------------- | ----------------------- |
 | `--database-url <url>` | Override `DATABASE_URL` |
 
 ### `sql_migrate [id]`
 
 Print the SQL statements for one or all migrations. No database connection required.
 
-| Flag | Description |
-|---|---|
+| Flag          | Description                               |
+| ------------- | ----------------------------------------- |
 | `--backwards` | Print rollback SQL instead of forward SQL |
 
 ```bash
@@ -174,12 +174,12 @@ gaman sql_migrate 0003_add_posts --backwards
 
 Introspect a live PostgreSQL database and emit a schema state as YAML. Useful for adopting an existing database or auditing drift.
 
-| Flag | Description |
-|---|---|
-| `--database-url <url>` | Override `DATABASE_URL` |
-| `--schema <name>` | Schema to introspect (repeatable; default: `public`) |
-| `--table <name>` | Restrict output to a single table |
-| `--output <file>` | Write to a file instead of stdout |
+| Flag                   | Description                                          |
+| ---------------------- | ---------------------------------------------------- |
+| `--database-url <url>` | Override `DATABASE_URL`                              |
+| `--schema <name>`      | Schema to introspect (repeatable; default: `public`) |
+| `--table <name>`       | Restrict output to a single table                    |
+| `--output <file>`      | Write to a file instead of stdout                    |
 
 ```bash
 gaman inspect_db > schema.yaml
@@ -201,12 +201,12 @@ Print the resolved configuration and exit. Useful for debugging env var and flag
   type: numeric(10,2)
   nullable: false
   default: "0.00"
-  primary_key: false     # shorthand — gaman emits a constraint, not a column modifier
-  references:            # inline FK sugar — normalized into foreign_keys by gaman
+  primary_key: false # shorthand — gaman emits a constraint, not a column modifier
+  references: # inline FK sugar — normalized into foreign_keys by gaman
     table: products
     column: id
-    name: fk_order_items_product   # optional constraint name
-  check: "price >= 0"   # inline check sugar
+    name: fk_order_items_product # optional constraint name
+  check: "price >= 0" # inline check sugar
 ```
 
 **Supported shorthand:** `primary_key: true` on a column and inline `references` / `check` are normalized away by `schema.normalize()` before diffing. You never have to write the expanded form by hand.
@@ -219,7 +219,7 @@ foreign_keys:
     columns: [user_id]
     to_table: users
     to_column: id
-    on_delete: cascade   # restrict | set_null | set_default | no_action | cascade
+    on_delete: cascade # restrict | set_null | set_default | no_action | cascade
 ```
 
 ### Index
@@ -232,7 +232,7 @@ indexes:
   - name: orders_status_created_idx
     columns: [status, created_at]
     unique: false
-    predicate: "status != 'archived'"   # partial index
+    predicate: "status != 'archived'" # partial index
 ```
 
 ### Constraint
@@ -270,7 +270,7 @@ functions:
         PERFORM pg_notify('inserts', row_to_json(NEW)::text);
         RETURN NEW;
       END;
-    volatility: volatile     # volatile (default) | stable | immutable
+    volatility: volatile # volatile (default) | stable | immutable
     security_definer: false
 ```
 
@@ -280,9 +280,9 @@ functions:
 # Triggers live inside the table definition.
 triggers:
   - name: notify_users_insert
-    timing: after           # before | after | instead_of
-    events: [insert]        # insert | update | delete | truncate
-    scope: row              # row | statement
+    timing: after # before | after | instead_of
+    events: [insert] # insert | update | delete | truncate
+    scope: row # row | statement
     function_name: notify_on_insert
 
   # Inline sugar — body + language are converted to a synthetic function by normalize()
@@ -386,11 +386,11 @@ The diff is then `CurrentState (schema.yaml) − PreviousState`. This makes migr
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `DATABASE_URL` | — | PostgreSQL connection string |
-| `MIGRATIONS_DIR` | `migrations` | Directory containing migration files |
-| `SCHEMA_FILE` | `schema.yaml` | Path to the desired schema definition |
+| Variable         | Default       | Description                           |
+| ---------------- | ------------- | ------------------------------------- |
+| `DATABASE_URL`   | —             | PostgreSQL connection string          |
+| `MIGRATIONS_DIR` | `migrations`  | Directory containing migration files  |
+| `SCHEMA_FILE`    | `schema.yaml` | Path to the desired schema definition |
 
 All three can be overridden per-command via CLI flags.
 
@@ -416,6 +416,7 @@ Integration tests create and destroy isolated schemas (`gaman_test_N`) automatic
 Early development. The core engine is stable and well-tested. PostgreSQL is the only supported database. The public API may change before 1.0.
 
 Implemented:
+
 - Schema state model (tables, columns, indexes, FKs, constraints, views, functions, triggers)
 - Offline diff engine with deterministic operation ordering
 - Migration DAG with topological replay, conflict detection, and merge migrations
@@ -425,6 +426,7 @@ Implemented:
 - Live database introspection (`inspect_db`) with replay verification
 
 Not yet implemented:
+
 - Schema drift detection (`migrate --verify`)
 - Rename detection (currently emits `drop + create`)
 - Migration locking (`pg_try_advisory_lock`)
