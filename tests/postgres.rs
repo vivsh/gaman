@@ -94,16 +94,6 @@ impl DbHarness for PgHarness {
         let _ = self.client.execute(&format!("SET search_path TO \"{schema}\""), &[]);
     }
 
-    fn raw_count(&mut self, table: &str) -> usize {
-        let row = self
-            .client
-            .query_one(&format!("SELECT COUNT(*) FROM \"{table}\""), &[]);
-        match row {
-            Ok(r) => r.get::<_, i64>(0) as usize,
-            Err(_) => 0,
-        }
-    }
-
     fn table_exists(&mut self, table: &str) -> bool {
         let schema = self.schema.clone();
         let row = self.client.query_one(

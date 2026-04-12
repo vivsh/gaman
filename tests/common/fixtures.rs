@@ -66,14 +66,3 @@ pub fn three_migration_chain() -> Vec<Migration> {
     vec![m1, m2, m3]
 }
 
-/// A single migration that creates a table with a raw SQL op that has no inverse.
-pub fn irreversible_migration() -> Migration {
-    Migration {
-        id: "0001_irreversible".into(),
-        dependencies: vec![],
-        operations: vec![Operation::Statement {
-            up: "SELECT 1".into(),
-            down: None,
-        }],
-    }
-}

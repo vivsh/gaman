@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use gaman::adapters::VecAdapter;
 use gaman::dialects::Dialect;
-use gaman::executor::{Executor, ExecutorError};
+use gaman::executor::Executor;
 use gaman::migrations::Migration;
 use gaman::migrator::Migrator;
 use gaman::conf::Config;
@@ -20,8 +20,6 @@ pub trait DbHarness {
     fn executor(&mut self) -> &mut dyn Executor;
     /// Drop and recreate the isolated test schema, rolling back any open transaction.
     fn reset(&mut self);
-    /// Count rows in a table. Returns 0 if the table does not exist.
-    fn raw_count(&mut self, table: &str) -> usize;
     /// Returns true if the given table exists in the test schema.
     fn table_exists(&mut self, table: &str) -> bool;
     /// Count rows in the migration tracking table.
@@ -168,48 +166,6 @@ pub fn test_invalid_graph_rejected(h: &mut dyn DbHarness) {
     let source = Box::new(VecAdapter::new(broken));
     let result = Migrator::new(config, source, h.dialect());
     assert!(result.is_err(), "expected graph error for unknown dependency");
-}
-
-/// A `MockExecutor` that records all SQL sent to it without hitting a DB.
-/// Useful for unit-testing CLI paths.
-#[derive(Default)]
-pub struct MockExecutor {
-    pub log: Vec<String>,
-    /// If set, the next `execute` call returns this error.
-    pub inject_error: Option<String>,
-}
-
-impl MockExecutor {
-    pub fn new() -> Self { Self::default() }
-}
-
-impl Executor for MockExecutor {
-    fn execute(&mut self, sql: &str) -> Result<(), ExecutorError> {
-        if let Some(msg) = self.inject_error.take() {
-            return Err(ExecutorError::Execute(msg));
-        }
-        self.log.push(sql.to_string());
-        Ok(())
-    }
-
-    fn fetch_strings(&mut self, _sql: &str) -> Result<Vec<String>, ExecutorError> {
-        Ok(vec![])
-    }
-
-    fn begin(&mut self) -> Result<(), ExecutorError> {
-        self.log.push("BEGIN".into());
-        Ok(())
-    }
-
-    fn commit(&mut self) -> Result<(), ExecutorError> {
-        self.log.push("COMMIT".into());
-        Ok(())
-    }
-
-    fn rollback(&mut self) -> Result<(), ExecutorError> {
-        self.log.push("ROLLBACK".into());
-        Ok(())
-    }
 }
 
 // --- schema comparison helpers ---
