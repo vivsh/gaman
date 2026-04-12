@@ -43,6 +43,12 @@ impl Dialect {
         let escaped = id.replace('\'', "''");
         format!("DELETE FROM gaman_migrations WHERE id = '{escaped}'")
     }
+
+    pub fn normalize_type<'a>(&self, t: &'a str) -> &'a str {
+        match self {
+            Dialect::Postgres => postgres::normalize_type(t),
+        }
+    }
 }
 
 mod postgres;

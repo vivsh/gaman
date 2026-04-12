@@ -112,6 +112,10 @@ pub struct MigrateCmd {
     /// check for unapplied migrations without applying them
     #[argh(switch)]
     pub check: bool,
+
+    /// compare the live database against the replayed schema and report drift
+    #[argh(switch)]
+    pub verify: bool,
 }
 
 /// Introspect a live database and print the schema state as YAML
@@ -262,6 +266,18 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
                         Ok(())
                     }
                 })
+            } else if cmd.verify {
+                let schemas: &[&str] = &["public"];
+                let drift = migrator.verify(&mut executor, schemas[0]).map_err(CommandError::from)?;
+                if drift.is_empty() {
+                    println!("No drift detected.");
+                    Ok(())
+                } else {
+                    for op in &drift {
+                        println!("  drift: {}", op.type_name());
+                    }
+                    Err(CommandError::Config(format!("{} drift operation(s) detected", drift.len())))
+                }
             } else {
                 migrator.migrate(&mut executor, Some(&invoker), cmd.target.as_deref(), cmd.fake).map_err(CommandError::from)
             }

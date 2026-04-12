@@ -7,7 +7,7 @@ use crate::adapters::{AdapterError, MigrationSource};
 use crate::conf::Config;
 use crate::dialects::{Dialect, DialectError};
 use crate::diff::{DiffEngine, DiffError};
-use crate::executor::{Executor, ExecutorError, Invoker, InvokerError};
+use crate::executor::{Executor, ExecutorError, Introspectable, Invoker, InvokerError};
 use crate::graphs::{GraphError, MigrationGraph};
 use crate::migrations::Migration;
 use crate::operations::Operation;
@@ -416,6 +416,54 @@ impl Migrator {
         let order = self.graph.topological_order()?;
         let applied: HashSet<String> = executor.fetch_strings(self.dialect.applied_migrations_sql())?.into_iter().collect();
         Ok(order.iter().map(|id| (id.to_string(), applied.contains(*id))).collect())
+    }
+
+    /// Compare the replayed schema state against the live database and return any differences.
+    /// An empty vec means the database matches migrations exactly — no drift.
+    /// Scoped to tables/columns/indexes/FKs/constraints only; views and functions are excluded
+    /// because their canonical representation differs too much between YAML and pg_catalog.
+    pub fn verify(&self, executor: &mut (impl Executor + Introspectable), schema: &str) -> Result<Vec<Operation>, MigratorError> {
+        let mut replay = self.replay()?;
+        normalize_state_types(&mut replay, &self.dialect);
+
+        let mut live = executor
+            .inspect_db(&[schema])
+            .map_err(MigratorError::Executor)?;
+        normalize_state_types(&mut live, &self.dialect);
+
+        // Strip views and functions — too many representation differences to compare reliably.
+        live.views.clear();
+        replay.views.clear();
+        live.functions.clear();
+        replay.functions.clear();
+
+        // Strip schema prefixes from live table keys and FK references so they match the
+        // replay state, which uses bare names for tables with schema=None/public.
+        let stripped: crate::states::SchemaState = {
+            let mut s = crate::states::SchemaState::default();
+            for (key, mut table) in live.tables {
+                let bare = key.rfind('.').map(|i| &key[i + 1..]).unwrap_or(&key).to_string();
+                table.schema = None;
+                for fk in &mut table.foreign_keys {
+                    if let Some(i) = fk.to_table.rfind('.') {
+                        fk.to_table = fk.to_table[i + 1..].to_string();
+                    }
+                }
+                s.tables.insert(bare, table);
+            }
+            s
+        };
+
+        Ok(self.diff.diff(&replay, &stripped)?)
+    }
+}
+
+fn normalize_state_types(state: &mut SchemaState, dialect: &crate::dialects::Dialect) {
+    for table in state.tables.values_mut() {
+        for col in table.columns.iter_mut() {
+            let normalized = dialect.normalize_type(&col.col_type).to_string();
+            col.col_type = normalized;
+        }
     }
 }
 

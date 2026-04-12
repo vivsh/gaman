@@ -224,17 +224,20 @@ impl Introspectable for PostgresExecutor {
                 // Foreign keys
                 let fk_rows = self.client
                     .query(
-                        "SELECT tc.constraint_name, kcu.column_name, \
-                         ccu.table_schema, ccu.table_name, ccu.column_name AS ref_col \
-                         FROM information_schema.table_constraints tc \
-                         JOIN information_schema.key_column_usage kcu \
-                           ON tc.constraint_name = kcu.constraint_name \
-                           AND tc.table_schema = kcu.table_schema \
-                         JOIN information_schema.constraint_column_usage ccu \
-                           ON tc.constraint_name = ccu.constraint_name \
-                         WHERE tc.table_schema = $1 AND tc.table_name = $2 \
-                         AND tc.constraint_type = 'FOREIGN KEY' \
-                         ORDER BY tc.constraint_name, kcu.ordinal_position",
+                        "SELECT c.conname, \
+                         a.attname AS from_col, \
+                         fn.nspname AS ref_schema, \
+                         fc.relname AS ref_table, \
+                         fa.attname AS ref_col \
+                         FROM pg_constraint c \
+                         JOIN pg_class t ON t.oid = c.conrelid \
+                         JOIN pg_namespace tn ON tn.oid = t.relnamespace \
+                         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey) \
+                         JOIN pg_class fc ON fc.oid = c.confrelid \
+                         JOIN pg_namespace fn ON fn.oid = fc.relnamespace \
+                         JOIN pg_attribute fa ON fa.attrelid = fc.oid AND fa.attnum = ANY(c.confkey) \
+                         WHERE c.contype = 'f' AND tn.nspname = $1 AND t.relname = $2 \
+                         ORDER BY c.conname, array_position(c.conkey, a.attnum)",
                         &[&schema, &table_name],
                     )
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;

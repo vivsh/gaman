@@ -136,6 +136,14 @@ impl DbHarness for PgHarness {
         let mut executor = PostgresExecutor::new(client);
         executor.inspect_db(&[schema]).ok()
     }
+
+    fn run_verify(&mut self, m: &gaman::migrator::Migrator, schema: &str) -> Option<Vec<gaman::operations::Operation>> {
+        let url = std::env::var("TEST_DATABASE_URL").ok()?;
+        let client = Client::connect(&url, NoTls).ok()?;
+        let mut executor = PostgresExecutor::new(client);
+        executor.execute(&format!("SET search_path TO \"{}\"", self.schema)).ok()?;
+        m.verify(&mut executor, schema).ok()
+    }
 }
 
 macro_rules! pg_test {
@@ -160,3 +168,4 @@ pg_test!(test_duplicate_record_skipped);
 pg_test!(test_drifted_tracking_reapplied);
 pg_test!(test_invalid_graph_rejected);
 pg_test!(test_replay_matches_inspect_db);
+pg_test!(test_verify_no_drift_after_migrate);

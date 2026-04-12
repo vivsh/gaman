@@ -37,6 +37,12 @@ pub trait DbHarness {
         let _ = schema;
         None
     }
+    /// Run `migrator.verify()` against the live database for `schema`.
+    /// Returns None when the backend does not support introspection.
+    fn run_verify(&mut self, m: &Migrator, schema: &str) -> Option<Vec<gaman::operations::Operation>> {
+        let _ = (m, schema);
+        None
+    }
 }
 
 fn migrator(migrations: Vec<Migration>, dialect: Dialect) -> Migrator {
@@ -324,4 +330,23 @@ pub fn test_replay_matches_inspect_db(h: &mut dyn DbHarness) {
     };
 
     assert_tables_compatible(&replay, &inspected);
+}
+
+/// Apply the three-migration chain in full, then call `verify()` and assert no drift.
+pub fn test_verify_no_drift_after_migrate(h: &mut dyn DbHarness) {
+    h.reset();
+    let chain = fixtures::three_migration_chain();
+    let m = migrator(chain, h.dialect());
+    m.migrate(h.executor(), None, None, false).expect("migrate failed");
+
+    let schema = h.current_schema();
+    let drift = match h.run_verify(&m, &schema) {
+        Some(ops) => ops,
+        None => return,
+    };
+    assert!(
+        drift.is_empty(),
+        "expected no drift but got: {:?}",
+        drift.iter().map(|op| op.type_name()).collect::<Vec<_>>()
+    );
 }

@@ -3,6 +3,20 @@ use crate::states::{Column, Constraint, Table, ViewDef, Volatility};
 
 use super::DialectError;
 
+pub fn normalize_type(t: &str) -> &str {
+    match t {
+        "int2"              => "smallint",
+        "int4"              => "integer",
+        "int8"              => "bigint",
+        "bool"              => "boolean",
+        "float4"            => "real",
+        "float8"            => "double precision",
+        "bpchar"            => "char",
+        "character varying" => "varchar",
+        other               => other,
+    }
+}
+
 fn quote_ident(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
