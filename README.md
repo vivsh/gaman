@@ -211,6 +211,8 @@ Print the resolved configuration and exit. Useful for debugging env var and flag
 
 **Supported shorthand:** `primary_key: true` on a column and inline `references` / `check` are normalized away by `schema.normalize()` before diffing. You never have to write the expanded form by hand.
 
+**Column types are passed directly to the database.** Gaman does not map, validate, or normalise type names — whatever you write in `type:` is emitted verbatim in the generated SQL. This means types are database-specific (`serial`, `timestamptz`, `jsonb`, `uuid`, etc. are all PostgreSQL types). Cross-database type portability is explicitly not a goal.
+
 ### Foreign Key (expanded form)
 
 ```yaml
