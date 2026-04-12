@@ -1,4 +1,3 @@
-use dotenvy;
 use gaman::cli::{GamanArgs, handle_cmd};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");

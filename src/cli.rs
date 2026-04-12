@@ -174,21 +174,18 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
     if let Some(schema) = args.schema_file {
         config.schema_file = std::path::PathBuf::from(schema);
     }
-    if let Command::Migrate(ref cmd) = args.command {
-        if let Some(url) = &cmd.database_url {
+    if let Command::Migrate(ref cmd) = args.command
+        && let Some(url) = &cmd.database_url {
             config.database_url = Some(url.clone());
         }
-    }
-    if let Command::ShowMigrations(ref cmd) = args.command {
-        if let Some(url) = &cmd.database_url {
+    if let Command::ShowMigrations(ref cmd) = args.command
+        && let Some(url) = &cmd.database_url {
             config.database_url = Some(url.clone());
         }
-    }
-    if let Command::InspectDb(ref cmd) = args.command {
-        if let Some(url) = &cmd.database_url {
+    if let Command::InspectDb(ref cmd) = args.command
+        && let Some(url) = &cmd.database_url {
             config.database_url = Some(url.clone());
         }
-    }
     let config = Arc::new(config);
 
     let source = Box::new(YamlAdapter { directory: config.migrations_dir.clone() });
@@ -243,7 +240,7 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
             let client = Client::connect(&url, NoTls)?;
             let mut executor = PostgresExecutor::new(client);
             let invoker = SubprocessInvoker;
-            let result = if cmd.plan {
+            if cmd.plan {
                 match migrator.plan(&mut executor) {
                     Ok(pending) if pending.is_empty() => {
                         println!("No pending migrations.");
@@ -267,8 +264,7 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
                 })
             } else {
                 migrator.migrate(&mut executor, Some(&invoker), cmd.target.as_deref(), cmd.fake).map_err(CommandError::from)
-            };
-            result
+            }
         }
         Command::ShowMigrations(_) => {
             let url = migrator

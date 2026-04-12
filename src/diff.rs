@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 use crate::operations::Operation;
-use crate::states::{Column, Constraint, ForeignKey, Index, SchemaState, Table, TriggerDef, ViewDef};
+use crate::states::{Column, Constraint, ForeignKey, Index, SchemaState, Table, TriggerDef};
 
 #[derive(Debug, Error)]
 pub enum DiffError {}

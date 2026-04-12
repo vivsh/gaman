@@ -304,13 +304,13 @@ impl Migrator {
             let order = all_ordered;
             let applied: HashSet<String> = executor.fetch_strings(self.dialect.applied_migrations_sql())?.into_iter().collect();
 
-            let target_pos = order.iter().position(|id| id.as_ref() as &str == target_id)
+            let target_pos = order.iter().position(|id| *id == target_id)
                 .expect("target exists in graph so must be in topo order");
 
             let mut to_revert: Vec<&str> = order[target_pos + 1..]
                 .iter()
-                .filter(|id| applied.contains(id.as_ref() as &str))
-                .map(|id| *id)
+                .filter(|id| applied.contains(*id as &str))
+                .copied()
                 .collect();
             to_revert.reverse();
 
@@ -346,18 +346,17 @@ impl Migrator {
 
             let pending: Vec<&str> = order[..=target_pos]
                 .iter()
-                .filter(|id| !applied.contains(id.as_ref() as &str))
-                .map(|id| id.as_ref() as &str)
+                .filter(|id| !applied.contains(*id as &str))
+                .copied()
                 .collect();
             for id in pending {
                 let migration = self.graph.get(id).expect("pending id must exist in graph");
                 executor.begin()?;
-                if !fake {
-                    if let Err(e) = self.run_ops(&migration.operations, executor, invoker) {
+                if !fake
+                    && let Err(e) = self.run_ops(&migration.operations, executor, invoker) {
                         let _ = executor.rollback();
                         return Err(e);
                     }
-                }
                 if let Err(e) = executor.execute(&self.dialect.record_sql(id)) {
                     let _ = executor.rollback();
                     return Err(e.into());
@@ -376,12 +375,11 @@ impl Migrator {
         for id in &pending {
             let migration = self.graph.get(id).expect("pending id must exist in graph");
             executor.begin()?;
-            if !fake {
-                if let Err(e) = self.run_ops(&migration.operations, executor, invoker) {
+            if !fake
+                && let Err(e) = self.run_ops(&migration.operations, executor, invoker) {
                     let _ = executor.rollback();
                     return Err(e);
                 }
-            }
             if let Err(e) = executor.execute(&self.dialect.record_sql(id)) {
                 let _ = executor.rollback();
                 return Err(e.into());
