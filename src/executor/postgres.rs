@@ -127,7 +127,7 @@ impl Introspectable for PostgresExecutor {
 
             for row in &table_rows {
                 let table_name: String = row.get(0);
-                let key = schema_qualified_key(&table_name, Some(schema));
+                let key = table_name.clone();
 
                 let mut table = Table {
                     name: table_name.clone(),
@@ -245,10 +245,10 @@ impl Introspectable for PostgresExecutor {
                 for fkr in &fk_rows {
                     let fk_name: String = fkr.get(0);
                     let from_col: String = fkr.get(1);
-                    let ref_schema: String = fkr.get(2);
+                    let _ref_schema: String = fkr.get(2);
                     let ref_table: String = fkr.get(3);
                     let ref_col: String = fkr.get(4);
-                    let to_table = schema_qualified_key(&ref_table, Some(&ref_schema));
+                    let to_table = ref_table.clone();
                     table.foreign_keys.push(ForeignKey {
                         name: fk_name,
                         from_column: from_col,

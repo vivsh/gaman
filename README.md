@@ -146,10 +146,10 @@ gaman migrate --check                   # CI gate: fail if migrations are pendin
 
 Compare the live database against the replayed migration state and report any structural drift. Exits non-zero if drift is found. Views and functions are excluded — their SQL representation in `pg_catalog` rarely round-trips cleanly against the YAML definition.
 
-| Flag                   | Description                                          |
-| ---------------------- | ---------------------------------------------------- |
-| `--database-url <url>` | Override `DATABASE_URL`                              |
-| `--schema <name>`      | Schema to verify (default: `public`)                 |
+| Flag                   | Description                          |
+| ---------------------- | ------------------------------------ |
+| `--database-url <url>` | Override `DATABASE_URL`              |
+| `--schema <name>`      | Schema to verify (default: `public`) |
 
 ```bash
 gaman verify_db

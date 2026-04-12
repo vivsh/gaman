@@ -214,26 +214,14 @@ impl Executor for MockExecutor {
 
 // --- schema comparison helpers ---
 
-fn strip_schema(key: &str) -> &str {
-    key.rfind('.').map(|i| &key[i + 1..]).unwrap_or(key)
-}
-
 // Checks that every table key present in `replay` also exists in `inspected`,
 // and that columns, FK destinations, and index names match. We intentionally
 // avoid comparing default values and col_type strings byte-for-byte because
 // the live DB often represents those differently (e.g. `integer` vs `int4`).
 fn assert_tables_compatible(replay: &SchemaState, inspected: &SchemaState) {
-    // Build a bare-name → table map so we can look up regardless of schema prefix.
-    let inspected_by_name: std::collections::HashMap<&str, _> = inspected
-        .tables
-        .iter()
-        .map(|(k, v)| (strip_schema(k.as_str()), v))
-        .collect();
-
     for (key, replay_table) in &replay.tables {
-        let bare = strip_schema(key.as_str());
-        let live = inspected_by_name.get(bare).unwrap_or_else(|| {
-            panic!("table '{bare}' present in replay state but missing from inspect_db output")
+        let live = inspected.tables.get(key).unwrap_or_else(|| {
+            panic!("table '{key}' present in replay state but missing from inspect_db output")
         });
 
         // Column names, in order
@@ -255,17 +243,16 @@ fn assert_tables_compatible(replay: &SchemaState, inspected: &SchemaState) {
             }
         }
 
-        // FK destinations (to_table + to_column) — strip schema prefix so
-        // replay's "users" matches inspect_db's "gaman_test_0.users".
+        // FK destinations (to_table + to_column) — both sides now use bare names.
         let replay_fk_targets: Vec<(&str, &str)> = replay_table
             .foreign_keys
             .iter()
-            .map(|fk| (strip_schema(fk.to_table.as_str()), fk.to_column.as_str()))
+            .map(|fk| (fk.to_table.as_str(), fk.to_column.as_str()))
             .collect();
         let live_fk_targets: Vec<(&str, &str)> = live
             .foreign_keys
             .iter()
-            .map(|fk| (strip_schema(fk.to_table.as_str()), fk.to_column.as_str()))
+            .map(|fk| (fk.to_table.as_str(), fk.to_column.as_str()))
             .collect();
         assert_eq!(
             replay_fk_targets, live_fk_targets,
@@ -284,17 +271,12 @@ fn assert_tables_compatible(replay: &SchemaState, inspected: &SchemaState) {
     }
 
     // Every table in replay must appear in inspected (already checked above);
-    // also verify no extra tables snuck in the other direction (excluding gaman_migrations).
-    let replay_by_name: std::collections::HashSet<&str> = replay
-        .tables
-        .keys()
-        .map(|k| strip_schema(k.as_str()))
-        .collect();
+    // also verify no extra tables snuck in the other direction.
+    let replay_names: std::collections::HashSet<&str> = replay.tables.keys().map(|k| k.as_str()).collect();
     for key in inspected.tables.keys() {
-        let bare = strip_schema(key.as_str());
         assert!(
-            replay_by_name.contains(bare),
-            "table '{bare}' found in inspect_db output but not in replay state"
+            replay_names.contains(key.as_str()),
+            "table '{key}' found in inspect_db output but not in replay state"
         );
     }
 }

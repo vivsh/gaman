@@ -437,24 +437,7 @@ impl Migrator {
         live.functions.clear();
         replay.functions.clear();
 
-        // Strip schema prefixes from live table keys and FK references so they match the
-        // replay state, which uses bare names for tables with schema=None/public.
-        let stripped: crate::states::SchemaState = {
-            let mut s = crate::states::SchemaState::default();
-            for (key, mut table) in live.tables {
-                let bare = key.rfind('.').map(|i| &key[i + 1..]).unwrap_or(&key).to_string();
-                table.schema = None;
-                for fk in &mut table.foreign_keys {
-                    if let Some(i) = fk.to_table.rfind('.') {
-                        fk.to_table = fk.to_table[i + 1..].to_string();
-                    }
-                }
-                s.tables.insert(bare, table);
-            }
-            s
-        };
-
-        Ok(self.diff.diff(&replay, &stripped)?)
+        Ok(self.diff.diff(&replay, &live)?)
     }
 }
 
