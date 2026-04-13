@@ -9,6 +9,8 @@ use crate::conf::Config;
 use crate::dialects::Dialect;
 use crate::executor::{Introspectable, PostgresExecutor, SubprocessInvoker};
 use crate::migrator::{Migrator, MigratorError};
+use crate::prompter::CliPromptEngine;
+use crate::disambiguator::{Decision, PromptEngine};
 use crate::states::SchemaState;
 
 /// Gaman — PostgreSQL migration tool
@@ -218,7 +220,7 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
                 let current = SchemaState::load(&migrator.config.schema_file)
                     .map_err(|e| CommandError::Config(e.to_string()))?;
                 let name = cmd.name.unwrap_or_else(|| "check".into());
-                match migrator.make_migrations(name, current, true)? {
+                match migrator.make_migrations(name, current, true, &[])? {
                     Some(_) => Err(CommandError::Config("schema has changes not yet in a migration".into())),
                     None => Ok(()),
                 }
@@ -226,9 +228,18 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
                 let name = cmd.name.ok_or_else(|| CommandError::Config("a migration name is required".into()))?;
                 let current = SchemaState::load(&migrator.config.schema_file)
                     .map_err(|e| CommandError::Config(e.to_string()))?;
-                match migrator.make_migrations(name, current, cmd.dry_run)? {
-                    Some(m) => { println!("Created: {}", m.id); Ok(()) },
-                    None => { println!("No changes detected."); Ok(()) },
+                let engine = CliPromptEngine;
+                let mut decisions: Vec<Decision> = vec![];
+                loop {
+                    match migrator.make_migrations(name.clone(), current.clone(), cmd.dry_run, &decisions) {
+                        Err(MigratorError::NeedsInput(clars)) => {
+                            let new = engine.prompt(&clars).map_err(|e| CommandError::Config(e.to_string()))?;
+                            decisions.extend(new);
+                        }
+                        Err(e) => return Err(CommandError::Migrator(e)),
+                        Ok(Some(m)) => { println!("Created: {}", m.id); break Ok(()); }
+                        Ok(None) => { println!("No changes detected."); break Ok(()); }
+                    }
                 }
             }
         }

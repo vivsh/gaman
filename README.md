@@ -2,7 +2,7 @@
 
 > **Not production ready — still in active development. APIs and file formats may change.**
 
-A PostgreSQL-first, offline schema migration tool written in Rust. Inspired by Django migrations — declare your schema in YAML, let `gaman` figure out what changed, and apply it.
+A deterministic, offline-first migration engine for PostgreSQL, written in Rust. Declare your schema in YAML, and let gaman compute and apply the diff - no database access required at plan time. Inspired by Django migrations.
 
 Pronounced _guh-MUN_ (गमन, /ɡəˈmən/) — Sanskrit for "movement" or "going forward".
 
@@ -27,107 +27,69 @@ Migrations are stored as a **directed acyclic graph (DAG)**. Each migration decl
 
 ## Quick Start
 
-### 1. Install
-
 ```bash
 cargo install gaman
 ```
 
-### 2. Set up environment
+Set env vars (or use CLI flags `-d`, `-m`, `-s`):
 
 ```bash
-# .env
 DATABASE_URL=postgres://localhost/myapp
 MIGRATIONS_DIR=migrations
 SCHEMA_FILE=schema.yaml
 ```
 
-### 3. Define your schema
-
-```yaml
-# schema.yaml
-tables:
-  users:
-    name: users
-    columns:
-      - name: id
-        type: serial
-        nullable: false
-        primary_key: true
-      - name: email
-        type: text
-        nullable: false
-      - name: created_at
-        type: timestamptz
-        nullable: false
-        default: now()
-    indexes:
-      - name: users_email_idx
-        columns: [email]
-        unique: true
-```
-
-### 4. Generate and apply migrations
+Declare your schema in `schema.yaml`, then:
 
 ```bash
-# Create your initial migration
-gaman make_migration initial
-
-# Review what SQL will run
-gaman sql_migrate
-
-# Apply to the database
-gaman migrate
+gaman make_migration initial   # generate first migration
+gaman sql_migrate               # preview SQL
+gaman migrate                   # apply
 ```
 
 ---
 
 ## CLI Reference
 
-All commands accept `-m <dir>` to override the migrations directory, `-s <file>` to override the schema file, and `-d <url>` to override the database URL. These are global flags and must appear **before** the subcommand name.
+Global flags (before subcommand): `-m <dir>`, `-s <file>`, `-d <url>`.
 
 ### `make_migration [name]`
 
-Generate a new migration by diffing `schema.yaml` against the replayed state of all existing migrations. Writes a new YAML file into the migrations directory.
+Diff `schema.yaml` against replayed state and write a new migration file.
 
-| Flag        | Description                                                                       |
-| ----------- | --------------------------------------------------------------------------------- |
-| `--empty`   | Create an empty migration (no auto-detected operations)                           |
-| `--merge`   | Create a merge migration to resolve multiple heads                                |
-| `--check`   | Exit with a non-zero code if there are pending schema changes; do not write files |
-| `--dry-run` | Print what would be generated without writing files                               |
+| Flag        | Description                                        |
+| ----------- | -------------------------------------------------- |
+| `--empty`   | Empty migration, no auto-detected ops              |
+| `--merge`   | Create a merge migration to resolve multiple heads |
+| `--check`   | Exit non-zero if changes exist; do not write       |
+| `--dry-run` | Print what would be generated without writing      |
 
 ```bash
 gaman make_migration add_posts
-gaman make_migration --check          # CI gate: fail if schema is out of sync
-gaman make_migration --empty hotfix   # empty shell for a hand-written migration
+gaman make_migration --check
+gaman make_migration --empty hotfix
 ```
 
 ### `migrate`
 
-Apply pending migrations to the database in topological order. Each migration runs in its own transaction — a failure rolls back only that migration.
+Apply pending migrations in topological order. Each runs in its own transaction.
 
-| Flag            | Description                                                   |
-| --------------- | ------------------------------------------------------------- |
-| `--target <id>` | Migrate forward or backward to a specific migration ID        |
-| `--fake`        | Record migrations as applied without executing DDL            |
-| `--plan`        | List which migrations would be applied, then exit             |
-| `--check`       | Exit non-zero if there are unapplied migrations; do not apply |
+| Flag            | Description                                           |
+| --------------- | ----------------------------------------------------- |
+| `--target <id>` | Migrate forward or backward to a specific ID          |
+| `--fake`        | Record as applied without executing DDL               |
+| `--plan`        | List what would be applied, then exit                 |
+| `--check`       | Exit non-zero if migrations are pending; do not apply |
 
 ```bash
 gaman migrate
-gaman migrate --target 0003_add_posts   # forward or backward to a specific point
-gaman migrate --fake 0001_initial       # adopt an existing DB without re-running DDL
-gaman migrate --check                   # CI gate: fail if migrations are pending
+gaman migrate --target 0003_add_posts
+gaman migrate --fake 0001_initial
 ```
 
 ### `verify_db`
 
-Compare the live database against the replayed migration state and report any structural drift. Exits non-zero if drift is found. Views and functions are excluded — their SQL representation in `pg_catalog` rarely round-trips cleanly against the YAML definition.
-
-| Flag              | Description                          |
-| ----------------- | ------------------------------------ |
-| `--schema <name>` | Schema to verify (default: `public`) |
+Compare the live database against replayed state and report drift. Views and functions are excluded.
 
 ```bash
 gaman verify_db
@@ -136,52 +98,29 @@ gaman verify_db --schema myschema
 
 ### `show_migrations`
 
-List all known migrations with their applied status.
-
-```
-[X] 0001_initial
-[X] 0002_add_email
-[ ] 0003_add_posts
-```
+List all migrations with `[X]` / `[ ]` applied markers.
 
 ### `sql_migrate [id]`
 
-Print the SQL statements for one or all migrations. No database connection required.
-
-| Flag          | Description                               |
-| ------------- | ----------------------------------------- |
-| `--backwards` | Print rollback SQL instead of forward SQL |
-
-```bash
-gaman sql_migrate                        # all migrations, forward
-gaman sql_migrate 0003_add_posts         # single migration
-gaman sql_migrate 0003_add_posts --backwards
-```
+Print SQL for one or all migrations. No database connection required. `--backwards` for rollback SQL.
 
 ### `inspect_db`
 
-Introspect a live PostgreSQL database and emit a schema state as YAML. Useful for adopting an existing database or auditing drift.
-
-| Flag              | Description                                          |
-| ----------------- | ---------------------------------------------------- |
-| `--schema <name>` | Schema to introspect (repeatable; default: `public`) |
-| `--table <name>`  | Restrict output to a single table                    |
-| `--output <file>` | Write to a file instead of stdout                    |
+Introspect a live database and emit `schema.yaml`. Flags: `--schema`, `--table`, `--output`.
 
 ```bash
 gaman inspect_db > schema.yaml
-gaman inspect_db --schema myschema --output schema.yaml
 ```
 
 ### `config`
 
-Print the resolved configuration and exit. Useful for debugging env var and flag resolution.
+Print resolved configuration and exit.
 
 ---
 
 ## Schema YAML Format
 
-Column shorthand — `primary_key: true`, inline `references`, and inline `check` are normalized before diffing; you never need to write the expanded forms by hand. Column types are passed verbatim to the database.
+Column types are passed verbatim to PostgreSQL. Shorthand fields (`primary_key`, inline `references`, inline `check`) are normalised before diffing.
 
 ```yaml
 tables:
@@ -195,18 +134,18 @@ tables:
       - name: user_id
         type: integer
         nullable: false
-        references: { table: users, column: id } # inline FK sugar
+        references: { table: users, column: id }
       - name: total
         type: numeric(10,2)
         nullable: false
         default: "0.00"
-        check: "total >= 0" # inline check sugar
+        check: "total >= 0"
     indexes:
       - name: orders_user_id_idx
         columns: [user_id]
         unique: false
-        predicate: "total > 0" # partial index
-    foreign_keys: # expanded FK form
+        predicate: "total > 0"
+    foreign_keys:
       - name: fk_orders_user
         columns: [user_id]
         to_table: users
@@ -235,7 +174,7 @@ functions:
     security_definer: false
 ```
 
-Triggers live inside the table definition. Use `function_name` to reference an existing function, or provide `body` + `language` inline (gaman generates a synthetic function for it automatically):
+Triggers live inside the table definition:
 
 ```yaml
 triggers:
@@ -250,7 +189,7 @@ triggers:
 
 ## Migration File Format
 
-Generated migrations are YAML files — human-readable and hand-editable. Each operation maps directly to a DDL statement. Two escape hatches exist for operations gaman can't express structurally:
+YAML files, human-readable and hand-editable. Two escape hatches:
 
 ```yaml
 operations:
@@ -263,79 +202,93 @@ operations:
     down: ./scripts/backfill_undo.py
 ```
 
-`invoke` runs the given command as a subprocess. The command must exit 0 to succeed.
+`invoke` runs a subprocess; must exit 0.
 
 ---
 
-## Migration Graph
+## Disambiguator
 
-Migrations form a **directed acyclic graph**. Each migration's `dependencies` list points to its parent(s). Gaman applies migrations in topological order, guaranteeing that all dependencies are applied before their dependents.
+The diff engine is conservative: a renamed column looks identical to a drop + add. The disambiguator catches these cases and asks before committing.
 
-**Linear history** (most projects):
+Runs as a post-diff pass inside `make_migration`. Accepts prior `decisions`; returns more questions or the final op list:
 
 ```
-0001_initial → 0002_add_email → 0003_add_posts
+ops = diff(current, previous)
+decisions = []
+loop:
+    process(ops, decisions) → NeedsInput(clars) → prompt → decisions.extend(answers)
+                            → Resolved(final_ops) → write migration
 ```
 
-**Branched history** (parallel feature work):
+| Severity     | Kind            | What it catches                                                |
+| ------------ | --------------- | -------------------------------------------------------------- |
+| `Fatal`      | `NotNullAdd`    | NOT NULL column with no default — fails on non-empty tables    |
+| `Fatal`      | `NotNullChange` | Nullable → NOT NULL — requires backfilling existing NULLs      |
+| `Warning`    | `TypeCast`      | Type change — requires explicit CAST or implicit coercion      |
+| `Suggestion` | `RenameColumn`  | Drop + add of compatible types — likely a rename               |
+| `Suggestion` | `RenameTable`   | Drop + create of structurally similar tables — likely a rename |
+
+For `NotNullChange`, a backfill `UPDATE` is auto-injected before the `ALTER COLUMN`.
+
+Transport-agnostic — `CliPromptEngine` uses stdin/stdout; `PromptEngine` is a trait any caller can implement.
+
+---
+
+## Migration Graph & Replay
+
+Migrations form a DAG. Each declares `dependencies`, enabling parallel branches and explicit merges.
 
 ```
 0001_initial → 0002_feature_a ─┐
              → 0003_feature_b ─┴→ 0004_merge
 ```
 
-If multiple heads exist without a merge migration, `make_migration` reports a conflict and requires `--merge` to resolve it.
-
----
-
-## How Replay Works
-
-`make_migration` never connects to a database. The previous schema state is reconstructed by replaying operations from all migrations in topological order:
+`make_migration` never touches the database — it replays existing migrations to reconstruct previous state, then diffs:
 
 ```
 [] → apply(0001) → apply(0002) → apply(0003) → PreviousState
+CurrentState − PreviousState → new migration
 ```
 
-The diff is then `CurrentState (schema.yaml) − PreviousState`. This makes migration generation deterministic, reproducible, and CI-friendly with no external dependencies.
+Multiple heads without a merge migration → conflict error, requires `--merge`.
 
 ---
 
 ## Environment Variables
 
-| Variable         | Default       | Description                           |
-| ---------------- | ------------- | ------------------------------------- |
-| `DATABASE_URL`   | —             | PostgreSQL connection string          |
-| `MIGRATIONS_DIR` | `migrations`  | Directory containing migration files  |
-| `SCHEMA_FILE`    | `schema.yaml` | Path to the desired schema definition |
-
-All three can be overridden via global CLI flags: `-d`, `-m`, `-s`.
+| Variable         | Default       | Description                          |
+| ---------------- | ------------- | ------------------------------------ |
+| `DATABASE_URL`   | —             | PostgreSQL connection string         |
+| `MIGRATIONS_DIR` | `migrations`  | Directory containing migration files |
+| `SCHEMA_FILE`    | `schema.yaml` | Path to the schema definition        |
 
 ---
 
 ## Development
 
 ```bash
-# Run all unit tests
 cargo test
 
-# Run integration tests (requires a running PostgreSQL instance)
+# Integration tests (requires PostgreSQL)
 export TEST_DATABASE_URL=postgres://localhost/gaman_test
 cargo test --test postgres -- --include-ignored
 ```
 
-Integration tests create and destroy isolated schemas (`gaman_test_N`) automatically — they do not touch your main database.
+Integration tests create and destroy isolated schemas automatically.
 
 ---
 
 ## Status
 
-Early development. The core engine is stable and well-tested. PostgreSQL is the only supported database. The public API may change before 1.0.
+Early-stage. Core migration engine is stable and tested in real use. PostgreSQL only. Public API may change before 1.0.
 
-Not yet implemented:
+### Not yet implemented
 
-- Rename detection (currently emits `drop + create`)
 - `squashmigrations`
+- Embedded Rust library API and C-FFI interface
 
-## Known Limitations
+### Known limitations
 
-- **Single-column primary keys and foreign keys only.** Composite PKs (multiple `primary_key: true` columns) and multi-column FKs are not supported. Attempting to define them will produce a validation error.
+- Single-column primary and foreign keys only
+- Column order is not tracked
+- `verify_db` does not validate view or function definitions

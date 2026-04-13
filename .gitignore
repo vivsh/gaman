@@ -1,5 +1,6 @@
 /target
 /.github
 /migrations
+/playground
 .env
 output.txt

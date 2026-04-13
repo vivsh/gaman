@@ -168,12 +168,16 @@ pub struct SchemaState {
 /// A single table definition.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Table {
+    #[serde(default)]
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     pub columns: Vec<Column>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub foreign_keys: Vec<ForeignKey>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub indexes: Vec<Index>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub constraints: Vec<Constraint>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<TriggerDef>,
@@ -194,6 +198,7 @@ impl Table {
 pub struct Index {
     pub name: String,
     pub columns: Vec<String>,
+    #[serde(default)]
     pub unique: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub predicate: Option<String>,
@@ -231,6 +236,7 @@ pub struct Column {
     pub name: String,
     #[serde(rename = "type")]
     pub col_type: String,
+    #[serde(default)]
     pub nullable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
@@ -259,6 +265,9 @@ impl SchemaState {
         let mut new_functions: Vec<(String, FunctionDef)> = Vec::new();
         for (table_name, table) in self.tables.iter_mut() {
             let table_name = table_name.clone();
+            if table.name.is_empty() {
+                table.name = table_name.clone();
+            }
             for col in table.columns.iter_mut() {
                 if let Some(r) = col.references.take() {
                     let fk_name = r.name.unwrap_or_else(|| {
@@ -369,6 +378,9 @@ impl SchemaState {
 
     pub fn validate(&self) -> Result<(), String> {
         for (name, table) in &self.tables {
+            if table.name.is_empty() {
+                return Err(format!("table with key '{name}' has an empty name — omit `name:` to inherit the key, or set it explicitly"));
+            }
             let pk_count = table.columns.iter().filter(|c| c.primary_key).count();
             if pk_count > 1 {
                 return Err(format!(

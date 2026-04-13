@@ -7,6 +7,7 @@ use crate::adapters::{AdapterError, MigrationSource};
 use crate::conf::Config;
 use crate::dialects::{Dialect, DialectError};
 use crate::diff::{DiffEngine, DiffError};
+use crate::disambiguator::{Clarification, Decision, Disambiguator, DisambiguationResult, DisambiguatorError};
 use crate::executor::{Executor, ExecutorError, Introspectable, Invoker, InvokerError};
 use crate::graphs::{GraphError, MigrationGraph};
 use crate::migrations::Migration;
@@ -31,6 +32,10 @@ pub enum MigratorError {
     Invoke(#[from] InvokerError),
     #[error("configuration error: {0}")]
     Config(String),
+    #[error("disambiguation error: {0}")]
+    Disambiguator(#[from] DisambiguatorError),
+    #[error("clarification needed")]
+    NeedsInput(Vec<Clarification>),
 }
 
 /// Central orchestrator for all migration actions.
@@ -65,19 +70,26 @@ impl Migrator {
     /// Generate a new migration by diffing `current` against the replayed previous state.
     /// Refuses if there are multiple heads — resolve with `make_merge_migration` first.
     /// Returns `None` when there are no changes.
+    /// Pass previously collected `decisions` to resolve any disambiguation clarifications.
+    /// Returns `Err(MigratorError::NeedsInput(clars))` when clarifications are still outstanding.
     pub fn make_migrations(
         &self,
         name: String,
         current: SchemaState,
         dry_run: bool,
+        decisions: &[Decision],
     ) -> Result<Option<Migration>, MigratorError> {
         self.graph.detect_conflict()?;
         current.validate().map_err(MigratorError::Config)?;
         let previous = self.replay()?;
-        let ops = self.diff.diff(&current, &previous)?;
-        if ops.is_empty() {
+        let raw_ops = self.diff.diff(&current, &previous)?;
+        if raw_ops.is_empty() {
             return Ok(None);
         }
+        let ops = match Disambiguator.process(&raw_ops, decisions)? {
+            DisambiguationResult::NeedsInput(clars) => return Err(MigratorError::NeedsInput(clars)),
+            DisambiguationResult::Resolved(ops) => ops,
+        };
         let id = format!("{:04}_{}", self.graph.next_number(), name);
         MigrationGraph::validate_id(&id).map_err(MigratorError::Graph)?;
         let mut dependencies: Vec<String> = self.graph.heads().iter().map(|s| s.to_string()).collect();
@@ -615,14 +627,14 @@ mod tests {
     #[test]
     fn no_changes_returns_none() {
         let m = migrator_from(vec![]);
-        assert!(m.make_migrations("x".into(), SchemaState::default(), false).unwrap().is_none());
+        assert!(m.make_migrations("x".into(), SchemaState::default(), false, &[]).unwrap().is_none());
     }
 
     #[test]
     fn new_table_creates_migration() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let result = m.make_migrations("initial".into(), current, false).unwrap();
+        let result = m.make_migrations("initial".into(), current, false, &[]).unwrap();
         let mig = result.unwrap();
         assert_eq!(mig.operations.len(), 1);
         assert!(matches!(&mig.operations[0], Operation::CreateTable { table } if table.name == "users"));
@@ -635,7 +647,7 @@ mod tests {
             "0001_initial", &[],
             vec![Operation::CreateTable { table: users }],
         )]);
-        let result = m.make_migrations("drop_users".into(), SchemaState::default(), false).unwrap();
+        let result = m.make_migrations("drop_users".into(), SchemaState::default(), false, &[]).unwrap();
         let mig = result.unwrap();
         assert_eq!(mig.operations.len(), 1);
         assert!(matches!(&mig.operations[0], Operation::DropTable { table } if table.name == "users"));
@@ -649,7 +661,7 @@ mod tests {
             vec![Operation::CreateTable { table: users_v1 }],
         )]);
         let current = state_with_tables(&[simple_table("users", &["id", "email"])]);
-        let mig = m.make_migrations("add_email".into(), current, false).unwrap().unwrap();
+        let mig = m.make_migrations("add_email".into(), current, false, &[]).unwrap().unwrap();
         assert!(mig.operations.iter().any(|op| matches!(op, Operation::AddColumn { column, .. } if column.name == "email")));
     }
 
@@ -661,7 +673,7 @@ mod tests {
             vec![Operation::CreateTable { table: users_v1 }],
         )]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations("drop_email".into(), current, false).unwrap().unwrap();
+        let mig = m.make_migrations("drop_email".into(), current, false, &[]).unwrap().unwrap();
         assert!(mig.operations.iter().any(|op| matches!(op, Operation::DropColumn { column, .. } if column.name == "email")));
     }
 
@@ -672,7 +684,7 @@ mod tests {
             simple_table("users", &["id"]),
             simple_table("posts", &["id"]),
         ]);
-        let mig = m.make_migrations("multi".into(), current, false).unwrap().unwrap();
+        let mig = m.make_migrations("multi".into(), current, false, &[]).unwrap().unwrap();
         assert_eq!(mig.operations.len(), 2);
     }
 
@@ -680,7 +692,7 @@ mod tests {
     fn migration_number_increments() {
         let m = migrator_from(vec![migration_with_ops("0001_initial", &[], vec![])]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations("add_users".into(), current, false).unwrap().unwrap();
+        let mig = m.make_migrations("add_users".into(), current, false, &[]).unwrap().unwrap();
         assert!(mig.id.starts_with("0002_"));
     }
 
@@ -688,7 +700,7 @@ mod tests {
     fn migration_number_empty_graph() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations("initial".into(), current, false).unwrap().unwrap();
+        let mig = m.make_migrations("initial".into(), current, false, &[]).unwrap().unwrap();
         assert!(mig.id.starts_with("0001_"));
     }
 
@@ -696,7 +708,7 @@ mod tests {
     fn migration_dependencies_set_to_head() {
         let m = migrator_from(vec![migration_with_ops("0001_initial", &[], vec![])]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations("add_users".into(), current, false).unwrap().unwrap();
+        let mig = m.make_migrations("add_users".into(), current, false, &[]).unwrap().unwrap();
         assert_eq!(mig.dependencies, vec!["0001_initial"]);
     }
 
@@ -704,7 +716,7 @@ mod tests {
     fn migration_dependencies_empty_graph() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations("initial".into(), current, false).unwrap().unwrap();
+        let mig = m.make_migrations("initial".into(), current, false, &[]).unwrap().unwrap();
         assert!(mig.dependencies.is_empty());
     }
 
@@ -712,7 +724,7 @@ mod tests {
     fn dry_run_does_not_save() {
         let (m, shared) = migrator_with_source(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        m.make_migrations("initial".into(), current, true).unwrap().unwrap();
+        m.make_migrations("initial".into(), current, true, &[]).unwrap().unwrap();
         assert!(shared.saved.borrow().is_empty());
     }
 
@@ -720,7 +732,7 @@ mod tests {
     fn dry_run_still_returns_migration() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let result = m.make_migrations("initial".into(), current, true).unwrap();
+        let result = m.make_migrations("initial".into(), current, true, &[]).unwrap();
         assert!(result.is_some());
     }
 
@@ -731,7 +743,7 @@ mod tests {
             migration_with_ops("0001_a", &[], vec![]),
             migration_with_ops("0001_b", &[], vec![]),
         ]);
-        let err = m.make_migrations("x".into(), SchemaState::default(), false).unwrap_err();
+        let err = m.make_migrations("x".into(), SchemaState::default(), false, &[]).unwrap_err();
         assert!(matches!(err, MigratorError::Graph(GraphError::Conflict)));
     }
 
@@ -743,7 +755,7 @@ mod tests {
             vec![Operation::DropTable { table: simple_table("ghost", &["id"]) }],
         );
         let m = migrator_from(vec![bad]);
-        let err = m.make_migrations("x".into(), SchemaState::default(), false).unwrap_err();
+        let err = m.make_migrations("x".into(), SchemaState::default(), false, &[]).unwrap_err();
         assert!(matches!(err, MigratorError::Replay(_)));
     }
 
@@ -751,7 +763,7 @@ mod tests {
     fn make_migrations_name_used_in_id() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations("my_migration".into(), current, false).unwrap().unwrap();
+        let mig = m.make_migrations("my_migration".into(), current, false, &[]).unwrap().unwrap();
         assert!(mig.id.contains("my_migration"));
     }
 
@@ -768,7 +780,7 @@ mod tests {
             simple_table("posts", &["id"]),
             simple_table("comments", &["id"]),
         ]);
-        let mig = m.make_migrations("add_comments".into(), current, false).unwrap().unwrap();
+        let mig = m.make_migrations("add_comments".into(), current, false, &[]).unwrap().unwrap();
         assert_eq!(mig.dependencies, vec!["0002_create_posts"]);
         assert_eq!(mig.operations.len(), 1);
         assert!(matches!(&mig.operations[0], Operation::CreateTable { table } if table.name == "comments"));
@@ -792,7 +804,7 @@ mod tests {
         };
         let mut current = SchemaState::default();
         current.tables.insert("users".to_string(), table);
-        let err = m.make_migrations("bad".into(), current, false).unwrap_err();
+        let err = m.make_migrations("bad".into(), current, false, &[]).unwrap_err();
         assert!(matches!(err, MigratorError::Config(_)));
     }
 
@@ -801,7 +813,7 @@ mod tests {
     fn save_called_when_not_dry_run() {
         let (m, shared) = migrator_with_source(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        m.make_migrations("initial".into(), current, false).unwrap().unwrap();
+        m.make_migrations("initial".into(), current, false, &[]).unwrap().unwrap();
         assert_eq!(shared.saved.borrow().len(), 1);
     }
 

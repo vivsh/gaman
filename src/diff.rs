@@ -310,6 +310,13 @@ fn fk_topo_visit<'a>(
     cyclic: &mut HashSet<(String, String)>,
 ) {
     colors.insert(table.name.as_str(), 1);
+    // Self-referential FKs must be deferred: the table doesn't exist in state yet
+    // when CreateTable is validated, so they'd always fail the reference check.
+    for fk in &table.foreign_keys {
+        if fk.to_table == table.name {
+            cyclic.insert((table.name.to_string(), fk.name.to_string()));
+        }
+    }
     let mut deps: Vec<(&str, &str)> = table.foreign_keys.iter()
         .filter(|fk| new_names.contains(fk.to_table.as_str()) && fk.to_table != table.name)
         .map(|fk| (fk.to_table.as_str(), fk.name.as_str()))
