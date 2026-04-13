@@ -252,7 +252,7 @@ operations:
     schema: public
     values: [pending, confirmed, shipped, delivered]
 
-- type: alter_enum          # append-only: adds new values in-place
+- type: alter_enum # append-only: adds new values in-place
   old:
     name: order_status
     values: [pending, confirmed, shipped, delivered]
@@ -284,9 +284,9 @@ operations:
 
 `invoke` runs a subprocess; must exit 0.
 
-## Escape hatches
+---
 
-Two raw escape hatches:
+## Disambiguator
 
 The diff engine is conservative: a renamed column looks identical to a drop + add. The disambiguator catches these cases and asks before committing.
 
