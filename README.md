@@ -122,7 +122,19 @@ Print resolved configuration and exit.
 
 Column types are passed verbatim to PostgreSQL. Shorthand fields (`primary_key`, inline `references`, inline `check`) are normalised before diffing.
 
+Extensions and enum types sit at the top level alongside `tables`:
+
 ```yaml
+extensions:
+  pgcrypto:
+    name: pgcrypto
+
+enums:
+  order_status:
+    name: order_status
+    schema: public
+    values: [pending, confirmed, shipped, delivered]
+
 tables:
   orders:
     name: orders
@@ -189,7 +201,75 @@ triggers:
 
 ## Migration File Format
 
-YAML files, human-readable and hand-editable. Two escape hatches:
+YAML files, human-readable and hand-editable.
+
+### `atomic`
+
+By default every migration runs inside a single transaction (`atomic: true`). Set `atomic: false` when the migration contains operations that PostgreSQL cannot run inside a transaction — most notably `CREATE INDEX CONCURRENTLY`.
+
+```yaml
+id: 0004_add_search_idx
+dependencies: [0003_add_posts]
+atomic: false
+operations:
+  - type: add_index
+    table_name: posts
+    index:
+      name: posts_title_idx
+      columns: [title]
+      unique: false
+    concurrent: true
+```
+
+### Concurrent indexes
+
+`concurrent: true` on `add_index` / `drop_index` emits `CREATE INDEX CONCURRENTLY` / `DROP INDEX CONCURRENTLY`. The migration **must** have `atomic: false`; gaman validates this and rejects the plan otherwise.
+
+### Extensions
+
+```yaml
+- type: create_extension
+  extension:
+    name: pgcrypto
+
+- type: create_extension
+  extension:
+    name: postgis
+    schema: public
+    version: "3.4"
+
+- type: drop_extension
+  extension:
+    name: pgcrypto
+```
+
+### Enum types
+
+```yaml
+- type: create_enum
+  enum_def:
+    name: order_status
+    schema: public
+    values: [pending, confirmed, shipped, delivered]
+
+- type: alter_enum          # append-only: adds new values in-place
+  old:
+    name: order_status
+    values: [pending, confirmed, shipped, delivered]
+  new:
+    name: order_status
+    values: [pending, confirmed, shipped, delivered, cancelled]
+
+- type: drop_enum
+  enum_def:
+    name: order_status
+```
+
+`alter_enum` is subject to PostgreSQL's append-only rule: existing values cannot be removed or reordered. If the diff detects a removal or reordering it emits `drop_enum` + `create_enum` instead. `alter_enum` has no inverse — it cannot appear in a migration that is rolled back.
+
+---
+
+## Escape hatches
 
 ```yaml
 operations:
@@ -204,9 +284,9 @@ operations:
 
 `invoke` runs a subprocess; must exit 0.
 
----
+## Escape hatches
 
-## Disambiguator
+Two raw escape hatches:
 
 The diff engine is conservative: a renamed column looks identical to a drop + add. The disambiguator catches these cases and asks before committing.
 
@@ -286,9 +366,11 @@ Early-stage. Core migration engine is stable and tested in real use. PostgreSQL 
 
 - `squashmigrations`
 - Embedded Rust library API and C-FFI interface
+- `ALTER EXTENSION … UPDATE` (use a `statement` operation for now)
 
 ### Known limitations
 
 - Single-column primary and foreign keys only
 - Column order is not tracked
-- `verify_db` does not validate view or function definitions
+- `verify_db` does not validate view, function, extension, or enum definitions
+- `alter_enum` has no inverse — migrations containing it cannot be rolled back

@@ -193,6 +193,7 @@ impl MigrationGraph {
             id,
             dependencies,
             operations: vec![],
+            atomic: true,
         })
     }
 
@@ -210,6 +211,7 @@ mod tests {
             id: id.to_string(),
             dependencies: deps.iter().map(|s| s.to_string()).collect(),
             operations: vec![],
+            atomic: true,
         }
     }
 

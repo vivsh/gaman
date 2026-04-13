@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::states::SchemaState;
 
@@ -57,6 +58,12 @@ impl Dialect {
     pub fn normalize_type<'a>(&self, t: &'a str) -> &'a str {
         match self {
             Dialect::Postgres => postgres::normalize_type(t),
+        }
+    }
+
+    pub fn validate_migration(&self, m: &Migration) -> Result<(), DialectError> {
+        match self {
+            Dialect::Postgres => postgres::validate_migration(m),
         }
     }
 }

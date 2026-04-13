@@ -49,6 +49,7 @@ pub fn three_migration_chain() -> Vec<Migration> {
         id: "0001_create_users".into(),
         dependencies: vec![],
         operations: vec![Operation::CreateTable { table: users_table() }],
+        atomic: true,
     };
     let m2 = Migration {
         id: "0002_add_email".into(),
@@ -57,11 +58,13 @@ pub fn three_migration_chain() -> Vec<Migration> {
             table_name: "users".into(),
             column: nullable_col("email", "text"),
         }],
+        atomic: true,
     };
     let m3 = Migration {
         id: "0003_create_posts".into(),
         dependencies: vec!["0002_add_email".into()],
         operations: vec![Operation::CreateTable { table: posts_table() }],
+        atomic: true,
     };
     vec![m1, m2, m3]
 }

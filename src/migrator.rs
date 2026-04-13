@@ -95,7 +95,7 @@ impl Migrator {
         MigrationGraph::validate_id(&id).map_err(MigratorError::Graph)?;
         let mut dependencies: Vec<String> = self.graph.heads().iter().map(|s| s.to_string()).collect();
         dependencies.sort();
-        let migration = Migration { id, dependencies, operations: ops };
+        let migration = Migration { id, dependencies, operations: ops, atomic: true };
         if !dry_run {
             self.source.save(&migration)?;
         }
@@ -128,7 +128,7 @@ impl Migrator {
         MigrationGraph::validate_id(&id).map_err(MigratorError::Graph)?;
         let mut dependencies: Vec<String> = self.graph.heads().iter().map(|s| s.to_string()).collect();
         dependencies.sort();
-        let migration = Migration { id, dependencies, operations: vec![] };
+        let migration = Migration { id, dependencies, operations: vec![], atomic: true };
         self.source.save(&migration)?;
         Ok(migration)
     }
@@ -241,7 +241,7 @@ impl Migrator {
                             )));
                         }
                     }
-                    crate::operations::Operation::AddIndex { table_name, index } => {
+                    crate::operations::Operation::AddIndex { table_name, index, .. } => {
                         let entry = index_names.entry(table_name.clone()).or_default();
                         if !entry.insert(index.name.clone()) {
                             return Err(MigratorError::Config(format!(
@@ -267,6 +267,7 @@ impl Migrator {
                     inner: Box::new(e),
                 })?;
             }
+            self.dialect.validate_migration(m)?;
         }
         Ok(())
     }
@@ -345,14 +346,14 @@ impl Migrator {
 
             for id in to_revert {
                 let migration = self.graph.get(id).expect("applied id must exist in graph");
-                executor.begin()?;
+                if migration.atomic { executor.begin()?; }
                 if !fake {
                     let mut inv_ops = Vec::with_capacity(migration.operations.len());
                     for op in &migration.operations {
                         match op.inverse() {
                             Some(inv) => inv_ops.push(inv),
                             None => {
-                                let _ = executor.rollback();
+                                if migration.atomic { let _ = executor.rollback(); }
                                 return Err(MigratorError::Config(format!(
                                     "migration '{id}' is not reversible: operation '{}' has no inverse",
                                     op.type_name()
@@ -362,17 +363,19 @@ impl Migrator {
                     }
                     inv_ops.reverse();
                     if let Err(e) = self.run_ops(&inv_ops, executor, invoker) {
-                        let _ = executor.rollback();
+                        if migration.atomic { let _ = executor.rollback(); }
                         return Err(e);
                     }
                 }
                 if let Err(e) = executor.execute(&self.dialect.unrecord_sql(id)) {
-                    let _ = executor.rollback();
+                    if migration.atomic { let _ = executor.rollback(); }
                     return Err(e.into());
                 }
-                if let Err(e) = executor.commit() {
-                    let _ = executor.rollback();
-                    return Err(e.into());
+                if migration.atomic {
+                    if let Err(e) = executor.commit() {
+                        let _ = executor.rollback();
+                        return Err(e.into());
+                    }
                 }
             }
 
@@ -383,19 +386,21 @@ impl Migrator {
                 .collect();
             for id in pending {
                 let migration = self.graph.get(id).expect("pending id must exist in graph");
-                executor.begin()?;
+                if migration.atomic { executor.begin()?; }
                 if !fake
                     && let Err(e) = self.run_ops(&migration.operations, executor, invoker) {
-                        let _ = executor.rollback();
+                        if migration.atomic { let _ = executor.rollback(); }
                         return Err(e);
                     }
                 if let Err(e) = executor.execute(&self.dialect.record_sql(id)) {
-                    let _ = executor.rollback();
+                    if migration.atomic { let _ = executor.rollback(); }
                     return Err(e.into());
                 }
-                if let Err(e) = executor.commit() {
-                    let _ = executor.rollback();
-                    return Err(e.into());
+                if migration.atomic {
+                    if let Err(e) = executor.commit() {
+                        let _ = executor.rollback();
+                        return Err(e.into());
+                    }
                 }
             }
 
@@ -410,19 +415,21 @@ impl Migrator {
             .collect();
         for id in &pending {
             let migration = self.graph.get(id).expect("pending id must exist in graph");
-            executor.begin()?;
+            if migration.atomic { executor.begin()?; }
             if !fake
                 && let Err(e) = self.run_ops(&migration.operations, executor, invoker) {
-                    let _ = executor.rollback();
+                    if migration.atomic { let _ = executor.rollback(); }
                     return Err(e);
                 }
             if let Err(e) = executor.execute(&self.dialect.record_sql(id)) {
-                let _ = executor.rollback();
+                if migration.atomic { let _ = executor.rollback(); }
                 return Err(e.into());
             }
-            if let Err(e) = executor.commit() {
-                let _ = executor.rollback();
-                return Err(e.into());
+            if migration.atomic {
+                if let Err(e) = executor.commit() {
+                    let _ = executor.rollback();
+                    return Err(e.into());
+                }
             }
         }
         executor.release_lock()?;
@@ -546,6 +553,7 @@ mod tests {
             id: id.to_string(),
             dependencies: deps.iter().map(|s| s.to_string()).collect(),
             operations: ops,
+            atomic: true,
         }
     }
 
@@ -841,6 +849,7 @@ mod tests {
             id: "0001_x".into(),
             dependencies: vec![],
             operations: vec![Operation::Statement { up: "SELECT 1".into(), down: None }],
+            atomic: true,
         }];
         let err = m.validate_plan(&migrations, false).unwrap_err();
         assert!(matches!(err, MigratorError::Config(_)));
@@ -853,6 +862,7 @@ mod tests {
             id: "0001_x".into(),
             dependencies: vec![],
             operations: vec![Operation::CreateTable { table: simple_table("users", &["id"]) }],
+            atomic: true,
         }];
         assert!(m.validate_plan(&migrations, false).is_ok());
     }
@@ -879,6 +889,7 @@ mod tests {
             id: "0001_x".into(),
             dependencies: vec![],
             operations: vec![Operation::CreateTable { table }],
+            atomic: true,
         }];
         let err = m.validate_plan(&migrations, true).unwrap_err();
         assert!(matches!(err, MigratorError::Config(s) if s.contains("unknown table")));
@@ -909,11 +920,13 @@ mod tests {
                 id: "0001_create_users".into(),
                 dependencies: vec![],
                 operations: vec![Operation::CreateTable { table: users }],
+                atomic: true,
             },
             Migration {
                 id: "0002_create_posts".into(),
                 dependencies: vec!["0001_create_users".into()],
                 operations: vec![Operation::CreateTable { table: posts }],
+                atomic: true,
             },
         ];
         assert!(m.validate_plan(&migrations, true).is_ok());
@@ -929,6 +942,7 @@ mod tests {
                 id: "0001_create_users".into(),
                 dependencies: vec![],
                 operations: vec![Operation::CreateTable { table: simple_table("users", &["id"]) }],
+                atomic: true,
             },
             Migration {
                 id: "0002_idx_a".into(),
@@ -936,7 +950,9 @@ mod tests {
                 operations: vec![Operation::AddIndex {
                     table_name: "users".into(),
                     index: Index { name: "users_name_idx".into(), columns: vec!["id".into()], unique: false, predicate: None },
+                    concurrent: false,
                 }],
+                atomic: true,
             },
             Migration {
                 id: "0003_idx_b".into(),
@@ -944,7 +960,9 @@ mod tests {
                 operations: vec![Operation::AddIndex {
                     table_name: "users".into(),
                     index: Index { name: "users_name_idx".into(), columns: vec!["id".into()], unique: false, predicate: None },
+                    concurrent: false,
                 }],
+                atomic: true,
             },
         ];
         let err = m.validate_plan(&migrations, true).unwrap_err();

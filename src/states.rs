@@ -43,6 +43,14 @@ pub enum ReplayError {
     ViewAlreadyExists(String),
     #[error("view '{0}' not found")]
     ViewNotFound(String),
+    #[error("extension '{0}' already exists")]
+    ExtensionAlreadyExists(String),
+    #[error("extension '{0}' not found")]
+    ExtensionNotFound(String),
+    #[error("enum '{0}' already exists")]
+    EnumAlreadyExists(String),
+    #[error("enum '{0}' not found")]
+    EnumNotFound(String),
     #[error("in migration '{migration}' (operation {op_num})")]
     WithContext {
         migration: String,
@@ -154,6 +162,25 @@ pub struct ViewDef {
     pub definition: String,
 }
 
+/// A PostgreSQL extension (e.g. pgcrypto, postgis).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExtensionDef {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+/// A named enum type with an ordered set of label values.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EnumDef {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    pub values: Vec<String>,
+}
+
 /// Complete normalized schema state — a snapshot of all tables at a point in time.
 /// Uses `BTreeMap` to guarantee deterministic ordering.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -163,6 +190,10 @@ pub struct SchemaState {
     pub views: BTreeMap<String, ViewDef>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub functions: BTreeMap<String, FunctionDef>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, ExtensionDef>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub enums: BTreeMap<String, EnumDef>,
 }
 
 /// A single table definition.
@@ -524,7 +555,7 @@ impl SchemaState {
                 table.foreign_keys.remove(pos);
             }
 
-            Operation::AddIndex { table_name, index } => {
+            Operation::AddIndex { table_name, index, .. } => {
                 let table = self.tables.get_mut(table_name).ok_or_else(|| {
                     ReplayError::TableNotFound(table_name.clone())
                 })?;
@@ -537,7 +568,7 @@ impl SchemaState {
                 table.indexes.push(index.clone());
             }
 
-            Operation::DropIndex { table_name, index } => {
+            Operation::DropIndex { table_name, index, .. } => {
                 let table = self.tables.get_mut(table_name).ok_or_else(|| {
                     ReplayError::TableNotFound(table_name.clone())
                 })?;
@@ -651,6 +682,39 @@ impl SchemaState {
                 }
                 let new_key = schema_qualified_key(&new.name, new.schema.as_deref());
                 self.views.insert(new_key, new.clone());
+            }
+
+            Operation::CreateExtension { extension } => {
+                if self.extensions.contains_key(&extension.name) {
+                    return Err(ReplayError::ExtensionAlreadyExists(extension.name.clone()));
+                }
+                self.extensions.insert(extension.name.clone(), extension.clone());
+            }
+
+            Operation::DropExtension { extension } => {
+                if self.extensions.remove(&extension.name).is_none() {
+                    return Err(ReplayError::ExtensionNotFound(extension.name.clone()));
+                }
+            }
+
+            Operation::CreateEnum { enum_def } => {
+                if self.enums.contains_key(&enum_def.name) {
+                    return Err(ReplayError::EnumAlreadyExists(enum_def.name.clone()));
+                }
+                self.enums.insert(enum_def.name.clone(), enum_def.clone());
+            }
+
+            Operation::DropEnum { enum_def } => {
+                if self.enums.remove(&enum_def.name).is_none() {
+                    return Err(ReplayError::EnumNotFound(enum_def.name.clone()));
+                }
+            }
+
+            Operation::AlterEnum { old, new } => {
+                if self.enums.remove(&old.name).is_none() {
+                    return Err(ReplayError::EnumNotFound(old.name.clone()));
+                }
+                self.enums.insert(new.name.clone(), new.clone());
             }
         }
         Ok(())
@@ -846,7 +910,7 @@ mod tests {
         let mut s = SchemaState::default();
         apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
         let idx = Index { name: "idx_email".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None };
-        apply_ok(&mut s, Operation::AddIndex { table_name: "users".to_string(), index: idx });
+        apply_ok(&mut s, Operation::AddIndex { table_name: "users".to_string(), index: idx, concurrent: false });
         assert_eq!(s.tables["users"].indexes[0].name, "idx_email");
     }
 
@@ -856,8 +920,8 @@ mod tests {
         let mut s = SchemaState::default();
         apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
         let idx = Index { name: "idx_email".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None };
-        apply_ok(&mut s, Operation::AddIndex { table_name: "users".to_string(), index: idx.clone() });
-        let err = s.apply(&Operation::AddIndex { table_name: "users".to_string(), index: idx }).unwrap_err();
+        apply_ok(&mut s, Operation::AddIndex { table_name: "users".to_string(), index: idx.clone(), concurrent: false });
+        let err = s.apply(&Operation::AddIndex { table_name: "users".to_string(), index: idx, concurrent: false }).unwrap_err();
         assert!(matches!(err, ReplayError::IndexAlreadyExists { .. }));
     }
 
@@ -867,8 +931,8 @@ mod tests {
         let mut s = SchemaState::default();
         apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
         let idx = Index { name: "idx_email".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None };
-        apply_ok(&mut s, Operation::AddIndex { table_name: "users".to_string(), index: idx });
-        apply_ok(&mut s, Operation::DropIndex { table_name: "users".to_string(), index: Index { name: "idx_email".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None } });
+        apply_ok(&mut s, Operation::AddIndex { table_name: "users".to_string(), index: idx, concurrent: false });
+        apply_ok(&mut s, Operation::DropIndex { table_name: "users".to_string(), index: Index { name: "idx_email".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None }, concurrent: false });
         assert!(s.tables["users"].indexes.is_empty());
     }
 
@@ -1439,7 +1503,7 @@ tables:
         verify(s.clone(), Operation::AddForeignKey { table_name: "users".to_string(), foreign_key: fk });
 
         // AddIndex / DropIndex
-        verify(s.clone(), Operation::AddIndex { table_name: "users".to_string(), index: idx });
+        verify(s.clone(), Operation::AddIndex { table_name: "users".to_string(), index: idx, concurrent: false });
 
         // AddConstraint / DropConstraint
         verify(s.clone(), Operation::AddConstraint { table_name: "users".to_string(), constraint: chk });
@@ -1529,6 +1593,7 @@ tables:
         apply_ok(&mut s, Operation::AddIndex {
             table_name: "users".to_string(),
             index: Index { name: "users_email_idx".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None },
+            concurrent: false,
         });
         apply_ok(&mut s, Operation::DropColumn { table_name: "users".to_string(), column: Column { name: "age".to_string(), col_type: "integer".to_string(), nullable: true, ..Default::default() }, cascade: false });
 

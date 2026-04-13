@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 use crate::operations::Operation;
-use crate::states::{Column, Constraint, ForeignKey, Index, SchemaState, Table, TriggerDef};
+use crate::states::{Column, Constraint, EnumDef, ForeignKey, Index, SchemaState, Table, TriggerDef};
 
 #[derive(Debug, Error)]
 pub enum DiffError {}
@@ -68,6 +68,8 @@ impl DiffEngine {
         let (creates, deferred_fk_adds) = fk_topo_sort(new_tables, &new_names);
         let (fn_creates, fn_drops) = diff_functions(current, previous);
         let (view_creates, view_drops) = diff_views(current, previous);
+        let (ext_creates, ext_drops) = diff_extensions(current, previous);
+        let (enum_creates, enum_drops) = diff_enums(current, previous);
 
         // When a function is dropped, any surviving trigger that references it becomes
         // invalid. The trigger itself may be "unchanged" from the diff's perspective
@@ -127,6 +129,8 @@ impl DiffEngine {
         }
 
         let mut result = Vec::with_capacity(drops.len() + creates.len() + remaining_changes.len());
+        result.extend(ext_creates);
+        result.extend(enum_creates);
         result.extend(view_drops);
         result.extend(pre_drop_fk_ops);
         result.extend(drop_ordered(drops));
@@ -137,6 +141,8 @@ impl DiffEngine {
         result.extend(orphan_trigger_drops);
         result.extend(fn_drops);
         result.extend(view_creates);
+        result.extend(enum_drops);
+        result.extend(ext_drops);
         Ok(result)
     }
 }
@@ -182,7 +188,7 @@ fn diff_table(name: &str, prev: &Table, curr: &Table, ops: &mut Vec<Operation>) 
     }
     for i in &prev.indexes {
         if curr_idxs.get(i.name.as_str()) != Some(&i) {
-            ops.push(Operation::DropIndex { table_name: name.to_string(), index: i.clone() });
+            ops.push(Operation::DropIndex { table_name: name.to_string(), index: i.clone(), concurrent: false });
         }
     }
     for fk in &prev.foreign_keys {
@@ -217,7 +223,7 @@ fn diff_table(name: &str, prev: &Table, curr: &Table, ops: &mut Vec<Operation>) 
     }
     for i in &curr.indexes {
         if prev_idxs.get(i.name.as_str()) != Some(&i) {
-            ops.push(Operation::AddIndex { table_name: name.to_string(), index: i.clone() });
+            ops.push(Operation::AddIndex { table_name: name.to_string(), index: i.clone(), concurrent: false });
         }
     }
     for c in &curr.constraints {
@@ -281,6 +287,103 @@ impl Default for DiffEngine {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn diff_extensions(current: &SchemaState, previous: &SchemaState) -> (Vec<Operation>, Vec<Operation>) {
+    let mut creates: Vec<Operation> = Vec::new();
+    let mut drops: Vec<Operation> = Vec::new();
+    let mut prev_iter = previous.extensions.iter().peekable();
+    let mut curr_iter = current.extensions.iter().peekable();
+    loop {
+        match (prev_iter.peek(), curr_iter.peek()) {
+            (None, None) => break,
+            (Some(_), None) => {
+                let (_, e) = prev_iter.next().unwrap();
+                drops.push(Operation::DropExtension { extension: e.clone() });
+            }
+            (None, Some(_)) => {
+                let (_, e) = curr_iter.next().unwrap();
+                creates.push(Operation::CreateExtension { extension: e.clone() });
+            }
+            (Some((pk, _)), Some((ck, _))) => match pk.as_str().cmp(ck.as_str()) {
+                std::cmp::Ordering::Less => {
+                    let (_, e) = prev_iter.next().unwrap();
+                    drops.push(Operation::DropExtension { extension: e.clone() });
+                }
+                std::cmp::Ordering::Greater => {
+                    let (_, e) = curr_iter.next().unwrap();
+                    creates.push(Operation::CreateExtension { extension: e.clone() });
+                }
+                std::cmp::Ordering::Equal => {
+                    let (_, pe) = prev_iter.next().unwrap();
+                    let (_, ce) = curr_iter.next().unwrap();
+                    if pe != ce {
+                        drops.push(Operation::DropExtension { extension: pe.clone() });
+                        creates.push(Operation::CreateExtension { extension: ce.clone() });
+                    }
+                }
+            },
+        }
+    }
+    (creates, drops)
+}
+
+// Returns (creates+alters, drops). AlterEnum is emitted when values are only appended;
+// a removal or reordering is treated as DropEnum + CreateEnum because PostgreSQL has no
+// DROP VALUE and the diff engine must remain deterministic.
+fn diff_enums(current: &SchemaState, previous: &SchemaState) -> (Vec<Operation>, Vec<Operation>) {
+    let mut creates: Vec<Operation> = Vec::new();
+    let mut drops: Vec<Operation> = Vec::new();
+    let mut prev_iter = previous.enums.iter().peekable();
+    let mut curr_iter = current.enums.iter().peekable();
+    loop {
+        match (prev_iter.peek(), curr_iter.peek()) {
+            (None, None) => break,
+            (Some(_), None) => {
+                let (_, e) = prev_iter.next().unwrap();
+                drops.push(Operation::DropEnum { enum_def: e.clone() });
+            }
+            (None, Some(_)) => {
+                let (_, e) = curr_iter.next().unwrap();
+                creates.push(Operation::CreateEnum { enum_def: e.clone() });
+            }
+            (Some((pk, _)), Some((ck, _))) => match pk.as_str().cmp(ck.as_str()) {
+                std::cmp::Ordering::Less => {
+                    let (_, e) = prev_iter.next().unwrap();
+                    drops.push(Operation::DropEnum { enum_def: e.clone() });
+                }
+                std::cmp::Ordering::Greater => {
+                    let (_, e) = curr_iter.next().unwrap();
+                    creates.push(Operation::CreateEnum { enum_def: e.clone() });
+                }
+                std::cmp::Ordering::Equal => {
+                    let (_, pe) = prev_iter.next().unwrap();
+                    let (_, ce) = curr_iter.next().unwrap();
+                    if pe != ce {
+                        if is_append_only(pe, ce) {
+                            creates.push(Operation::AlterEnum { old: pe.clone(), new: ce.clone() });
+                        } else {
+                            drops.push(Operation::DropEnum { enum_def: pe.clone() });
+                            creates.push(Operation::CreateEnum { enum_def: ce.clone() });
+                        }
+                    }
+                }
+            },
+        }
+    }
+    (creates, drops)
+}
+
+// Returns true when new's values contain all of old's values in the same relative order
+// with zero removals — i.e. old is a subsequence of new.
+fn is_append_only(old: &EnumDef, new: &EnumDef) -> bool {
+    let mut old_iter = old.values.iter().peekable();
+    for val in &new.values {
+        if old_iter.peek() == Some(&val) {
+            old_iter.next();
+        }
+    }
+    old_iter.next().is_none()
 }
 
 fn diff_views(current: &SchemaState, previous: &SchemaState) -> (Vec<Operation>, Vec<Operation>) {

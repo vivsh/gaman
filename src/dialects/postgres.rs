@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::states::{Column, Constraint, SchemaState, Table, ViewDef, Volatility};
 
@@ -205,13 +206,15 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             let suffix = if *cascade { " CASCADE" } else { "" };
             vec![format!("ALTER TABLE {} DROP CONSTRAINT {}{}", quote_table_name(table_name), quote_ident(&foreign_key.name), suffix)]
         }
-        Operation::AddIndex { table_name, index } => {
+        Operation::AddIndex { table_name, index, concurrent } => {
             let unique = if index.unique { "UNIQUE " } else { "" };
+            let conc = if *concurrent { "CONCURRENTLY " } else { "" };
             let cols: Vec<String> = index.columns.iter().map(|c| quote_ident(c)).collect();
-            vec![format!("CREATE {}INDEX {} ON {} ({})", unique, quote_ident(&index.name), quote_table_name(table_name), cols.join(", "))]
+            vec![format!("CREATE {}INDEX {}{} ON {} ({})", unique, conc, quote_ident(&index.name), quote_table_name(table_name), cols.join(", "))]
         }
-        Operation::DropIndex { index, .. } => {
-            vec![format!("DROP INDEX {}", quote_ident(&index.name))]
+        Operation::DropIndex { index, concurrent, .. } => {
+            let conc = if *concurrent { " CONCURRENTLY" } else { "" };
+            vec![format!("DROP INDEX{} {}", conc, quote_ident(&index.name))]
         }
         Operation::AddConstraint { table_name, constraint } => {
             vec![format!("ALTER TABLE {} ADD CONSTRAINT {}", quote_table_name(table_name), inline_constraint_def(constraint))]
@@ -265,8 +268,73 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
         Operation::ReplaceView { new, .. } => {
             vec![format!("CREATE OR REPLACE VIEW {} AS {}", qualified_view(new), new.definition)]
         }
+        Operation::CreateExtension { extension } => {
+            let mut sql = format!("CREATE EXTENSION IF NOT EXISTS {}", quote_ident(&extension.name));
+            if let Some(schema) = &extension.schema {
+                sql.push_str(&format!(" SCHEMA {}", quote_ident(schema)));
+            }
+            if let Some(version) = &extension.version {
+                let v = version.replace('\'', "''");
+                sql.push_str(&format!(" VERSION '{v}'"));
+            }
+            vec![sql]
+        }
+        Operation::DropExtension { extension } => {
+            vec![format!("DROP EXTENSION {}", quote_ident(&extension.name))]
+        }
+        Operation::CreateEnum { enum_def } => {
+            let values: Vec<String> = enum_def.values.iter()
+                .map(|v| format!("'{}'", v.replace('\'', "''")))
+                .collect();
+            let name = match enum_def.schema.as_deref() {
+                None | Some("public") => quote_ident(&enum_def.name),
+                Some(s) => format!("{}.{}", quote_ident(s), quote_ident(&enum_def.name)),
+            };
+            vec![format!("CREATE TYPE {name} AS ENUM ({})", values.join(", "))]
+        }
+        Operation::DropEnum { enum_def } => {
+            let name = match enum_def.schema.as_deref() {
+                None | Some("public") => quote_ident(&enum_def.name),
+                Some(s) => format!("{}.{}", quote_ident(s), quote_ident(&enum_def.name)),
+            };
+            vec![format!("DROP TYPE {name}")]
+        }
+        Operation::AlterEnum { old, new } => {
+            let name = match new.schema.as_deref() {
+                None | Some("public") => quote_ident(&new.name),
+                Some(s) => format!("{}.{}", quote_ident(s), quote_ident(&new.name)),
+            };
+            let old_set: std::collections::HashSet<&str> = old.values.iter().map(|v| v.as_str()).collect();
+            new.values.iter()
+                .filter(|v| !old_set.contains(v.as_str()))
+                .map(|v| format!("ALTER TYPE {name} ADD VALUE '{}'", v.replace('\'', "''")))
+                .collect()
+        }
     };
     Ok(stmts)
+}
+
+pub fn validate_migration(m: &Migration) -> Result<(), super::DialectError> {
+    if m.atomic {
+        for op in &m.operations {
+            match op {
+                Operation::AddIndex { concurrent: true, .. } => {
+                    return Err(super::DialectError::Unsupported(
+                        "add_index".into(),
+                        "CONCURRENTLY requires atomic = false on the migration".into(),
+                    ));
+                }
+                Operation::DropIndex { concurrent: true, .. } => {
+                    return Err(super::DialectError::Unsupported(
+                        "drop_index".into(),
+                        "CONCURRENTLY requires atomic = false on the migration".into(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn create_tracking_table_sql() -> Vec<String> {
@@ -589,21 +657,21 @@ mod tests {
     #[test]
     fn add_index_sql() {
         let index = Index { name: "users_email_idx".to_string(), columns: vec!["email".to_string()], unique: false, predicate: None };
-        let sql = operation_to_sql(&Operation::AddIndex { table_name: "users".to_string(), index }).unwrap();
+        let sql = operation_to_sql(&Operation::AddIndex { table_name: "users".to_string(), index, concurrent: false }).unwrap();
         assert_eq!(sql, vec!["CREATE INDEX \"users_email_idx\" ON \"users\" (\"email\")"]);
     }
 
     #[test]
     fn add_unique_index_sql() {
         let index = Index { name: "users_email_idx".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None };
-        let sql = operation_to_sql(&Operation::AddIndex { table_name: "users".to_string(), index }).unwrap();
+        let sql = operation_to_sql(&Operation::AddIndex { table_name: "users".to_string(), index, concurrent: false }).unwrap();
         assert_eq!(sql, vec!["CREATE UNIQUE INDEX \"users_email_idx\" ON \"users\" (\"email\")"]);
     }
 
     #[test]
     fn drop_index_sql() {
         let index = Index { name: "users_email_idx".to_string(), columns: vec!["email".to_string()], unique: false, predicate: None };
-        let sql = operation_to_sql(&Operation::DropIndex { table_name: "users".to_string(), index }).unwrap();
+        let sql = operation_to_sql(&Operation::DropIndex { table_name: "users".to_string(), index, concurrent: false }).unwrap();
         assert_eq!(sql, vec!["DROP INDEX \"users_email_idx\""]);
     }
 
