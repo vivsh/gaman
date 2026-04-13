@@ -68,15 +68,57 @@ impl DiffEngine {
         let (creates, deferred_fk_adds) = fk_topo_sort(new_tables, &new_names);
         let (fn_creates, fn_drops) = diff_functions(current, previous);
         let (view_creates, view_drops) = diff_views(current, previous);
+
+        // When a function is dropped, any surviving trigger that references it becomes
+        // invalid. The trigger itself may be "unchanged" from the diff's perspective
+        // (same name, same body), so diff_table won't generate a DropTrigger for it.
+        // We detect these orphaned triggers here and prepend their DropTrigger ops before
+        // fn_drops so they are removed before the function disappears.
+        let dropped_fns: HashSet<&str> = fn_drops.iter()
+            .filter_map(|op| match op {
+                Operation::DropFunction { function } => Some(function.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let dropped_table_names: HashSet<&str> = drops.iter().map(|t| t.name.as_str()).collect();
+        let existing_drop_trigger_keys: HashSet<String> = changes.iter()
+            .filter_map(|op| match op {
+                Operation::DropTrigger { table_name, trigger } => {
+                    trigger.name.as_deref().map(|n| format!("{}:{}", table_name, n))
+                }
+                _ => None,
+            })
+            .collect();
+        let mut orphan_trigger_drops: Vec<Operation> = Vec::new();
+        if !dropped_fns.is_empty() {
+            for (table_name, table) in &previous.tables {
+                if dropped_table_names.contains(table_name.as_str()) {
+                    continue; // table is being dropped; its triggers vanish with it
+                }
+                for trigger in &table.triggers {
+                    if trigger.function_name.as_deref().map_or(false, |f| dropped_fns.contains(f)) {
+                        let key = trigger.name.as_deref()
+                            .map(|n| format!("{}:{}", table_name, n))
+                            .unwrap_or_default();
+                        if !existing_drop_trigger_keys.contains(&key) {
+                            orphan_trigger_drops.push(Operation::DropTrigger {
+                                table_name: table_name.clone(),
+                                trigger: trigger.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
         let mut result = Vec::with_capacity(drops.len() + creates.len() + changes.len());
         result.extend(view_drops);
-        for table in drops.iter().rev() {
-            result.push(Operation::DropTable { table: (*table).clone() });
-        }
+        result.extend(drop_ordered(drops));
         result.extend(fn_creates);
         result.extend(creates);
         result.extend(deferred_fk_adds);
         result.extend(changes);
+        result.extend(orphan_trigger_drops);
         result.extend(fn_drops);
         result.extend(view_creates);
         Ok(result)
@@ -266,6 +308,44 @@ fn diff_views(current: &SchemaState, previous: &SchemaState) -> (Vec<Operation>,
 // Uses grey/black DFS coloring: a back edge to a grey node means a cycle — the FK
 // causing it is stripped from the inline CreateTable and emitted as AddForeignKey after
 // all tables in the cycle exist.
+// Returns DropTable operations in safe order: tables that are FK-referenced by other
+// dropped tables come last. Cycles within the drop set are broken by emitting a leading
+// DropForeignKey for the cycle-forming constraint before either DropTable.
+// Self-referential FKs don't block drops (the row and constraint vanish together).
+fn drop_ordered(tables: Vec<&Table>) -> Vec<Operation> {
+    let drop_set: HashSet<&str> = tables.iter().map(|t| t.name.as_str()).collect();
+    let by_name: HashMap<&str, &Table> = tables.iter().map(|t| (t.name.as_str(), *t)).collect();
+    let mut colors: HashMap<&str, u8> = HashMap::new();
+    let mut order: Vec<&Table> = Vec::new();
+    let mut cyclic: HashSet<(String, String)> = HashSet::new();
+    let mut sorted = tables;
+    sorted.sort_by_key(|t| t.name.as_str());
+    for table in sorted {
+        if colors.get(table.name.as_str()).copied().unwrap_or(0) == 0 {
+            fk_topo_visit(table, &by_name, &drop_set, &mut colors, &mut order, &mut cyclic);
+        }
+    }
+    // order is create-order (dependencies first); reverse gives safe drop order.
+    // For cyclic pairs, emit DropForeignKey for the cycle-forming constraint first so
+    // either table can be dropped without a dependency block.
+    let mut pre: Vec<Operation> = Vec::new();
+    let mut drops: Vec<Operation> = Vec::new();
+    for table in order.iter().rev() {
+        for fk in &table.foreign_keys {
+            if cyclic.contains(&(table.name.clone(), fk.name.clone())) {
+                pre.push(Operation::DropForeignKey {
+                    table_name: table.name.clone(),
+                    foreign_key: fk.clone(),
+                    cascade: false,
+                });
+            }
+        }
+        drops.push(Operation::DropTable { table: (*table).clone() });
+    }
+    pre.extend(drops);
+    pre
+}
+
 fn fk_topo_sort<'a>(tables: Vec<&'a Table>, new_names: &HashSet<&str>) -> (Vec<Operation>, Vec<Operation>) {
     let by_name: HashMap<&'a str, &'a Table> = tables.iter().map(|t| (t.name.as_str(), *t)).collect();
     let mut colors: HashMap<&'a str, u8> = HashMap::new(); // 0=unvisited, 1=in-stack, 2=done
@@ -430,7 +510,7 @@ mod tests {
         assert!(matches!(&ops[1], Operation::CreateTable { table } if table.name == "zebra"));
     }
 
-    /// Multiple dropped tables are emitted in reverse-sorted order.
+    /// Multiple dropped tables are emitted in reverse-sorted order when no FK deps exist.
     #[test]
     fn multiple_dropped_tables_reverse_sorted() {
         let mut prev = SchemaState::default();
@@ -441,6 +521,31 @@ mod tests {
         assert_eq!(ops.len(), 2);
         assert!(matches!(&ops[0], Operation::DropTable { table } if table.name == "zebra"));
         assert!(matches!(&ops[1], Operation::DropTable { table } if table.name == "apple"));
+    }
+
+    /// When dropping tables with FK dependencies between them, the referencing table
+    /// (the one with the FK) is dropped before the referenced table.
+    #[test]
+    fn dropped_tables_fk_dep_order() {
+        let mut products = empty_table("products");
+        let mut inventory = empty_table("inventory");
+        inventory.foreign_keys.push(ForeignKey {
+            name: "inventory_product_id_fkey".to_string(),
+            from_column: "product_id".to_string(),
+            to_table: "products".to_string(),
+            to_column: "id".to_string(),
+        });
+        let mut prev = SchemaState::default();
+        prev.tables.insert("products".to_string(), products);
+        prev.tables.insert("inventory".to_string(), inventory);
+        let curr = SchemaState::default();
+        let ops = engine().diff(&curr, &prev).unwrap();
+        // inventory (referencing table) must be dropped before products (referenced)
+        let drop_names: Vec<&str> = ops.iter().filter_map(|op| match op {
+            Operation::DropTable { table } => Some(table.name.as_str()),
+            _ => None,
+        }).collect();
+        assert_eq!(drop_names, vec!["inventory", "products"]);
     }
 
     /// A new column on an existing table generates AddColumn.

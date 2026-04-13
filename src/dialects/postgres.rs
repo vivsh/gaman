@@ -1,7 +1,112 @@
+use std::collections::HashSet;
+
 use crate::operations::Operation;
-use crate::states::{Column, Constraint, Table, ViewDef, Volatility};
+use crate::states::{Column, Constraint, SchemaState, Table, ViewDef, Volatility};
 
 use super::DialectError;
+
+// PostgreSQL-specific constraint: DROP FUNCTION fails when dependent triggers still exist.
+// This arises when a function's argument signature changes, because the old signature cannot
+// be replaced in-place — it must be dropped and recreated. Any trigger referencing that
+// function must be bounced (dropped before, recreated after) regardless of whether the
+// trigger itself changed. This is transparent to the generic diff algorithm.
+pub fn reorder_ops(ops: Vec<Operation>, previous: &SchemaState, current: &SchemaState) -> Vec<Operation> {
+    let sig_changed_fns: HashSet<&str> = ops.iter()
+        .filter_map(|op| match op {
+            Operation::AlterFunction { old, new } if old.arguments != new.arguments => {
+                Some(new.name.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+
+    if sig_changed_fns.is_empty() {
+        return ops;
+    }
+
+    let dropped_tables: HashSet<&str> = ops.iter()
+        .filter_map(|op| match op {
+            Operation::DropTable { table } => Some(table.name.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    let mut pre_fn_drops: Vec<Operation> = Vec::new();
+    let mut post_fn_creates: Vec<Operation> = Vec::new();
+    let mut bounced_keys: HashSet<String> = HashSet::new();
+
+    for (table_name, table) in &previous.tables {
+        if dropped_tables.contains(table_name.as_str()) {
+            continue;
+        }
+        for trigger in &table.triggers {
+            if trigger.function_name.as_deref().map_or(false, |f| sig_changed_fns.contains(f)) {
+                if let Some(n) = &trigger.name {
+                    bounced_keys.insert(format!("{}:{}", table_name, n));
+                }
+                pre_fn_drops.push(Operation::DropTrigger {
+                    table_name: table_name.clone(),
+                    trigger: trigger.clone(),
+                });
+            }
+        }
+    }
+    for (table_name, table) in &current.tables {
+        for trigger in &table.triggers {
+            if trigger.function_name.as_deref().map_or(false, |f| sig_changed_fns.contains(f)) {
+                if let Some(n) = &trigger.name {
+                    bounced_keys.insert(format!("{}:{}", table_name, n));
+                }
+                post_fn_creates.push(Operation::CreateTrigger {
+                    table_name: table_name.clone(),
+                    trigger: trigger.clone(),
+                });
+            }
+        }
+    }
+
+    let trigger_key = |op: &Operation| -> Option<String> {
+        match op {
+            Operation::DropTrigger { table_name, trigger } => {
+                trigger.name.as_deref().map(|n| format!("{}:{}", table_name, n))
+            }
+            Operation::CreateTrigger { table_name, trigger } => {
+                trigger.name.as_deref().map(|n| format!("{}:{}", table_name, n))
+            }
+            Operation::AlterTrigger { table_name, old, .. } => {
+                old.name.as_deref().map(|n| format!("{}:{}", table_name, n))
+            }
+            _ => None,
+        }
+    };
+
+    // Find where the first AlterFunction (sig change) sits — pre_fn_drops go just before it,
+    // post_fn_creates go just after the last one.
+    let first_alter = ops.iter().position(|op| matches!(op, Operation::AlterFunction { old, new } if old.arguments != new.arguments));
+    let last_alter = ops.iter().rposition(|op| matches!(op, Operation::AlterFunction { old, new } if old.arguments != new.arguments));
+
+    let (first_alter, last_alter) = match (first_alter, last_alter) {
+        (Some(f), Some(l)) => (f, l),
+        _ => return ops,
+    };
+
+    let mut result = Vec::with_capacity(ops.len() + pre_fn_drops.len() + post_fn_creates.len());
+    for (i, op) in ops.into_iter().enumerate() {
+        if i == first_alter {
+            result.extend(pre_fn_drops.drain(..));
+        }
+        if let Some(key) = trigger_key(&op) {
+            if bounced_keys.contains(&key) {
+                continue; // already handled via pre/post
+            }
+        }
+        result.push(op);
+        if i == last_alter {
+            result.extend(post_fn_creates.drain(..));
+        }
+    }
+    result
+}
 
 pub fn normalize_type(t: &str) -> &str {
     match t {
@@ -121,14 +226,14 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             vec![]
         }
         Operation::CreateFunction { function } => {
-            vec![create_function_sql(function)]
+            vec![create_function_sql(function)?]
         }
         Operation::DropFunction { function } => {
             vec![format!("DROP FUNCTION {}({})", quote_ident(&function.name), function.arguments)]
         }
         Operation::AlterFunction { old, new } => {
             if old.arguments == new.arguments {
-                vec![create_function_sql(new)]
+                vec![create_function_sql(new)?]
             } else {
                 eprintln!(
                     "warning: function '{}' argument signature changed — dropping old and creating new; \
@@ -137,7 +242,7 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
                 );
                 vec![
                     format!("DROP FUNCTION {}({})", quote_ident(&old.name), old.arguments),
-                    create_function_sql(new),
+                    create_function_sql(new)?,
                 ]
             }
         }
@@ -246,18 +351,31 @@ fn inline_constraint_def(c: &Constraint) -> String {
     }
 }
 
-fn create_function_sql(f: &crate::states::FunctionDef) -> String {
-    let vol = match f.volatility {
-        Volatility::Volatile => "",
-        Volatility::Stable => "\nSTABLE",
-        Volatility::Immutable => "\nIMMUTABLE",
+fn create_function_sql(f: &crate::states::FunctionDef) -> Result<String, DialectError> {
+    // PostgreSQL requires trigger functions to be VOLATILE; STABLE/IMMUTABLE are rejected.
+    // Trigger functions also cannot have declared arguments (use TG_ARGV instead).
+    let is_trigger = f.returns.eq_ignore_ascii_case("trigger");
+    if is_trigger && !f.arguments.trim().is_empty() {
+        return Err(DialectError::Unsupported(
+            f.name.clone(),
+            "trigger functions cannot have declared arguments (use TG_NARGS/TG_ARGV instead)".into(),
+        ));
+    }
+    let vol = if is_trigger {
+        ""
+    } else {
+        match f.volatility {
+            Volatility::Volatile => "",
+            Volatility::Stable => "\nSTABLE",
+            Volatility::Immutable => "\nIMMUTABLE",
+        }
     };
     let sec = if f.security_definer { "\nSECURITY DEFINER" } else { "" };
-    format!(
+    Ok(format!(
         "CREATE OR REPLACE FUNCTION {}({})\nRETURNS {}\nLANGUAGE {}{}{}
 AS $func$\n{}\n$func$",
         quote_ident(&f.name), f.arguments, f.returns, f.language, vol, sec, f.body
-    )
+    ))
 }
 
 fn create_trigger_sql(table_name: &str, t: &crate::states::TriggerDef) -> String {

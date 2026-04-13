@@ -29,7 +29,6 @@ pub trait Executor {
 }
 
 pub trait Invoker {
-    fn must_commit(&self) -> bool;
     fn invoke(&self, command: &str, tx: &mut dyn Executor) -> Result<(), InvokerError>;
 }
 

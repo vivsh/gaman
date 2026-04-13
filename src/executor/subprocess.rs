@@ -5,10 +5,6 @@ use super::{Executor, Invoker, InvokerError};
 pub struct SubprocessInvoker;
 
 impl Invoker for SubprocessInvoker {
-    fn must_commit(&self) -> bool {
-        true
-    }
-
     fn invoke(&self, command: &str, _tx: &mut dyn Executor) -> Result<(), InvokerError> {
         let status = Command::new("sh")
             .arg("-c")

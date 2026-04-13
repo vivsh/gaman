@@ -90,6 +90,7 @@ impl Migrator {
             DisambiguationResult::NeedsInput(clars) => return Err(MigratorError::NeedsInput(clars)),
             DisambiguationResult::Resolved(ops) => ops,
         };
+        let ops = self.dialect.reorder(ops, &previous, &current);
         let id = format!("{:04}_{}", self.graph.next_number(), name);
         MigrationGraph::validate_id(&id).map_err(MigratorError::Graph)?;
         let mut dependencies: Vec<String> = self.graph.heads().iter().map(|s| s.to_string()).collect();
@@ -189,6 +190,19 @@ impl Migrator {
             std::collections::HashMap::new();
 
         for m in migrations {
+            // Invoke runs a subprocess that connects to the DB in its own session — its
+            // changes cannot share gaman's transaction. Mixing Invoke with DDL in the same
+            // migration means a failure after the DDL runs could leave the subprocess changes
+            // committed but the DDL rolled back, or vice-versa. Require Invoke-only migrations.
+            let has_invoke = m.operations.iter().any(|op| matches!(op, crate::operations::Operation::Invoke { .. }));
+            let has_other = m.operations.iter().any(|op| !matches!(op, crate::operations::Operation::Invoke { .. }));
+            if has_invoke && has_other {
+                return Err(MigratorError::Config(format!(
+                    "migration '{}': Invoke operations must be in a migration by themselves — \
+                     mixing them with DDL operations risks partial commits that cannot be rolled back",
+                    m.id
+                )));
+            }
             for (i, op) in m.operations.iter().enumerate() {
                 match op {
                     crate::operations::Operation::CreateTable { table } => {
@@ -275,13 +289,7 @@ impl Migrator {
         for op in ops {
             if let Operation::Invoke { up, .. } = op {
                 let inv = invoker.ok_or(InvokerError::NoInvoker)?;
-                if inv.must_commit() {
-                    executor.commit()?;
-                    inv.invoke(up, executor)?;
-                    executor.begin()?;
-                } else {
-                    inv.invoke(up, executor)?;
-                }
+                inv.invoke(up, executor)?;
             } else {
                 for sql in self.dialect.operation_to_sql(op)? {
                     executor.execute(&sql)?;
@@ -362,7 +370,10 @@ impl Migrator {
                     let _ = executor.rollback();
                     return Err(e.into());
                 }
-                executor.commit()?;
+                if let Err(e) = executor.commit() {
+                    let _ = executor.rollback();
+                    return Err(e.into());
+                }
             }
 
             let pending: Vec<&str> = order[..=target_pos]
@@ -382,7 +393,10 @@ impl Migrator {
                     let _ = executor.rollback();
                     return Err(e.into());
                 }
-                executor.commit()?;
+                if let Err(e) = executor.commit() {
+                    let _ = executor.rollback();
+                    return Err(e.into());
+                }
             }
 
             executor.release_lock()?;
@@ -406,7 +420,10 @@ impl Migrator {
                 let _ = executor.rollback();
                 return Err(e.into());
             }
-            executor.commit()?;
+            if let Err(e) = executor.commit() {
+                let _ = executor.rollback();
+                return Err(e.into());
+            }
         }
         executor.release_lock()?;
         Ok(())
@@ -983,7 +1000,6 @@ mod tests {
             called: Cell<bool>,
         }
         impl Invoker for NoCommitInvoker {
-            fn must_commit(&self) -> bool { false }
             fn invoke(&self, _command: &str, _tx: &mut dyn Executor) -> Result<(), InvokerError> {
                 self.called.set(true);
                 Ok(())
@@ -999,7 +1015,7 @@ mod tests {
         assert!(inv.called.get(), "invoker must have been called");
     }
 
-    /// migrate() with must_commit invoker emits COMMIT then BEGIN around the invoke call.
+    /// An invoke-only migration runs in a single transaction without mid-migration commit.
     #[test]
     fn invoke_op_with_commit_invoker_commits_before_invoke() {
         use std::cell::RefCell;
@@ -1008,7 +1024,6 @@ mod tests {
             events: RefCell<Vec<&'static str>>,
         }
         impl Invoker for CommitInvoker {
-            fn must_commit(&self) -> bool { true }
             fn invoke(&self, _command: &str, _tx: &mut dyn Executor) -> Result<(), InvokerError> {
                 self.events.borrow_mut().push("invoke");
                 Ok(())
@@ -1026,10 +1041,10 @@ mod tests {
             fn rollback(&mut self) -> Result<(), ExecutorError> { self.events.borrow_mut().push("rollback"); Ok(()) }
         }
 
-        let shared_events: RefCell<Vec<&'static str>> = RefCell::new(vec![]);
         let inv = CommitInvoker { events: RefCell::new(vec![]) };
-
         let mut exec = RecordingExecutor { events: RefCell::new(vec![]) };
+
+        // Invoke-only migration: runs fine, no mid-migration commit
         let m = migrator_from(vec![migration_with_ops(
             "0001_seed", &[],
             vec![Operation::Invoke { up: "noop".into(), down: None }],
@@ -1038,12 +1053,29 @@ mod tests {
 
         let exec_events = exec.events.borrow();
         let inv_events = inv.events.borrow();
-        // Expect: begin (migration start), commit (before invoke), begin (after invoke), commit (end of migration)
-        assert!(exec_events.iter().position(|&e| e == "commit").unwrap()
-            < exec_events.iter().rposition(|&e| e == "begin").unwrap(),
-            "commit must come before the re-begin for must_commit invoker");
+        // Expect exactly: begin, commit (one clean transaction wrapping the invoke)
+        let commits: Vec<_> = exec_events.iter().filter(|&&e| e == "commit").collect();
+        let begins: Vec<_> = exec_events.iter().filter(|&&e| e == "begin").collect();
+        assert_eq!(begins.len(), 1, "exactly one BEGIN for an invoke-only migration");
+        assert_eq!(commits.len(), 1, "exactly one COMMIT for an invoke-only migration");
         assert_eq!(inv_events.as_slice(), &["invoke"]);
-        let _ = shared_events;
+    }
+
+    /// A migration that mixes Invoke with DDL ops is rejected at validation time.
+    #[test]
+    fn invoke_mixed_with_ddl_is_rejected() {
+        let table = simple_table("users", &["id"]);
+        let m = migrator_from(vec![migration_with_ops(
+            "0001_mixed", &[],
+            vec![
+                Operation::Invoke { up: "noop".into(), down: None },
+                Operation::CreateTable { table },
+            ],
+        )]);
+        let mut exec = NullExecutor::empty();
+        let err = m.migrate(&mut exec, None, None, false).unwrap_err();
+        assert!(err.to_string().contains("Invoke operations must be in a migration by themselves"),
+            "unexpected error: {err}");
     }
 
     #[test]

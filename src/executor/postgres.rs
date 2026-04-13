@@ -22,11 +22,26 @@ impl PostgresExecutor {
     }
 }
 
+fn pg_error_message(e: &postgres::Error) -> String {
+    if let Some(db) = e.as_db_error() {
+        let mut msg = db.message().to_string();
+        if let Some(detail) = db.detail() {
+            msg.push_str(&format!("\n  DETAIL: {detail}"));
+        }
+        if let Some(hint) = db.hint() {
+            msg.push_str(&format!("\n  HINT: {hint}"));
+        }
+        msg
+    } else {
+        e.to_string()
+    }
+}
+
 impl Executor for PostgresExecutor {
     fn execute(&mut self, sql: &str) -> Result<(), ExecutorError> {
         self.client
             .execute(sql, &[])
-            .map_err(|e| ExecutorError::Execute(format!("{e}\n  SQL: {sql}")))?;
+            .map_err(|e| ExecutorError::Execute(format!("{}\n  SQL: {sql}", pg_error_message(&e))))?;
         Ok(())
     }
 

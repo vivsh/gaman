@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 use crate::operations::Operation;
+use crate::states::SchemaState;
 
 #[derive(Debug, Error)]
 pub enum DialectError {
@@ -16,6 +17,15 @@ impl Dialect {
     pub fn operation_to_sql(&self, op: &Operation) -> Result<Vec<String>, DialectError> {
         match self {
             Dialect::Postgres => postgres::operation_to_sql(op),
+        }
+    }
+
+    /// Reorders operations to satisfy database-specific execution constraints.
+    /// The default is a no-op — only databases with ordering requirements need to override.
+    /// Called once per migration after diffing, before SQL generation or writing.
+    pub fn reorder(&self, ops: Vec<Operation>, previous: &SchemaState, current: &SchemaState) -> Vec<Operation> {
+        match self {
+            Dialect::Postgres => postgres::reorder_ops(ops, previous, current),
         }
     }
 
