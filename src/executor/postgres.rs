@@ -1,7 +1,7 @@
 use postgres::Client;
 
 use crate::states::{
-    Column, Constraint, ForeignKey, FunctionDef, Index, SchemaState, Table, TriggerDef,
+    Column, Constraint, ForeignKey, FunctionDef, Index, Schema, Table, TriggerDef,
     TriggerEvent, TriggerScope, TriggerTiming, ViewDef, Volatility, schema_qualified_key,
 };
 use super::{Executor, ExecutorError, Introspectable};
@@ -147,8 +147,8 @@ fn decode_tgtype(tgtype: i16) -> (TriggerTiming, Vec<TriggerEvent>, TriggerScope
 }
 
 impl Introspectable for PostgresExecutor {
-    fn inspect_db(&mut self, schemas: &[&str]) -> Result<SchemaState, ExecutorError> {
-        let mut state = SchemaState::default();
+    fn inspect_db(&mut self, schemas: &[&str]) -> Result<Schema, ExecutorError> {
+        let mut state = Schema::default();
 
         for &schema in schemas {
             // Tables

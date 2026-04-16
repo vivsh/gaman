@@ -1,6 +1,4 @@
-use gaman::migrations::Migration;
-use gaman::operations::Operation;
-use gaman::states::{Column, ForeignKey, Index, Table};
+use gaman::{Column, ForeignKey, Index, Migration, Operation, Table};
 
 pub fn col(name: &str, col_type: &str) -> Column {
     Column { name: name.into(), col_type: col_type.into(), nullable: false, default: None, primary_key: false, ..Default::default() }

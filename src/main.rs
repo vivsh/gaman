@@ -1,6 +1,8 @@
+mod cli;
+
 use std::error::Error;
 
-use gaman::cli::{GamanArgs, handle_cmd};
+use cli::{GamanArgs, handle_cmd};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 

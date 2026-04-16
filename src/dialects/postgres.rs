@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::migrations::Migration;
 use crate::operations::Operation;
-use crate::states::{Column, Constraint, SchemaState, Table, ViewDef, Volatility};
+use crate::states::{Column, Constraint, Schema, Table, ViewDef, Volatility};
 
 use super::DialectError;
 
@@ -11,7 +11,7 @@ use super::DialectError;
 // be replaced in-place — it must be dropped and recreated. Any trigger referencing that
 // function must be bounced (dropped before, recreated after) regardless of whether the
 // trigger itself changed. This is transparent to the generic diff algorithm.
-pub fn reorder_ops(ops: Vec<Operation>, previous: &SchemaState, current: &SchemaState) -> Vec<Operation> {
+pub fn reorder_ops(ops: Vec<Operation>, previous: &Schema, current: &Schema) -> Vec<Operation> {
     let sig_changed_fns: HashSet<&str> = ops.iter()
         .filter_map(|op| match op {
             Operation::AlterFunction { old, new } if old.arguments != new.arguments => {

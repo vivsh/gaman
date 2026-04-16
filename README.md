@@ -2,9 +2,14 @@
 
 > **Not production ready — still in active development. APIs and file formats may change.**
 
-A deterministic, offline-first migration engine for PostgreSQL, written in Rust. Declare your schema in YAML, and let gaman compute and apply the diff - no database access required at plan time. Inspired by Django migrations.
+A deterministic, offline-first migration engine for PostgreSQL, written in Rust. Declare your schema — as YAML or as Rust structs — and gaman computes the diff and generates migrations with no database connection required at plan time.
 
 Pronounced _guh-MUN_ (गमन, /ɡəˈmən/) — Sanskrit for "movement" or "going forward".
+
+Gaman works in two modes:
+
+- **CLI** — declare your schema in `schema.yaml`, run `gaman make_migration`, and apply with `gaman migrate`. No code changes required.
+- **Embedded** — add `gaman` as a Rust dependency, declare your schema as structs with `#[derive(IntoTable)]`, and run migrations at application startup.
 
 ---
 
@@ -23,15 +28,22 @@ migrations/ (replayed) ──┘
 
 Migrations are stored as a **directed acyclic graph (DAG)**. Each migration declares its `dependencies`, enabling parallel feature branches and explicit merge migrations when branches need to be unified.
 
+```
+0001_initial → 0002_feature_a ─┐
+             → 0003_feature_b ─┴→ 0004_merge
+```
+
 ---
 
-## Quick Start
+## Usage
+
+### CLI
 
 ```bash
 cargo install gaman
 ```
 
-Set env vars (or use CLI flags `-d`, `-m`, `-s`):
+Set environment variables (or use CLI flags `-d`, `-m`, `-s`):
 
 ```bash
 DATABASE_URL=postgres://localhost/myapp
@@ -45,6 +57,108 @@ Declare your schema in `schema.yaml`, then:
 gaman make_migration initial   # generate first migration
 gaman sql_migrate               # preview SQL
 gaman migrate                   # apply
+```
+
+See [Schema YAML Format](#schema-yaml-format) for the full schema syntax and [CLI Reference](#cli-reference) for all available commands.
+
+### Embedded in Rust
+
+Add to `Cargo.toml`:
+
+```toml
+[dependencies]
+gaman = "0.1"
+```
+
+**Running migrations at startup**
+
+Bundle migration YAML files into the binary and apply them on startup:
+
+```rust
+use gaman::{EmbedSource, Migrator, Config, include_migrations};
+
+let config = std::sync::Arc::new(Config::default());
+let source = Box::new(EmbedSource::new(include_migrations!("migrations")));
+Migrator::new(config, source, gaman::Dialect::Postgres)
+    .expect("migrator init failed")
+    .migrate_to_latest(&mut executor)
+    .expect("migrations failed");
+```
+
+`include_migrations!("path")` embeds all `.yaml` files from the given path at compile time, sorted lexicographically. No files on disk required at runtime.
+
+**Declaring schema as Rust structs**
+
+Use `#[derive(IntoTable)]` to map a struct to a table. Type resolution precedence:
+
+1. `#[column(type = "...")]` — explicit SQL type, required for third-party types
+2. `<T as ColumnType>::column_desc(dialect)` — automatic, handles `Option<T>` → nullable
+
+```rust
+use gaman::{Schema, Dialect, IntoTable};
+
+#[derive(IntoTable)]
+#[table(name = "users", schema = "app")]
+struct User {
+    id: i64,
+    email: String,
+    bio: Option<String>,
+    #[column(type = "timestamptz")]
+    created_at: chrono::DateTime<chrono::Utc>,
+    #[column(type = "uuid", nullable)]
+    invite_code: Option<uuid::Uuid>,
+    #[column(default = "0")]
+    score: i32,
+    #[column(references = "orgs.id")]
+    org_id: i64,
+    #[column(check = "score >= 0")]
+    rank: i32,
+    #[column(skip)]
+    _cache: Vec<u8>,
+}
+
+let schema = Schema::builder(Dialect::Postgres)
+    .table::<User>()
+    .enum_type("status", &["active", "inactive"])
+    .extension("pgcrypto")
+    .build();
+```
+
+**`#[table(...)]` attributes**
+
+| Attribute        | Description                                           |
+| ---------------- | ----------------------------------------------------- |
+| `name = "..."`   | Override table name (default: snake_case struct name) |
+| `schema = "..."` | Postgres schema (omit for `public`)                   |
+
+**`#[column(...)]` attributes**
+
+| Attribute                       | Description                                                                      |
+| ------------------------------- | -------------------------------------------------------------------------------- |
+| `skip`                          | Exclude this field from the table definition                                     |
+| `name = "..."`                  | Override column name                                                             |
+| `type = "..."`                  | Explicit SQL type — required for third-party types (`uuid`, `timestamptz`, etc.) |
+| `nullable` / `nullable = false` | Override inferred nullability                                                    |
+| `primary_key`                   | Mark as primary key                                                              |
+| `default = "expr"`              | SQL default expression                                                           |
+| `references = "table.col"`      | Inline foreign key                                                               |
+| `references_name = "fk_name"`   | Explicit FK constraint name                                                      |
+| `check = "expr"`                | Inline check constraint                                                          |
+
+For your own custom types, implement `gaman::ColumnType`:
+
+```rust
+use gaman::{ColumnType, ColumnDesc, Dialect};
+
+struct MyId(i64);
+
+impl ColumnType for MyId {
+    fn column_desc(dialect: &Dialect) -> ColumnDesc {
+        match dialect {
+            Dialect::Postgres => ColumnDesc { sql_type: "bigint", nullable: false },
+        }
+    }
+}
 ```
 
 ---
@@ -205,7 +319,7 @@ YAML files, human-readable and hand-editable.
 
 ### `atomic`
 
-By default every migration runs inside a single transaction (`atomic: true`). Set `atomic: false` when the migration contains operations that PostgreSQL cannot run inside a transaction — most notably `CREATE INDEX CONCURRENTLY`.
+By default, every migration runs inside a single transaction (`atomic: true`). Set `atomic: false` when the migration contains operations that PostgreSQL cannot run inside a transaction — most notably `CREATE INDEX CONCURRENTLY`.
 
 ```yaml
 id: 0004_add_search_idx
@@ -269,7 +383,7 @@ operations:
 
 ---
 
-## Escape hatches
+## Escape Hatches
 
 ```yaml
 operations:
@@ -290,16 +404,6 @@ operations:
 
 The diff engine is conservative: a renamed column looks identical to a drop + add. The disambiguator catches these cases and asks before committing.
 
-Runs as a post-diff pass inside `make_migration`. Accepts prior `decisions`; returns more questions or the final op list:
-
-```
-ops = diff(current, previous)
-decisions = []
-loop:
-    process(ops, decisions) → NeedsInput(clars) → prompt → decisions.extend(answers)
-                            → Resolved(final_ops) → write migration
-```
-
 | Severity     | Kind            | What it catches                                                |
 | ------------ | --------------- | -------------------------------------------------------------- |
 | `Fatal`      | `NotNullAdd`    | NOT NULL column with no default — fails on non-empty tables    |
@@ -309,28 +413,6 @@ loop:
 | `Suggestion` | `RenameTable`   | Drop + create of structurally similar tables — likely a rename |
 
 For `NotNullChange`, a backfill `UPDATE` is auto-injected before the `ALTER COLUMN`.
-
-Transport-agnostic — `CliPromptEngine` uses stdin/stdout; `PromptEngine` is a trait any caller can implement.
-
----
-
-## Migration Graph & Replay
-
-Migrations form a DAG. Each declares `dependencies`, enabling parallel branches and explicit merges.
-
-```
-0001_initial → 0002_feature_a ─┐
-             → 0003_feature_b ─┴→ 0004_merge
-```
-
-`make_migration` never touches the database — it replays existing migrations to reconstruct previous state, then diffs:
-
-```
-[] → apply(0001) → apply(0002) → apply(0003) → PreviousState
-CurrentState − PreviousState → new migration
-```
-
-Multiple heads without a merge migration → conflict error, requires `--merge`.
 
 ---
 
@@ -365,8 +447,7 @@ Early-stage. Core migration engine is stable and tested in real use. PostgreSQL 
 ### Not yet implemented
 
 - `squashmigrations`
-- Embedded Rust library API and C-FFI interface
-- `ALTER EXTENSION … UPDATE` (use a `statement` operation for now)
+- C-FFI interface
 
 ### Known limitations
 
@@ -374,3 +455,5 @@ Early-stage. Core migration engine is stable and tested in real use. PostgreSQL 
 - Column order is not tracked
 - `verify_db` does not validate view, function, extension, or enum definitions
 - `alter_enum` has no inverse — migrations containing it cannot be rolled back
+
+---

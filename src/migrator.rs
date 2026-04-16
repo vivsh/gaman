@@ -12,7 +12,7 @@ use crate::executor::{Executor, ExecutorError, Introspectable, Invoker, InvokerE
 use crate::graphs::{GraphError, MigrationGraph};
 use crate::migrations::Migration;
 use crate::operations::Operation;
-use crate::states::{ReplayError, SchemaState};
+use crate::states::{ReplayError, Schema};
 
 #[derive(Debug, Error)]
 pub enum MigratorError {
@@ -75,7 +75,7 @@ impl Migrator {
     pub fn make_migrations(
         &self,
         name: String,
-        current: SchemaState,
+        current: Schema,
         dry_run: bool,
         decisions: &[Decision],
     ) -> Result<Option<Migration>, MigratorError> {
@@ -102,9 +102,9 @@ impl Migrator {
         Ok(Some(migration))
     }
 
-    fn replay(&self) -> Result<SchemaState, MigratorError> {
+    fn replay(&self) -> Result<Schema, MigratorError> {
         let order = self.graph.topological_order()?;
-        let mut state = SchemaState::default();
+        let mut state = Schema::default();
         for id in order {
             if let Some(migration) = self.graph.get(id) {
                 for (i, op) in migration.operations.iter().enumerate() {
@@ -183,7 +183,7 @@ impl Migrator {
             return Ok(());
         }
 
-        let mut state = SchemaState::default();
+        let mut state = Schema::default();
         let mut index_names: std::collections::HashMap<String, std::collections::HashSet<String>> =
             std::collections::HashMap::new();
         let mut constraint_names: std::collections::HashMap<String, std::collections::HashSet<String>> =
@@ -488,7 +488,7 @@ impl Migrator {
     }
 }
 
-fn normalize_state_types(state: &mut SchemaState, dialect: &crate::dialects::Dialect) {
+fn normalize_state_types(state: &mut Schema, dialect: &crate::dialects::Dialect) {
     for table in state.tables.values_mut() {
         for col in table.columns.iter_mut() {
             let normalized = dialect.normalize_type(&col.col_type).to_string();
@@ -506,7 +506,7 @@ mod tests {
     use crate::adapters::AdapterError;
     use crate::dialects::Dialect;
     use crate::operations::Operation;
-    use crate::states::{Column, SchemaState, Table};
+    use crate::states::{Column, Schema, Table};
 
     #[derive(Default)]
     struct MockSource {
@@ -540,8 +540,8 @@ mod tests {
         }
     }
 
-    fn state_with_tables(tables: &[Table]) -> SchemaState {
-        let mut s = SchemaState::default();
+    fn state_with_tables(tables: &[Table]) -> Schema {
+        let mut s = Schema::default();
         for t in tables {
             s.tables.insert(t.name.clone(), t.clone());
         }
@@ -652,7 +652,7 @@ mod tests {
     #[test]
     fn no_changes_returns_none() {
         let m = migrator_from(vec![]);
-        assert!(m.make_migrations("x".into(), SchemaState::default(), false, &[]).unwrap().is_none());
+        assert!(m.make_migrations("x".into(), Schema::default(), false, &[]).unwrap().is_none());
     }
 
     #[test]
@@ -672,7 +672,7 @@ mod tests {
             "0001_initial", &[],
             vec![Operation::CreateTable { table: users }],
         )]);
-        let result = m.make_migrations("drop_users".into(), SchemaState::default(), false, &[]).unwrap();
+        let result = m.make_migrations("drop_users".into(), Schema::default(), false, &[]).unwrap();
         let mig = result.unwrap();
         assert_eq!(mig.operations.len(), 1);
         assert!(matches!(&mig.operations[0], Operation::DropTable { table } if table.name == "users"));
@@ -768,7 +768,7 @@ mod tests {
             migration_with_ops("0001_a", &[], vec![]),
             migration_with_ops("0001_b", &[], vec![]),
         ]);
-        let err = m.make_migrations("x".into(), SchemaState::default(), false, &[]).unwrap_err();
+        let err = m.make_migrations("x".into(), Schema::default(), false, &[]).unwrap_err();
         assert!(matches!(err, MigratorError::Graph(GraphError::Conflict)));
     }
 
@@ -780,7 +780,7 @@ mod tests {
             vec![Operation::DropTable { table: simple_table("ghost", &["id"]) }],
         );
         let m = migrator_from(vec![bad]);
-        let err = m.make_migrations("x".into(), SchemaState::default(), false, &[]).unwrap_err();
+        let err = m.make_migrations("x".into(), Schema::default(), false, &[]).unwrap_err();
         assert!(matches!(err, MigratorError::Replay(_)));
     }
 
@@ -827,7 +827,7 @@ mod tests {
             constraints: vec![],
             triggers: vec![],
         };
-        let mut current = SchemaState::default();
+        let mut current = Schema::default();
         current.tables.insert("users".to_string(), table);
         let err = m.make_migrations("bad".into(), current, false, &[]).unwrap_err();
         assert!(matches!(err, MigratorError::Config(_)));
@@ -991,7 +991,7 @@ mod tests {
             constraints: vec![],
             triggers: vec![],
         };
-        let mut state = SchemaState::default();
+        let mut state = Schema::default();
         state.tables.insert("users".into(), table);
         let err = state.validate().unwrap_err();
         assert!(err.contains("duplicate column"));

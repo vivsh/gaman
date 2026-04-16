@@ -4,14 +4,10 @@ use std::sync::Arc;
 use argh::FromArgs;
 use postgres::{Client, NoTls};
 
-use crate::adapters::YamlAdapter;
-use crate::conf::Config;
-use crate::dialects::Dialect;
-use crate::executor::{Introspectable, PostgresExecutor, SubprocessInvoker};
-use crate::migrator::{Migrator, MigratorError};
-use crate::prompter::CliPromptEngine;
-use crate::disambiguator::{Decision, PromptEngine};
-use crate::states::SchemaState;
+use gaman::{
+    YamlAdapter, Config, Dialect, Introspectable, PostgresExecutor, SubprocessInvoker,
+    Migrator, MigratorError, CliPromptEngine, Decision, PromptEngine, Schema,
+};
 
 /// Gaman — PostgreSQL migration tool
 #[derive(FromArgs, Debug)]
@@ -217,7 +213,7 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
                 migrator.make_empty_migration(name).map(|_| ())?;
                 Ok(())
             } else if cmd.check {
-                let current = SchemaState::load(&migrator.config.schema_file)
+                let current = Schema::load(&migrator.config.schema_file)
                     .map_err(|e| CommandError::Config(e.to_string()))?;
                 let name = cmd.name.unwrap_or_else(|| "check".into());
                 match migrator.make_migrations(name, current, true, &[])? {
@@ -226,7 +222,7 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
                 }
             } else {
                 let name = cmd.name.ok_or_else(|| CommandError::Config("a migration name is required".into()))?;
-                let current = SchemaState::load(&migrator.config.schema_file)
+                let current = Schema::load(&migrator.config.schema_file)
                     .map_err(|e| CommandError::Config(e.to_string()))?;
                 let engine = CliPromptEngine;
                 let mut decisions: Vec<Decision> = vec![];

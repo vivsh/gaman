@@ -2,9 +2,7 @@ mod common;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use gaman::dialects::Dialect;
-use gaman::executor::{Executor, ExecutorError, Introspectable, PostgresExecutor};
-use gaman::states::SchemaState;
+use gaman::{Dialect, Executor, ExecutorError, Introspectable, PostgresExecutor, Schema};
 use postgres::{Client, NoTls};
 
 use common::harness::DbHarness;
@@ -120,14 +118,14 @@ impl DbHarness for PgHarness {
         self.schema.clone()
     }
 
-    fn inspect_schema(&mut self, schema: &str) -> Option<SchemaState> {
+    fn inspect_schema(&mut self, schema: &str) -> Option<Schema> {
         let url = std::env::var("TEST_DATABASE_URL").ok()?;
         let client = Client::connect(&url, NoTls).ok()?;
         let mut executor = PostgresExecutor::new(client);
         executor.inspect_db(&[schema]).ok()
     }
 
-    fn run_verify(&mut self, m: &gaman::migrator::Migrator, schema: &str) -> Option<Vec<gaman::operations::Operation>> {
+    fn run_verify(&mut self, m: &gaman::Migrator, schema: &str) -> Option<Vec<gaman::Operation>> {
         let url = std::env::var("TEST_DATABASE_URL").ok()?;
         let client = Client::connect(&url, NoTls).ok()?;
         let mut executor = PostgresExecutor::new(client);

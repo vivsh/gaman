@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 use crate::operations::Operation;
-use crate::states::{Column, Constraint, EnumDef, ForeignKey, Index, SchemaState, Table, TriggerDef};
+use crate::states::{Column, Constraint, EnumDef, ForeignKey, Index, Schema, Table, TriggerDef};
 
 #[derive(Debug, Error)]
 pub enum DiffError {}
@@ -29,7 +29,7 @@ impl DiffEngine {
         Self
     }
 
-    pub fn diff(&self, current: &SchemaState, previous: &SchemaState) -> Result<Vec<Operation>, DiffError> {
+    pub fn diff(&self, current: &Schema, previous: &Schema) -> Result<Vec<Operation>, DiffError> {
         let mut drops: Vec<&Table> = Vec::new();
         let mut new_tables: Vec<&Table> = Vec::new();
         let mut changes: Vec<Operation> = Vec::new();
@@ -245,7 +245,7 @@ fn diff_table(name: &str, prev: &Table, curr: &Table, ops: &mut Vec<Operation>) 
     }
 }
 
-fn diff_functions(current: &SchemaState, previous: &SchemaState) -> (Vec<Operation>, Vec<Operation>) {
+fn diff_functions(current: &Schema, previous: &Schema) -> (Vec<Operation>, Vec<Operation>) {
     let mut creates: Vec<Operation> = Vec::new();
     let mut drops: Vec<Operation> = Vec::new();
     let mut prev_iter = previous.functions.iter().peekable();
@@ -289,7 +289,7 @@ impl Default for DiffEngine {
     }
 }
 
-fn diff_extensions(current: &SchemaState, previous: &SchemaState) -> (Vec<Operation>, Vec<Operation>) {
+fn diff_extensions(current: &Schema, previous: &Schema) -> (Vec<Operation>, Vec<Operation>) {
     let mut creates: Vec<Operation> = Vec::new();
     let mut drops: Vec<Operation> = Vec::new();
     let mut prev_iter = previous.extensions.iter().peekable();
@@ -331,7 +331,7 @@ fn diff_extensions(current: &SchemaState, previous: &SchemaState) -> (Vec<Operat
 // Returns (creates+alters, drops). AlterEnum is emitted when values are only appended;
 // a removal or reordering is treated as DropEnum + CreateEnum because PostgreSQL has no
 // DROP VALUE and the diff engine must remain deterministic.
-fn diff_enums(current: &SchemaState, previous: &SchemaState) -> (Vec<Operation>, Vec<Operation>) {
+fn diff_enums(current: &Schema, previous: &Schema) -> (Vec<Operation>, Vec<Operation>) {
     let mut creates: Vec<Operation> = Vec::new();
     let mut drops: Vec<Operation> = Vec::new();
     let mut prev_iter = previous.enums.iter().peekable();
@@ -386,7 +386,7 @@ fn is_append_only(old: &EnumDef, new: &EnumDef) -> bool {
     old_iter.next().is_none()
 }
 
-fn diff_views(current: &SchemaState, previous: &SchemaState) -> (Vec<Operation>, Vec<Operation>) {
+fn diff_views(current: &Schema, previous: &Schema) -> (Vec<Operation>, Vec<Operation>) {
     let mut creates: Vec<Operation> = Vec::new();
     let mut drops: Vec<Operation> = Vec::new();
     let mut prev_iter = previous.views.iter().peekable();
@@ -584,8 +584,8 @@ mod tests {
         Column { name: name.to_string(), col_type: "text".to_string(), nullable: false, default: None, primary_key: false, ..Default::default() }
     }
 
-    fn state_with_table(t: Table) -> SchemaState {
-        let mut s = SchemaState::default();
+    fn state_with_table(t: Table) -> Schema {
+        let mut s = Schema::default();
         s.tables.insert(t.name.clone(), t);
         s
     }
@@ -601,7 +601,7 @@ mod tests {
     /// A table present in current but not previous generates CreateTable.
     #[test]
     fn new_table_generates_create() {
-        let prev = SchemaState::default();
+        let prev = Schema::default();
         let curr = state_with_table(empty_table("users"));
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn removed_table_generates_drop() {
         let prev = state_with_table(empty_table("users"));
-        let curr = SchemaState::default();
+        let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], Operation::DropTable { table } if table.name == "users"));
@@ -621,8 +621,8 @@ mod tests {
     /// Multiple new tables are emitted in sorted order.
     #[test]
     fn multiple_new_tables_sorted() {
-        let prev = SchemaState::default();
-        let mut curr = SchemaState::default();
+        let prev = Schema::default();
+        let mut curr = Schema::default();
         curr.tables.insert("zebra".to_string(), empty_table("zebra"));
         curr.tables.insert("apple".to_string(), empty_table("apple"));
         let ops = engine().diff(&curr, &prev).unwrap();
@@ -634,10 +634,10 @@ mod tests {
     /// Multiple dropped tables are emitted in reverse-sorted order when no FK deps exist.
     #[test]
     fn multiple_dropped_tables_reverse_sorted() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.tables.insert("zebra".to_string(), empty_table("zebra"));
         prev.tables.insert("apple".to_string(), empty_table("apple"));
-        let curr = SchemaState::default();
+        let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 2);
         assert!(matches!(&ops[0], Operation::DropTable { table } if table.name == "zebra"));
@@ -656,10 +656,10 @@ mod tests {
             to_table: "products".to_string(),
             to_column: "id".to_string(),
         });
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.tables.insert("products".to_string(), products);
         prev.tables.insert("inventory".to_string(), inventory);
-        let curr = SchemaState::default();
+        let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
         // inventory (referencing table) must be dropped before products (referenced)
         let drop_names: Vec<&str> = ops.iter().filter_map(|op| match op {
@@ -843,9 +843,9 @@ mod tests {
     /// Drops come before Creates at the table level.
     #[test]
     fn table_drops_before_creates() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.tables.insert("old".to_string(), empty_table("old"));
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         curr.tables.insert("new".to_string(), empty_table("new"));
 
         let ops = engine().diff(&curr, &prev).unwrap();
@@ -860,7 +860,7 @@ mod tests {
         let mut prev_table = empty_table("users");
         prev_table.columns.push(text_col("name"));
         prev_table.columns.push(text_col("old_field"));
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.tables.insert("users".to_string(), prev_table);
         prev.tables.insert("to_drop".to_string(), empty_table("to_drop"));
 
@@ -868,7 +868,7 @@ mod tests {
         curr_table.columns.push(text_col("name"));
         curr_table.columns.push(Column { name: "old_field".to_string(), col_type: "int".to_string(), nullable: true, default: None, primary_key: false, ..Default::default() });
         curr_table.columns.push(text_col("new_field"));
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         curr.tables.insert("users".to_string(), curr_table);
         curr.tables.insert("to_create".to_string(), empty_table("to_create"));
 
@@ -893,8 +893,8 @@ mod tests {
     /// When two new tables have a FK relationship, the referenced table is emitted first.
     #[test]
     fn fk_ordered_creates() {
-        let prev = SchemaState::default();
-        let mut curr = SchemaState::default();
+        let prev = Schema::default();
+        let mut curr = Schema::default();
         let users = empty_table("users");
         let mut posts = empty_table("posts");
         posts.foreign_keys.push(ForeignKey {
@@ -915,7 +915,7 @@ mod tests {
     /// A new table with a FK to an already-existing table has no ordering constraint forced.
     #[test]
     fn fk_to_existing_table_does_not_affect_order() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.tables.insert("users".to_string(), empty_table("users"));
         let mut curr = prev.clone();
         let mut posts = empty_table("posts");
@@ -996,9 +996,9 @@ mod tests {
     /// A function present in current but not previous generates CreateFunction.
     #[test]
     fn new_function_generates_create() {
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         curr.functions.insert("notify".to_string(), basic_function("notify"));
-        let prev = SchemaState::default();
+        let prev = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], Operation::CreateFunction { function } if function.name == "notify"));
@@ -1007,8 +1007,8 @@ mod tests {
     /// A function present in previous but not current generates DropFunction.
     #[test]
     fn removed_function_generates_drop() {
-        let curr = SchemaState::default();
-        let mut prev = SchemaState::default();
+        let curr = Schema::default();
+        let mut prev = Schema::default();
         prev.functions.insert("notify".to_string(), basic_function("notify"));
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
@@ -1018,11 +1018,11 @@ mod tests {
     /// A changed function body generates AlterFunction with correct old and new.
     #[test]
     fn modified_function_generates_alter() {
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         let mut updated = basic_function("notify");
         updated.body = "SELECT 2".to_string();
         curr.functions.insert("notify".to_string(), updated.clone());
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.functions.insert("notify".to_string(), basic_function("notify"));
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
@@ -1074,10 +1074,10 @@ mod tests {
     /// CreateFunction ops appear before CreateTable ops in the result.
     #[test]
     fn function_creates_before_table_creates() {
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         curr.tables.insert("users".to_string(), empty_table("users"));
         curr.functions.insert("notify".to_string(), basic_function("notify"));
-        let prev = SchemaState::default();
+        let prev = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 2);
         assert!(matches!(&ops[0], Operation::CreateFunction { .. }), "first op should be CreateFunction");
@@ -1087,14 +1087,14 @@ mod tests {
     /// DropView must precede DropTable so a view over a dropped table doesn't block the op.
     #[test]
     fn view_drops_before_table_drops() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.tables.insert("users".to_string(), empty_table("users"));
         prev.views.insert("v_users".to_string(), ViewDef {
             name: "v_users".to_string(),
             schema: None,
             definition: "SELECT * FROM users".to_string(),
         });
-        let curr = SchemaState::default();
+        let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 2);
         let drop_view_pos = ops.iter().position(|op| matches!(op, Operation::DropView { .. })).unwrap();
@@ -1105,8 +1105,8 @@ mod tests {
     /// CreateView must follow CreateTable so the table already exists when the view is created.
     #[test]
     fn view_creates_after_table_creates() {
-        let prev = SchemaState::default();
-        let mut curr = SchemaState::default();
+        let prev = Schema::default();
+        let mut curr = Schema::default();
         curr.tables.insert("users".to_string(), empty_table("users"));
         curr.views.insert("v_users".to_string(), ViewDef {
             name: "v_users".to_string(),
@@ -1124,8 +1124,8 @@ mod tests {
     /// and the deferred FK is emitted as AddForeignKey after both tables exist.
     #[test]
     fn mutual_fk_cycle_resolved_with_deferred_add() {
-        let prev = SchemaState::default();
-        let mut curr = SchemaState::default();
+        let prev = Schema::default();
+        let mut curr = Schema::default();
         let mut a = empty_table("a");
         a.foreign_keys.push(ForeignKey {
             name: "fk_a_b".to_string(),
@@ -1158,7 +1158,7 @@ mod tests {
     /// the DropForeignKey must come before the DropTable.
     #[test]
     fn surviving_table_fk_to_dropped_table_order() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         let mut orders = empty_table("orders");
         orders.foreign_keys.push(ForeignKey {
             name: "fk_orders_users".to_string(),
@@ -1169,7 +1169,7 @@ mod tests {
         prev.tables.insert("users".to_string(), empty_table("users"));
         prev.tables.insert("orders".to_string(), orders);
 
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         curr.tables.insert("orders".to_string(), empty_table("orders"));
 
         let ops = engine().diff(&curr, &prev).unwrap();
@@ -1188,7 +1188,7 @@ mod tests {
     /// must precede the table drop.
     #[test]
     fn multiple_surviving_fks_to_dropped_table() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.tables.insert("users".to_string(), empty_table("users"));
         let mut orders = empty_table("orders");
         orders.foreign_keys.push(ForeignKey {
@@ -1207,7 +1207,7 @@ mod tests {
         prev.tables.insert("orders".to_string(), orders);
         prev.tables.insert("reviews".to_string(), reviews);
 
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         curr.tables.insert("orders".to_string(), empty_table("orders"));
         curr.tables.insert("reviews".to_string(), empty_table("reviews"));
 
@@ -1282,7 +1282,7 @@ mod tests {
     /// (orphan trigger), the DropTrigger must precede DropFunction.
     #[test]
     fn orphan_trigger_drop_precedes_function_drop() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.functions.insert("audit_fn".to_string(), basic_function("audit_fn"));
         let mut users = empty_table("users");
         users.triggers.push(TriggerDef {
@@ -1297,7 +1297,7 @@ mod tests {
         });
         prev.tables.insert("users".to_string(), users.clone());
 
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         curr.tables.insert("users".to_string(), users);
         // function removed, trigger stays in table definition but should be force-dropped
 
@@ -1317,7 +1317,7 @@ mod tests {
     /// no orphan trigger drops needed since the table is gone entirely.
     #[test]
     fn no_orphan_trigger_when_table_also_dropped() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.functions.insert("audit_fn".to_string(), basic_function("audit_fn"));
         let mut users = empty_table("users");
         users.triggers.push(TriggerDef {
@@ -1332,7 +1332,7 @@ mod tests {
         });
         prev.tables.insert("users".to_string(), users);
 
-        let curr = SchemaState::default();
+        let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
         let trigger_drops: Vec<_> = ops.iter().filter(|op| matches!(op, Operation::DropTrigger { .. })).collect();
         assert!(trigger_drops.is_empty(), "no orphan trigger drops when table is also dropped");
@@ -1343,8 +1343,8 @@ mod tests {
     /// Self-referential FK (e.g. employee.manager_id → employee.id) must be deferred.
     #[test]
     fn self_referential_fk_deferred() {
-        let prev = SchemaState::default();
-        let mut curr = SchemaState::default();
+        let prev = Schema::default();
+        let mut curr = Schema::default();
         let mut emp = empty_table("employees");
         emp.foreign_keys.push(ForeignKey {
             name: "fk_manager".to_string(),
@@ -1372,8 +1372,8 @@ mod tests {
     /// and exactly one FK must be deferred to break the cycle.
     #[test]
     fn three_way_fk_cycle() {
-        let prev = SchemaState::default();
-        let mut curr = SchemaState::default();
+        let prev = Schema::default();
+        let mut curr = Schema::default();
         let mut a = empty_table("a");
         a.foreign_keys.push(ForeignKey {
             name: "fk_a_b".to_string(),
@@ -1420,8 +1420,8 @@ mod tests {
     /// accounts first, then users, then orders.
     #[test]
     fn linear_fk_chain_create_order() {
-        let prev = SchemaState::default();
-        let mut curr = SchemaState::default();
+        let prev = Schema::default();
+        let mut curr = Schema::default();
         let accounts = empty_table("accounts");
         let mut users = empty_table("users");
         users.foreign_keys.push(ForeignKey {
@@ -1454,7 +1454,7 @@ mod tests {
     /// orders first (referencing), then users, then accounts (referenced).
     #[test]
     fn linear_fk_chain_drop_order() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         let accounts = empty_table("accounts");
         let mut users = empty_table("users");
         users.foreign_keys.push(ForeignKey {
@@ -1474,7 +1474,7 @@ mod tests {
         prev.tables.insert("users".to_string(), users);
         prev.tables.insert("orders".to_string(), orders);
 
-        let curr = SchemaState::default();
+        let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
         let drop_names: Vec<&str> = ops.iter().filter_map(|op| match op {
             Operation::DropTable { table } => Some(table.name.as_str()),
@@ -1488,7 +1488,7 @@ mod tests {
     /// before either DropTable.
     #[test]
     fn mutual_fk_cycle_drops_emit_drop_fk_first() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         let mut a = empty_table("a");
         a.foreign_keys.push(ForeignKey {
             name: "fk_a_b".to_string(),
@@ -1506,7 +1506,7 @@ mod tests {
         prev.tables.insert("a".to_string(), a);
         prev.tables.insert("b".to_string(), b);
 
-        let curr = SchemaState::default();
+        let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
         let drop_fk_ops: Vec<_> = ops.iter().filter(|op| matches!(op, Operation::DropForeignKey { .. })).collect();
         assert!(!drop_fk_ops.is_empty(), "cycle-breaking DropForeignKey must be emitted");
@@ -1672,7 +1672,7 @@ mod tests {
     /// < deferred AddFK < changes < orphan trigger drops < DropFunction < CreateView.
     #[test]
     fn full_phase_ordering() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.tables.insert("old_table".to_string(), empty_table("old_table"));
         prev.views.insert("old_view".to_string(), ViewDef {
             name: "old_view".to_string(), schema: None,
@@ -1680,7 +1680,7 @@ mod tests {
         });
         prev.functions.insert("old_fn".to_string(), basic_function("old_fn"));
 
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         curr.tables.insert("new_table".to_string(), empty_table("new_table"));
         curr.views.insert("new_view".to_string(), ViewDef {
             name: "new_view".to_string(), schema: None,
@@ -1713,7 +1713,7 @@ mod tests {
     /// referencing the function.
     #[test]
     fn fn_drop_after_explicit_trigger_drop() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.functions.insert("audit_fn".to_string(), basic_function("audit_fn"));
         let mut users = empty_table("users");
         users.triggers.push(TriggerDef {
@@ -1726,7 +1726,7 @@ mod tests {
         });
         prev.tables.insert("users".to_string(), users);
 
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         curr.tables.insert("users".to_string(), empty_table("users"));
 
         let ops = engine().diff(&curr, &prev).unwrap();
@@ -1742,10 +1742,10 @@ mod tests {
     /// references a new function, across different tables.
     #[test]
     fn fn_create_before_trigger_create() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.tables.insert("users".to_string(), empty_table("users"));
 
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         curr.functions.insert("new_fn".to_string(), basic_function("new_fn"));
         let mut users = empty_table("users");
         users.triggers.push(TriggerDef {
@@ -1772,7 +1772,7 @@ mod tests {
     /// Running diff twice on the same inputs produces identical operation lists.
     #[test]
     fn diff_is_deterministic() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         let mut users = empty_table("users");
         users.columns.push(text_col("name"));
         users.foreign_keys.push(ForeignKey {
@@ -1782,7 +1782,7 @@ mod tests {
         prev.tables.insert("users".to_string(), users);
         prev.tables.insert("orgs".to_string(), empty_table("orgs"));
 
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         let mut users2 = empty_table("users");
         users2.columns.push(text_col("email"));
         curr.tables.insert("users".to_string(), users2);
@@ -1803,7 +1803,7 @@ mod tests {
     /// Comprehensive replay test: all entity types changed, state must match after applying ops.
     #[test]
     fn replay_comprehensive() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         let mut users = empty_table("users");
         users.columns.push(text_col("name"));
         users.columns.push(text_col("old_col"));
@@ -1822,7 +1822,7 @@ mod tests {
             definition: "SELECT 1".to_string(),
         });
 
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         let mut users2 = empty_table("users");
         users2.columns.push(text_col("name"));
         users2.columns.push(text_col("new_col"));
@@ -1852,8 +1852,8 @@ mod tests {
     /// Replay test for FK cycle scenario: applying ops to empty should yield the cyclic schema.
     #[test]
     fn replay_fk_cycle() {
-        let prev = SchemaState::default();
-        let mut curr = SchemaState::default();
+        let prev = Schema::default();
+        let mut curr = Schema::default();
         let mut a = empty_table("a");
         a.foreign_keys.push(ForeignKey {
             name: "fk_a_b".to_string(), from_column: "b_id".to_string(),
@@ -1878,8 +1878,8 @@ mod tests {
     /// Replay test for self-referential FK.
     #[test]
     fn replay_self_referential_fk() {
-        let prev = SchemaState::default();
-        let mut curr = SchemaState::default();
+        let prev = Schema::default();
+        let mut curr = Schema::default();
         let mut emp = empty_table("employees");
         emp.foreign_keys.push(ForeignKey {
             name: "fk_manager".to_string(), from_column: "manager_id".to_string(),
@@ -1900,7 +1900,7 @@ mod tests {
     /// Both states empty produces zero operations.
     #[test]
     fn both_empty_no_ops() {
-        let ops = engine().diff(&SchemaState::default(), &SchemaState::default()).unwrap();
+        let ops = engine().diff(&Schema::default(), &Schema::default()).unwrap();
         assert!(ops.is_empty());
     }
 
@@ -1929,14 +1929,14 @@ mod tests {
     /// Dropping a self-referential table should not produce a separate DropForeignKey.
     #[test]
     fn drop_self_referential_table() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         let mut emp = empty_table("employees");
         emp.foreign_keys.push(ForeignKey {
             name: "fk_manager".to_string(), from_column: "manager_id".to_string(),
             to_table: "employees".to_string(), to_column: "id".to_string(),
         });
         prev.tables.insert("employees".to_string(), emp);
-        let curr = SchemaState::default();
+        let curr = Schema::default();
 
         let ops = engine().diff(&curr, &prev).unwrap();
         let drop_fk_count = ops.iter().filter(|op| matches!(op, Operation::DropForeignKey { .. })).count();
@@ -1951,12 +1951,12 @@ mod tests {
     /// to surviving tables can interleave.
     #[test]
     fn new_table_and_table_changes_together() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         let mut users = empty_table("users");
         users.columns.push(text_col("old_field"));
         prev.tables.insert("users".to_string(), users);
 
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         let mut users2 = empty_table("users");
         users2.columns.push(text_col("new_field"));
         curr.tables.insert("users".to_string(), users2);
@@ -1985,7 +1985,7 @@ mod tests {
     /// the table changes.
     #[test]
     fn replace_view_after_table_changes() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         let mut users = empty_table("users");
         users.columns.push(text_col("name"));
         prev.tables.insert("users".to_string(), users);
@@ -1994,7 +1994,7 @@ mod tests {
             definition: "SELECT name FROM users".to_string(),
         });
 
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         let mut users2 = empty_table("users");
         users2.columns.push(text_col("name"));
         users2.columns.push(text_col("email"));
@@ -2016,12 +2016,12 @@ mod tests {
     /// FK from new table to another new table, plus an existing table change in the same diff.
     #[test]
     fn mixed_new_tables_with_fk_and_existing_changes() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         let mut legacy = empty_table("legacy");
         legacy.columns.push(text_col("old_field"));
         prev.tables.insert("legacy".to_string(), legacy);
 
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         let mut legacy2 = empty_table("legacy");
         legacy2.columns.push(text_col("new_field"));
         curr.tables.insert("legacy".to_string(), legacy2);
@@ -2053,14 +2053,14 @@ mod tests {
     /// Dropping tables, functions, views all at once: verify the complete phase ordering.
     #[test]
     fn drop_everything_ordering() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.tables.insert("t1".to_string(), empty_table("t1"));
         prev.functions.insert("f1".to_string(), basic_function("f1"));
         prev.views.insert("v1".to_string(), ViewDef {
             name: "v1".to_string(), schema: None, definition: "SELECT 1".to_string(),
         });
 
-        let curr = SchemaState::default();
+        let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
 
         let view_drop = ops.iter().position(|op| matches!(op, Operation::DropView { .. })).unwrap();
@@ -2074,8 +2074,8 @@ mod tests {
     /// Creating tables, functions, views all at once: verify the complete phase ordering.
     #[test]
     fn create_everything_ordering() {
-        let prev = SchemaState::default();
-        let mut curr = SchemaState::default();
+        let prev = Schema::default();
+        let mut curr = Schema::default();
         curr.tables.insert("t1".to_string(), empty_table("t1"));
         curr.functions.insert("f1".to_string(), basic_function("f1"));
         curr.views.insert("v1".to_string(), ViewDef {
@@ -2095,10 +2095,10 @@ mod tests {
     /// not in the drops phase.
     #[test]
     fn alter_function_before_table_creates() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.functions.insert("f1".to_string(), basic_function("f1"));
 
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         let mut f1 = basic_function("f1");
         f1.body = "SELECT 99".to_string();
         curr.functions.insert("f1".to_string(), f1);
@@ -2116,7 +2116,7 @@ mod tests {
     /// ensures FK walks only consider the drop set.
     #[test]
     fn drop_set_fk_to_surviving_table_ignored() {
-        let mut prev = SchemaState::default();
+        let mut prev = Schema::default();
         prev.tables.insert("orgs".to_string(), empty_table("orgs"));
         let mut users = empty_table("users");
         users.foreign_keys.push(ForeignKey {
@@ -2132,7 +2132,7 @@ mod tests {
         prev.tables.insert("orders".to_string(), orders);
 
         // Drop users and orders, keep orgs
-        let mut curr = SchemaState::default();
+        let mut curr = Schema::default();
         curr.tables.insert("orgs".to_string(), empty_table("orgs"));
 
         let ops = engine().diff(&curr, &prev).unwrap();

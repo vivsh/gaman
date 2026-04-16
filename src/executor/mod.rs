@@ -33,7 +33,7 @@ pub trait Invoker {
 }
 
 pub trait Introspectable {
-    fn inspect_db(&mut self, schemas: &[&str]) -> Result<crate::states::SchemaState, ExecutorError>;
+    fn inspect_db(&mut self, schemas: &[&str]) -> Result<crate::states::Schema, ExecutorError>;
 }
 
 pub mod postgres;

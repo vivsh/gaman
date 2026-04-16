@@ -1,12 +1,6 @@
 use std::sync::Arc;
 
-use gaman::adapters::VecAdapter;
-use gaman::dialects::Dialect;
-use gaman::executor::Executor;
-use gaman::migrations::Migration;
-use gaman::migrator::Migrator;
-use gaman::conf::Config;
-use gaman::states::SchemaState;
+use gaman::{Config, Dialect, Executor, Migration, Migrator, Schema, VecAdapter};
 
 use super::fixtures;
 
@@ -31,13 +25,13 @@ pub trait DbHarness {
     }
     /// Introspect the live database for the given schema and return a SchemaState.
     /// Backends that do not support introspection return None and the test is skipped.
-    fn inspect_schema(&mut self, schema: &str) -> Option<SchemaState> {
+    fn inspect_schema(&mut self, schema: &str) -> Option<Schema> {
         let _ = schema;
         None
     }
     /// Run `migrator.verify()` against the live database for `schema`.
     /// Returns None when the backend does not support introspection.
-    fn run_verify(&mut self, m: &Migrator, schema: &str) -> Option<Vec<gaman::operations::Operation>> {
+    fn run_verify(&mut self, m: &Migrator, schema: &str) -> Option<Vec<gaman::Operation>> {
         let _ = (m, schema);
         None
     }
@@ -109,7 +103,7 @@ pub fn test_partial_failure_rolls_back(h: &mut dyn DbHarness) {
     h.reset();
     let mut bad_chain = fixtures::three_migration_chain();
     // Inject a syntactically invalid SQL statement into the third migration
-    bad_chain[2].operations.push(gaman::operations::Operation::Statement {
+    bad_chain[2].operations.push(gaman::Operation::Statement {
         up: "THIS IS NOT VALID SQL !!!".into(),
         down: None,
     });
@@ -174,7 +168,7 @@ pub fn test_invalid_graph_rejected(h: &mut dyn DbHarness) {
 // and that columns, FK destinations, and index names match. We intentionally
 // avoid comparing default values and col_type strings byte-for-byte because
 // the live DB often represents those differently (e.g. `integer` vs `int4`).
-fn assert_tables_compatible(replay: &SchemaState, inspected: &SchemaState) {
+fn assert_tables_compatible(replay: &Schema, inspected: &Schema) {
     for (key, replay_table) in &replay.tables {
         let live = inspected.tables.get(key).unwrap_or_else(|| {
             panic!("table '{key}' present in replay state but missing from inspect_db output")
@@ -248,7 +242,7 @@ pub fn test_replay_matches_inspect_db(h: &mut dyn DbHarness) {
 
     // Replay: reconstruct state by applying all operations in topological order.
     let order = m.graph.topological_order().expect("topological order failed");
-    let mut replay = SchemaState::default();
+    let mut replay = Schema::default();
     for id in &order {
         if let Some(migration) = m.graph.get(id) {
             for op in &migration.operations {

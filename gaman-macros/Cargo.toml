@@ -1,0 +1,16 @@
+[package]
+name = "gaman-macros"
+version = "0.2.0"
+edition = "2024"
+description = "Proc-macro helpers for embedding gaman migrations into Rust applications"
+license = "MIT"
+repository = "https://github.com/vivsh/gaman"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full"] }
+darling = "0.20"
