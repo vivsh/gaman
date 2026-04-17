@@ -300,6 +300,37 @@ impl Migrator {
         Ok(())
     }
 
+    fn applied_set(&self, executor: &mut dyn Executor) -> Result<HashSet<String>, MigratorError> {
+        Ok(executor.fetch_strings(self.dialect.applied_migrations_sql())?.into_iter().collect())
+    }
+
+    fn apply_one(
+        &self,
+        migration: &Migration,
+        executor: &mut dyn Executor,
+        invoker: Option<&dyn Invoker>,
+        fake: bool,
+    ) -> Result<(), MigratorError> {
+        if migration.atomic { executor.begin()?; }
+        if !fake {
+            if let Err(e) = self.run_ops(&migration.operations, executor, invoker) {
+                if migration.atomic { let _ = executor.rollback(); }
+                return Err(e);
+            }
+        }
+        if let Err(e) = executor.execute(&self.dialect.record_sql(&migration.id)) {
+            if migration.atomic { let _ = executor.rollback(); }
+            return Err(e.into());
+        }
+        if migration.atomic {
+            if let Err(e) = executor.commit() {
+                let _ = executor.rollback();
+                return Err(e.into());
+            }
+        }
+        Ok(())
+    }
+
     /// Apply all unapplied migrations in topological order.
     /// If `target` is given, apply or roll back to that migration id.
     /// If `fake` is true, record migrations as applied without executing them.
@@ -332,7 +363,7 @@ impl Migrator {
             }
 
             let order = all_ordered;
-            let applied: HashSet<String> = executor.fetch_strings(self.dialect.applied_migrations_sql())?.into_iter().collect();
+            let applied: HashSet<String> = self.applied_set(executor)?;
 
             let target_pos = order.iter().position(|id| *id == target_id)
                 .expect("target exists in graph so must be in topo order");
@@ -386,51 +417,21 @@ impl Migrator {
                 .collect();
             for id in pending {
                 let migration = self.graph.get(id).expect("pending id must exist in graph");
-                if migration.atomic { executor.begin()?; }
-                if !fake
-                    && let Err(e) = self.run_ops(&migration.operations, executor, invoker) {
-                        if migration.atomic { let _ = executor.rollback(); }
-                        return Err(e);
-                    }
-                if let Err(e) = executor.execute(&self.dialect.record_sql(id)) {
-                    if migration.atomic { let _ = executor.rollback(); }
-                    return Err(e.into());
-                }
-                if migration.atomic {
-                    if let Err(e) = executor.commit() {
-                        let _ = executor.rollback();
-                        return Err(e.into());
-                    }
-                }
+                self.apply_one(migration, executor, invoker, fake)?;
             }
 
             executor.release_lock()?;
             return Ok(());
         }
 
-        let applied: HashSet<String> = executor.fetch_strings(self.dialect.applied_migrations_sql())?.into_iter().collect();
+        let applied: HashSet<String> = self.applied_set(executor)?;
         let pending: Vec<String> = all_ordered.iter()
             .filter(|id| !applied.contains(**id))
             .map(|id| id.to_string())
             .collect();
         for id in &pending {
             let migration = self.graph.get(id).expect("pending id must exist in graph");
-            if migration.atomic { executor.begin()?; }
-            if !fake
-                && let Err(e) = self.run_ops(&migration.operations, executor, invoker) {
-                    if migration.atomic { let _ = executor.rollback(); }
-                    return Err(e);
-                }
-            if let Err(e) = executor.execute(&self.dialect.record_sql(id)) {
-                if migration.atomic { let _ = executor.rollback(); }
-                return Err(e.into());
-            }
-            if migration.atomic {
-                if let Err(e) = executor.commit() {
-                    let _ = executor.rollback();
-                    return Err(e.into());
-                }
-            }
+            self.apply_one(migration, executor, invoker, fake)?;
         }
         executor.release_lock()?;
         Ok(())
@@ -443,7 +444,7 @@ impl Migrator {
         self.graph.detect_conflict()?;
         self.install(executor)?;
         let order = self.graph.topological_order()?;
-        let applied: HashSet<String> = executor.fetch_strings(self.dialect.applied_migrations_sql())?.into_iter().collect();
+        let applied: HashSet<String> = self.applied_set(executor)?;
         let pending = order.iter()
             .filter(|id| !applied.contains(**id))
             .map(|id| id.to_string())
@@ -461,7 +462,7 @@ impl Migrator {
         self.graph.detect_conflict()?;
         self.install(executor)?;
         let order = self.graph.topological_order()?;
-        let applied: HashSet<String> = executor.fetch_strings(self.dialect.applied_migrations_sql())?.into_iter().collect();
+        let applied: HashSet<String> = self.applied_set(executor)?;
         Ok(order.iter().map(|id| (id.to_string(), applied.contains(*id))).collect())
     }
 

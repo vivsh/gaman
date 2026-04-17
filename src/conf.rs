@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 /// Runtime configuration for gaman.
 /// Loaded once at startup and passed through the call chain.
+#[derive(Clone)]
 pub struct Config {
     pub database_url: Option<String>,
     pub migrations_dir: PathBuf,

@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use gaman::{Config, Dialect, Executor, Migration, Migrator, Schema, VecAdapter};
+use gaman::{Config, Migration};
+use gaman::schema::Schema;
+use gaman::core::{Migrator, Dialect, Executor, VecAdapter};
 
 use super::fixtures;
 
@@ -31,7 +33,7 @@ pub trait DbHarness {
     }
     /// Run `migrator.verify()` against the live database for `schema`.
     /// Returns None when the backend does not support introspection.
-    fn run_verify(&mut self, m: &Migrator, schema: &str) -> Option<Vec<gaman::Operation>> {
+    fn run_verify(&mut self, m: &Migrator, schema: &str) -> Option<Vec<gaman::schema::Operation>> {
         let _ = (m, schema);
         None
     }
@@ -103,7 +105,7 @@ pub fn test_partial_failure_rolls_back(h: &mut dyn DbHarness) {
     h.reset();
     let mut bad_chain = fixtures::three_migration_chain();
     // Inject a syntactically invalid SQL statement into the third migration
-    bad_chain[2].operations.push(gaman::Operation::Statement {
+    bad_chain[2].operations.push(gaman::schema::Operation::Statement {
         up: "THIS IS NOT VALID SQL !!!".into(),
         down: None,
     });

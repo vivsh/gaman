@@ -183,7 +183,7 @@ pub fn derive_into_table(input: TokenStream) -> TokenStream {
             }
         } else {
             pre_stmts.push(quote! {
-                let #desc_var = <#field_ty as ::gaman::column_type::ColumnType>::column_desc(dialect);
+                let #desc_var = <#field_ty as ::gaman::schema::ColumnType>::column_desc(dialect);
             });
             type_expr = quote! { #desc_var.sql_type };
             if let Some(nullable_override) = field.nullable {
@@ -243,10 +243,10 @@ pub fn derive_into_table(input: TokenStream) -> TokenStream {
     };
 
     quote! {
-        impl ::gaman::states::IntoTable for #struct_ident {
-            fn into_table(dialect: &::gaman::dialects::Dialect) -> ::gaman::states::Table {
+        impl ::gaman::schema::IntoTable for #struct_ident {
+            fn into_table(dialect: &::gaman::core::Dialect) -> ::gaman::schema::Table {
                 #(#pre_stmts)*
-                ::gaman::states::TableBuilder::new(#table_name)
+                ::gaman::schema::TableBuilder::new(#table_name)
                     #schema_stmt
                     #(#col_stmts)*
                     .build()

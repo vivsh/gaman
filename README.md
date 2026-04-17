@@ -67,35 +67,69 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-gaman = "0.1"
+gaman = "0.3"
 ```
 
-**Running migrations at startup**
-
-Bundle migration YAML files into the binary and apply them on startup:
+**Apply migrations at startup — no CLI needed**
 
 ```rust
-use gaman::{EmbedSource, Migrator, Config, include_migrations};
+use gaman::{Config, MigrationEngine, include_migrations};
 
-let config = std::sync::Arc::new(Config::default());
-let source = Box::new(EmbedSource::new(include_migrations!("migrations")));
-Migrator::new(config, source, gaman::Dialect::Postgres)
-    .expect("migrator init failed")
-    .migrate_to_latest(&mut executor)
-    .expect("migrations failed");
+static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
+
+fn main() {
+    MigrationEngine::new(Config::default(), MIGRATIONS)
+        .migrate()
+        .expect("migrations failed");
+    // start server, run jobs, etc.
+}
 ```
+
+**Expose the full CLI from your own binary**
+
+Struct-based schema — no YAML file needed:
+
+```rust
+use gaman::{Config, IntoTable, MigrationEngine, include_migrations};
+
+static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
+
+#[derive(IntoTable)]
+struct User { id: i64, email: String, bio: Option<String> }
+
+fn main() {
+    MigrationEngine::new(Config::default(), MIGRATIONS)
+        .with_schema(|s| s.table::<User>().build())
+        .handle_args()
+        .expect("command failed");
+}
+```
+
+YAML-based schema — load `schema.yaml` at startup:
+
+```rust
+use gaman::{Config, MigrationEngine, include_migrations};
+use gaman::schema::Schema;
+
+static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
+
+fn main() {
+    MigrationEngine::new(Config::default(), MIGRATIONS)
+        .with_schema(|_| Schema::load(std::path::Path::new("schema.yaml"))
+            .expect("failed to load schema.yaml"))
+        .handle_args()
+        .expect("command failed");
+}
+```
+
+`handle_args()` parses `std::env::args()` and dispatches the full command set: `make_migration`, `migrate`, `verify_db`, `show_migrations`, etc. CLI flags (`-d`, `-m`, `-s`) override the `Config` passed to `new()`.
 
 `include_migrations!("path")` embeds all `.yaml` files from the given path at compile time, sorted lexicographically. No files on disk required at runtime.
 
-**Declaring schema as Rust structs**
-
-Use `#[derive(IntoTable)]` to map a struct to a table. Type resolution precedence:
-
-1. `#[column(type = "...")]` — explicit SQL type, required for third-party types
-2. `<T as ColumnType>::column_desc(dialect)` — automatic, handles `Option<T>` → nullable
+**`#[derive(IntoTable)]` — full attribute reference**
 
 ```rust
-use gaman::{Schema, Dialect, IntoTable};
+use gaman::IntoTable;
 
 #[derive(IntoTable)]
 #[table(name = "users", schema = "app")]
@@ -116,15 +150,7 @@ struct User {
     #[column(skip)]
     _cache: Vec<u8>,
 }
-
-let schema = Schema::builder(Dialect::Postgres)
-    .table::<User>()
-    .enum_type("status", &["active", "inactive"])
-    .extension("pgcrypto")
-    .build();
 ```
-
-**`#[table(...)]` attributes**
 
 | Attribute        | Description                                           |
 | ---------------- | ----------------------------------------------------- |
@@ -145,18 +171,17 @@ let schema = Schema::builder(Dialect::Postgres)
 | `references_name = "fk_name"`   | Explicit FK constraint name                                                      |
 | `check = "expr"`                | Inline check constraint                                                          |
 
-For your own custom types, implement `gaman::ColumnType`:
+For your own custom types, implement `gaman::schema::ColumnType`:
 
 ```rust
-use gaman::{ColumnType, ColumnDesc, Dialect};
+use gaman::schema::{ColumnType, ColumnDesc};
+use gaman::core::Dialect;
 
 struct MyId(i64);
 
 impl ColumnType for MyId {
-    fn column_desc(dialect: &Dialect) -> ColumnDesc {
-        match dialect {
-            Dialect::Postgres => ColumnDesc { sql_type: "bigint", nullable: false },
-        }
+    fn column_desc(_dialect: &Dialect) -> ColumnDesc {
+        ColumnDesc { sql_type: "bigint", nullable: false }
     }
 }
 ```

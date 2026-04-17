@@ -1,13 +1,16 @@
-use std::fmt;
 use std::sync::Arc;
 
 use argh::FromArgs;
 use postgres::{Client, NoTls};
 
-use gaman::{
-    YamlAdapter, Config, Dialect, Introspectable, PostgresExecutor, SubprocessInvoker,
-    Migrator, MigratorError, CliPromptEngine, Decision, PromptEngine, Schema,
-};
+use crate::conf::Config;
+use crate::migrator::{Migrator, MigratorError};
+use crate::states::Schema;
+use crate::adapters::YamlAdapter;
+use crate::dialects::Dialect;
+use crate::executor::{Introspectable, PostgresExecutor, SubprocessInvoker};
+use crate::prompter::CliPromptEngine;
+use crate::disambiguator::{Decision, PromptEngine};
 
 /// Gaman — PostgreSQL migration tool
 #[derive(FromArgs, Debug)]
@@ -135,65 +138,53 @@ pub struct InspectDbCmd {
     pub output: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum CommandError {
-    Migrator(MigratorError),
-    Db(postgres::Error),
+    #[error("{0}")]
+    Migrator(#[from] MigratorError),
+    #[error("{0}")]
+    Db(#[from] postgres::Error),
+    #[error("{0}")]
     Config(String),
-    Io(std::io::Error),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
 }
 
-impl fmt::Display for CommandError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CommandError::Migrator(e) => write!(f, "{e}"),
-            CommandError::Db(e) => write!(f, "{e}"),
-            CommandError::Config(s) => write!(f, "{s}"),
-            CommandError::Io(e) => write!(f, "{e}"),
+fn db_connect(config: &Config) -> Result<PostgresExecutor, CommandError> {
+    let url = config.database_url.as_deref()
+        .ok_or_else(|| CommandError::Config(
+            "DATABASE_URL is not set — pass --database-url or set it in .env".into(),
+        ))?;
+    Ok(PostgresExecutor::new(Client::connect(url, NoTls)?))
+}
+
+impl GamanArgs {
+    /// Apply the CLI overrides (if any) onto `config` and return the subcommand.
+    pub(crate) fn apply_to(self, config: &mut Config) -> Command {
+        if let Some(dir) = self.migrations_dir {
+            config.migrations_dir = std::path::PathBuf::from(dir);
         }
-    }
-}
-
-impl std::error::Error for CommandError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            CommandError::Migrator(e) => Some(e),
-            CommandError::Db(e) => Some(e),
-            CommandError::Config(_) => None,
-            CommandError::Io(e) => Some(e),
+        if let Some(sf) = self.schema_file {
+            config.schema_file = std::path::PathBuf::from(sf);
         }
-    }
-}
-
-impl From<MigratorError> for CommandError {
-    fn from(e: MigratorError) -> Self {
-        CommandError::Migrator(e)
-    }
-}
-
-impl From<postgres::Error> for CommandError {
-    fn from(e: postgres::Error) -> Self {
-        CommandError::Db(e)
+        if let Some(url) = self.database_url {
+            config.database_url = Some(url);
+        }
+        self.command
     }
 }
 
 pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
     let mut config = Config::default();
-    if let Some(dir) = args.migrations_dir {
-        config.migrations_dir = std::path::PathBuf::from(dir);
-    }
-    if let Some(schema) = args.schema_file {
-        config.schema_file = std::path::PathBuf::from(schema);
-    }
-    if let Some(url) = args.database_url {
-        config.database_url = Some(url);
-    }
+    let cmd = args.apply_to(&mut config);
     let config = Arc::new(config);
-
     let source = Box::new(YamlAdapter { directory: config.migrations_dir.clone() });
     let migrator = Migrator::new(config, source, Dialect::Postgres)?;
+    dispatch(migrator, None, cmd)
+}
 
-    match args.command {
+pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd: Command) -> Result<(), CommandError> {
+    match cmd {
         Command::Config(_) => {
             println!("  migrations_dir  {}", migrator.config.migrations_dir.display());
             println!("  schema_file     {}", migrator.config.schema_file.display());
@@ -213,8 +204,11 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
                 migrator.make_empty_migration(name).map(|_| ())?;
                 Ok(())
             } else if cmd.check {
-                let current = Schema::load(&migrator.config.schema_file)
-                    .map_err(|e| CommandError::Config(e.to_string()))?;
+                let current = match embedded_schema {
+                    Some(s) => s,
+                    None => Schema::load(&migrator.config.schema_file)
+                        .map_err(|e| CommandError::Config(e.to_string()))?,
+                };
                 let name = cmd.name.unwrap_or_else(|| "check".into());
                 match migrator.make_migrations(name, current, true, &[])? {
                     Some(_) => Err(CommandError::Config("schema has changes not yet in a migration".into())),
@@ -222,8 +216,11 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
                 }
             } else {
                 let name = cmd.name.ok_or_else(|| CommandError::Config("a migration name is required".into()))?;
-                let current = Schema::load(&migrator.config.schema_file)
-                    .map_err(|e| CommandError::Config(e.to_string()))?;
+                let current = match embedded_schema {
+                    Some(s) => s,
+                    None => Schema::load(&migrator.config.schema_file)
+                        .map_err(|e| CommandError::Config(e.to_string()))?,
+                };
                 let engine = CliPromptEngine;
                 let mut decisions: Vec<Decision> = vec![];
                 loop {
@@ -240,16 +237,7 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
             }
         }
         Command::Migrate(cmd) => {
-            let url = migrator
-                .config
-                .database_url
-                .as_deref()
-                .ok_or_else(|| CommandError::Config(
-                    "DATABASE_URL is not set — pass --database-url or set it in .env".into(),
-                ))?
-                .to_string();
-            let client = Client::connect(&url, NoTls)?;
-            let mut executor = PostgresExecutor::new(client);
+            let mut executor = db_connect(&migrator.config)?;
             let invoker = SubprocessInvoker;
             if cmd.plan {
                 match migrator.plan(&mut executor) {
@@ -278,17 +266,8 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
             }
         }
         Command::ShowMigrations(_) => {
-            let url = migrator
-                .config
-                .database_url
-                .as_deref()
-                .ok_or_else(|| CommandError::Config(
-                    "DATABASE_URL is not set — pass --database-url or set it in .env".into(),
-                ))?
-                .to_string();
-            let client = Client::connect(&url, NoTls)?;
-            let mut executor = PostgresExecutor::new(client);
-            let rows = migrator.show_migrations(&mut executor)?;
+            let mut executor = db_connect(&migrator.config)?
+;            let rows = migrator.show_migrations(&mut executor)?;
             if rows.is_empty() {
                 println!("No migrations found.");
             } else {
@@ -343,16 +322,7 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
             Ok(())
         }
         Command::InspectDb(cmd) => {
-            let url = migrator
-                .config
-                .database_url
-                .as_deref()
-                .ok_or_else(|| CommandError::Config(
-                    "DATABASE_URL is not set — pass --database-url or set it in .env".into(),
-                ))?
-                .to_string();
-            let client = Client::connect(&url, NoTls)?;
-            let mut executor = PostgresExecutor::new(client);
+            let mut executor = db_connect(&migrator.config)?;
 
             let schemas: Vec<&str> = if cmd.schema.is_empty() {
                 vec!["public"]
@@ -377,16 +347,7 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
             Ok(())
         }
         Command::VerifyDb(cmd) => {
-            let url = migrator
-                .config
-                .database_url
-                .as_deref()
-                .ok_or_else(|| CommandError::Config(
-                    "DATABASE_URL is not set — pass --database-url or set it in .env".into(),
-                ))?
-                .to_string();
-            let client = Client::connect(&url, NoTls)?;
-            let mut executor = PostgresExecutor::new(client);
+            let mut executor = db_connect(&migrator.config)?;
             let schema = cmd.schema.as_deref().unwrap_or("public");
             let drift = migrator.verify(&mut executor, schema).map_err(CommandError::from)?;
             if drift.is_empty() {
