@@ -65,4 +65,6 @@ pub enum SchemaLoadError {
     Json(#[from] serde_json::Error),
     #[error("table '{table}' defined in both '{a}' and '{b}'")]
     Merge { table: String, a: String, b: String },
+    #[error(transparent)]
+    Sql(#[from] crate::sql::SqlParseError),
 }

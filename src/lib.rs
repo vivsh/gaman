@@ -1,4 +1,5 @@
 pub(crate) mod adapters;
+pub mod sql;
 pub mod cli;
 pub(crate) mod column_type;
 pub(crate) mod embed;
@@ -34,6 +35,7 @@ pub mod schema {
     };
     pub use crate::column_type::{ColumnDesc, ColumnType};
     pub use crate::operations::Operation;
+    pub use crate::sql::SqlParseError;
 }
 
 /// Advanced types for custom executors, migration sources, and programmatic control.

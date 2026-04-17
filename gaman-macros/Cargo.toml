@@ -1,6 +1,6 @@
 [package]
 name = "gaman-macros"
-version = "0.3.0"
+version = "0.3.5"
 edition = "2024"
 description = "Proc-macro helpers for embedding gaman migrations into Rust applications"
 license = "MIT"
