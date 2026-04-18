@@ -231,7 +231,7 @@ CREATE UNIQUE INDEX users_email_idx ON users (email);
 CREATE VIEW active_users AS SELECT * FROM users WHERE deleted_at IS NULL;
 ```
 
-Supported: `CREATE TABLE`, `CREATE [UNIQUE] INDEX`, `CREATE VIEW`, `CREATE FUNCTION`, `CREATE EXTENSION`, `CREATE TYPE AS ENUM`. Everything else is silently skipped.
+Supported: `CREATE TABLE`, `CREATE [UNIQUE] INDEX`, `CREATE VIEW`, `CREATE FUNCTION`, `CREATE EXTENSION`, `CREATE TYPE AS ENUM`. Any other statement is an error.
 
 ### Rust Structs
 
