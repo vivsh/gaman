@@ -1,160 +1,119 @@
-mod common;
+mod support;
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use support::{
+    PgHarness, PostgresCase, PostgresSpec, TestSupportError, assert_error_contains,
+    assert_ops_match, assert_schema_matches, build_migrator, case_label, case_name,
+    discover_case_dirs, postgres_cases_root, read_case_file, scope_schema_for_compare,
+};
 
-use gaman::schema::Schema;
-use gaman::core::{Dialect, Executor, ExecutorError, Introspectable, PostgresExecutor};
-use postgres::{Client, NoTls};
+/// Runs PostgreSQL-backed cases for migrate, verify, and inspect.
+#[test]
+#[ignore = "set TEST_DATABASE_URL and pass -- --include-ignored to run"]
+fn postgres_cases() {
+    let dirs = discover_case_dirs(&postgres_cases_root()).expect("failed to discover postgres cases");
+    let mut failures = Vec::new();
 
-use common::harness::DbHarness;
+    for dir in dirs {
+        let name = match case_name(&dir) {
+            Ok(name) => name,
+            Err(error) => {
+                failures.push(error.to_string());
+                continue;
+            }
+        };
 
-static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let result = (|| -> Result<String, TestSupportError> {
+            let case: PostgresCase = read_case_file(&dir)?;
+            let label = case_label(&name, case.description.as_deref());
+            run_postgres_case(&name, &case)?;
+            Ok(label)
+        })();
 
-fn test_db_url() -> Option<String> {
-    std::env::var("TEST_DATABASE_URL").ok()
-}
-
-// Each test gets its own schema: gaman_test_{n}
-// PgHarness creates it on construction and drops it in reset() / Drop.
-struct PgHarness {
-    client: Client,
-    schema: String,
-}
-
-impl PgHarness {
-    fn new() -> Option<Self> {
-        let url = test_db_url()?;
-        let mut client = Client::connect(&url, NoTls).ok()?;
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let schema = format!("gaman_test_{n}");
-        client
-            .execute(&format!("CREATE SCHEMA IF NOT EXISTS \"{schema}\""), &[])
-            .ok()?;
-        client
-            .execute(&format!("SET search_path TO \"{schema}\""), &[])
-            .ok()?;
-        Some(Self { client, schema })
-    }
-
-    fn drop_schema(&mut self) {
-        let _ = self.client.execute(
-            &format!("DROP SCHEMA IF EXISTS \"{}\" CASCADE", self.schema),
-            &[],
-        );
-    }
-}
-
-impl Drop for PgHarness {
-    fn drop(&mut self) {
-        self.drop_schema();
-    }
-}
-
-// PgHarness itself implements Executor so we don't need a temporary wrapper.
-impl Executor for PgHarness {
-    fn execute(&mut self, sql: &str) -> Result<(), ExecutorError> {
-        self.client
-            .execute(sql, &[])
-            .map(|_| ())
-            .map_err(|e| ExecutorError::Execute(format!("{e}\n  SQL: {sql}")))
-    }
-
-    fn fetch_strings(&mut self, sql: &str) -> Result<Vec<String>, ExecutorError> {
-        let rows = self.client.query(sql, &[]).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-        Ok(rows.into_iter().map(|r| r.get::<_, String>(0)).collect())
-    }
-
-    fn begin(&mut self) -> Result<(), ExecutorError> {
-        self.client.execute("BEGIN", &[]).map(|_| ()).map_err(|e| ExecutorError::Transaction(e.to_string()))
-    }
-
-    fn commit(&mut self) -> Result<(), ExecutorError> {
-        self.client.execute("COMMIT", &[]).map(|_| ()).map_err(|e| ExecutorError::Transaction(e.to_string()))
-    }
-
-    fn rollback(&mut self) -> Result<(), ExecutorError> {
-        self.client.execute("ROLLBACK", &[]).map(|_| ()).map_err(|e| ExecutorError::Transaction(e.to_string()))
-    }
-}
-
-impl DbHarness for PgHarness {
-    fn dialect(&self) -> Dialect {
-        Dialect::Postgres
-    }
-
-    fn executor(&mut self) -> &mut dyn Executor {
-        self
-    }
-
-    fn reset(&mut self) {
-        let schema = self.schema.clone();
-        let _ = self.client.execute(&format!("DROP SCHEMA IF EXISTS \"{schema}\" CASCADE"), &[]);
-        let _ = self.client.execute(&format!("CREATE SCHEMA \"{schema}\""), &[]);
-        let _ = self.client.execute(&format!("SET search_path TO \"{schema}\""), &[]);
-    }
-
-    fn table_exists(&mut self, table: &str) -> bool {
-        let schema = self.schema.clone();
-        let row = self.client.query_one(
-            "SELECT EXISTS (
-                SELECT 1 FROM information_schema.tables
-                WHERE table_schema = $1 AND table_name = $2
-            )",
-            &[&schema, &table],
-        );
-        row.map(|r| r.get::<_, bool>(0)).unwrap_or(false)
-    }
-
-    fn tracking_count(&mut self) -> usize {
-        let row = self
-            .client
-            .query_one("SELECT COUNT(*) FROM gaman_migrations", &[]);
-        match row {
-            Ok(r) => r.get::<_, i64>(0) as usize,
-            Err(_) => 0,
+        match result {
+            Ok(label) => println!("  ok: {label}"),
+            Err(error) => failures.push(error.to_string()),
         }
     }
 
-    fn current_schema(&self) -> String {
-        self.schema.clone()
-    }
-
-    fn inspect_schema(&mut self, schema: &str) -> Option<Schema> {
-        let url = std::env::var("TEST_DATABASE_URL").ok()?;
-        let client = Client::connect(&url, NoTls).ok()?;
-        let mut executor = PostgresExecutor::new(client);
-        executor.inspect_db(&[schema]).ok()
-    }
-
-    fn run_verify(&mut self, m: &gaman::core::Migrator, schema: &str) -> Option<Vec<gaman::schema::Operation>> {
-        let url = std::env::var("TEST_DATABASE_URL").ok()?;
-        let client = Client::connect(&url, NoTls).ok()?;
-        let mut executor = PostgresExecutor::new(client);
-        executor.execute(&format!("SET search_path TO \"{}\"", self.schema)).ok()?;
-        m.verify(&mut executor, schema).ok()
+    if !failures.is_empty() {
+        panic!("postgres cases failed:\n\n{}", failures.join("\n\n"));
     }
 }
 
-macro_rules! pg_test {
-    ($name:ident) => {
-        #[test]
-        #[ignore = "set TEST_DATABASE_URL and pass -- --include-ignored to run"]
-        fn $name() {
-            let mut h = PgHarness::new()
-                .expect("TEST_DATABASE_URL must be set to run Postgres integration tests");
-            common::harness::$name(&mut h);
+fn run_postgres_case(name: &str, case: &PostgresCase) -> Result<(), TestSupportError> {
+    let mut harness = PgHarness::new()?;
+    harness.reset()?;
+
+    match &case.spec {
+        PostgresSpec::Migrate {
+            migrations,
+            setup_sql,
+            target,
+            fake,
+            expect_schema,
+            expect_error,
+        } => {
+            if let Some(sql) = setup_sql {
+                harness.batch_execute(sql)?;
+            }
+            let migrator = build_migrator(name, support::FixtureDialect::Postgres, migrations)?;
+            let result = migrator.migrate(&mut harness, None, target.as_deref(), *fake);
+            if let Some(expected) = expect_error {
+                return assert_error_contains(name, result.map(|_| ()), expected);
+            }
+            result.map_err(|error| {
+                TestSupportError::message(format!("{name}: migrate failed unexpectedly: {error}"))
+            })?;
+            if let Some(expected) = expect_schema.clone() {
+                let mut actual = harness.inspect_schema()?;
+                scope_schema_for_compare(&mut actual, harness.schema_name());
+                assert_schema_matches(name, "inspected schema", actual, expected)?;
+            }
+            Ok(())
         }
-    };
+        PostgresSpec::Verify {
+            migrations,
+            setup_sql,
+            mutate_sql,
+            expect_verify,
+            expect_error,
+        } => {
+            if let Some(sql) = setup_sql {
+                harness.batch_execute(sql)?;
+            }
+            let migrator = build_migrator(name, support::FixtureDialect::Postgres, migrations)?;
+            if !migrations.is_empty() {
+                migrator.migrate(&mut harness, None, None, false).map_err(|error| {
+                    TestSupportError::message(format!("{name}: setup migrate failed unexpectedly: {error}"))
+                })?;
+            }
+            if let Some(sql) = mutate_sql {
+                harness.batch_execute(sql)?;
+            }
+            let result = harness.verify(&migrator);
+            if let Some(expected) = expect_error {
+                return assert_error_contains(name, result.map(|_| ()), expected);
+            }
+            let actual = result?;
+            let expected = expect_verify.clone().ok_or_else(|| {
+                TestSupportError::message(format!("{name}: verify case requires expect_verify when expect_error is absent"))
+            })?;
+            assert_ops_match(name, "verify operations", &actual, &expected)
+        }
+        PostgresSpec::Inspect { setup_sql, expect_schema, expect_error } => {
+            if let Some(sql) = setup_sql {
+                harness.batch_execute(sql)?;
+            }
+            let result = harness.inspect_schema();
+            if let Some(expected) = expect_error {
+                return assert_error_contains(name, result.map(|_| ()), expected);
+            }
+            let mut actual = result?;
+            scope_schema_for_compare(&mut actual, harness.schema_name());
+            let expected = expect_schema.clone().ok_or_else(|| {
+                TestSupportError::message(format!("{name}: inspect case requires expect_schema when expect_error is absent"))
+            })?;
+            assert_schema_matches(name, "inspected schema", actual, expected)
+        }
+    }
 }
-
-pg_test!(test_forward_apply);
-pg_test!(test_rollback_to_target);
-pg_test!(test_fake_apply);
-pg_test!(test_fake_rollback);
-pg_test!(test_bootstrap_idempotent);
-pg_test!(test_partial_failure_rolls_back);
-pg_test!(test_duplicate_record_skipped);
-pg_test!(test_drifted_tracking_reapplied);
-pg_test!(test_invalid_graph_rejected);
-pg_test!(test_replay_matches_inspect_db);
-pg_test!(test_verify_no_drift_after_migrate);

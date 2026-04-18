@@ -1,0 +1,38 @@
+description: Diff a desired schema into a single add_column migration.
+kind: schema_to_migration
+dialect: postgres
+name: add_nullable_email
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: username
+              type: text
+current:
+  tables:
+    users:
+      name: users
+      columns:
+        - name: id
+          type: integer
+          primary_key: true
+        - name: username
+          type: text
+        - name: email
+          type: text
+          nullable: true
+expect_operations:
+  - type: add_column
+    table_name: users
+    column:
+      name: email
+      type: text
+      nullable: true
+expect_sql: |
+  ALTER TABLE "users" ADD COLUMN "email" text

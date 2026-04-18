@@ -4,7 +4,7 @@ use std::io::Write;
 use tempfile::NamedTempFile;
 use tempfile::TempDir;
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// Helpers for SQL parser tests.
 
 fn table<'a>(schema: &'a Schema, name: &str) -> &'a crate::states::Table {
     schema
@@ -20,8 +20,6 @@ fn col<'a>(schema: &'a Schema, tbl: &str, col: &str) -> &'a crate::states::Colum
         .find(|c| c.name == col)
         .unwrap_or_else(|| panic!("column '{col}' not found on table '{tbl}'"))
 }
-
-// ── CREATE TABLE ─────────────────────────────────────────────────────────────
 
 /// Verifies a minimal CREATE TABLE with a bigserial PK and a text column parses correctly.
 #[test]
@@ -170,8 +168,6 @@ fn test_mixed_nullability() {
     assert!(col(&schema, "t", "d").nullable);
 }
 
-// ── CREATE INDEX ─────────────────────────────────────────────────────────────
-
 /// A plain CREATE INDEX is attached to the target table.
 #[test]
 fn test_create_index() {
@@ -227,8 +223,6 @@ fn test_index_unknown_table_is_error() {
     );
 }
 
-// ── CREATE VIEW ───────────────────────────────────────────────────────────────
-
 /// A CREATE VIEW is stored in `schema.views` with its SELECT definition.
 #[test]
 fn test_create_view() {
@@ -240,8 +234,6 @@ fn test_create_view() {
     assert!(v.definition.contains("active"));
 }
 
-// ── CREATE EXTENSION ─────────────────────────────────────────────────────────
-
 /// CREATE EXTENSION is stored with name and optional version.
 #[test]
 fn test_create_extension() {
@@ -249,8 +241,6 @@ fn test_create_extension() {
     let schema = parse_sql(sql).unwrap();
     assert!(schema.extensions.contains_key("uuid-ossp"));
 }
-
-// ── CREATE TYPE AS ENUM ───────────────────────────────────────────────────────
 
 /// A CREATE TYPE AS ENUM is parsed into `schema.enums` with its label values.
 #[test]
@@ -261,8 +251,6 @@ fn test_create_enum() {
     let e = &schema.enums["mood"];
     assert_eq!(e.values, ["happy", "sad", "neutral"]);
 }
-
-// ── CREATE FUNCTION ───────────────────────────────────────────────────────────
 
 /// A basic PL/pgSQL function is parsed into `schema.functions`.
 #[test]
@@ -302,8 +290,6 @@ fn test_function_security_definer() {
     assert!(f.security_definer);
 }
 
-// ── Schema-qualified names ───────────────────────────────────────────────────
-
 /// `public.tablename` resolves to schema = None (treated as default schema).
 #[test]
 fn test_public_schema_is_none() {
@@ -325,8 +311,6 @@ fn test_custom_schema_is_preserved() {
         Some("analytics".to_string())
     );
 }
-
-// ── Multi-statement SQL ───────────────────────────────────────────────────────
 
 /// Multiple CREATE statements in one SQL string are all loaded into the schema.
 #[test]
@@ -366,8 +350,6 @@ fn test_duplicate_table_is_error() {
         "expected DuplicateTable error, got: {err}"
     );
 }
-
-// ── Schema::load() / Schema::from_dir() integration ─────────────────────────
 
 /// `Schema::load()` dispatches to the SQL parser for `.sql` files.
 #[test]

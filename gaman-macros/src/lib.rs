@@ -5,21 +5,8 @@ use std::path::Path;
 use syn::{LitStr, Type, parse_macro_input};
 use darling::{FromDeriveInput, FromField, ast};
 
-/// Embeds all `.yaml` migration files from `path` (relative to your crate root) at compile time.
-///
-/// Returns `&'static [(&'static str, &'static str)]` where each tuple is `(id, yaml_content)`.
-/// Files are sorted lexicographically, so use a numeric prefix (`0001_`, `0002_`) for stable ordering.
-///
-/// # Example
-///
-/// ```no_run
-/// use gaman::embed::Runner;
-/// use gaman_macros::include_migrations;
-///
-/// Runner::new("postgres://localhost/mydb", include_migrations!("migrations"))
-///     .run()
-///     .expect("migrations failed");
-/// ```
+/// Embed `.yaml` migrations from a directory at compile time.
+/// Returns `&'static [(&'static str, &'static str)]`, sorted lexicographically by filename.
 #[proc_macro]
 pub fn include_migrations(input: TokenStream) -> TokenStream {
     let path_lit = parse_macro_input!(input as LitStr);
@@ -63,8 +50,6 @@ pub fn include_migrations(input: TokenStream) -> TokenStream {
     .into()
 }
 
-// ── IntoTable derive ──────────────────────────────────────────────────────────
-
 #[derive(FromDeriveInput)]
 #[darling(attributes(table), supports(struct_named))]
 struct IntoTableInput {
@@ -85,20 +70,18 @@ struct IntoTableField {
     skip: bool,
     #[darling(default)]
     name: Option<String>,
-    /// Explicit SQL type string — highest priority, bypasses `ColumnType` lookup.
-    /// Required for third-party types (e.g. `#[column(type = "uuid")]`).
-    /// When used without `nullable`, nullability defaults to `false`.
+    /// Explicit SQL type string, mainly for third-party types.
+    /// When this is set, nullability defaults to `false` unless overridden.
     #[darling(default, rename = "type")]
     sql_type: Option<String>,
-    /// Override nullability. When absent: inferred via `ColumnType` (handles `Option<T>`).
-    /// Must be set explicitly when `type = "..."` is used on an `Option<ThirdParty>` field.
+    /// Override nullability instead of inferring it from `ColumnType`.
     #[darling(default)]
     nullable: Option<bool>,
     #[darling(default)]
     primary_key: bool,
     #[darling(default)]
     default: Option<String>,
-    /// Inline FK: `"table.column"`, e.g. `#[column(references = "users.id")]`.
+    /// Inline FK as `table.column`.
     #[darling(default)]
     references: Option<String>,
     #[darling(default)]
@@ -118,28 +101,9 @@ fn to_snake_case(s: &str) -> String {
     out
 }
 
-/// Derive `IntoTable` for a named struct, mapping each field to a Postgres column.
-///
-/// Type resolution precedence per column:
-/// 1. `#[column(type = "...")]` — explicit SQL type string, bypasses all trait lookup
-/// 2. `<FieldType as gaman::column_type::ColumnType>::column_desc(dialect)` — default,
-///    handles `Option<T>` → nullable via the blanket impl
-///
-/// # Container attributes (`#[table(...)]`)
-/// - `name = "..."` — table name override (default: snake_case struct name)
-/// - `schema = "..."` — Postgres schema (omit for public)
-///
-/// # Field attributes (`#[column(...)]`)
-/// - `skip` — exclude this field
-/// - `name = "..."` — column name override
-/// - `type = "..."` — explicit SQL type; required for third-party types (uuid, chrono, etc.)
-/// - `nullable` / `nullable = false` — override inferred nullability; required when using
-///   `type = "..."` on an `Option<ThirdPartyType>` field
-/// - `primary_key` — mark as primary key
-/// - `default = "expr"` — SQL default expression
-/// - `references = "table.column"` — inline foreign key
-/// - `references_name = "fk_name"` — explicit FK constraint name
-/// - `check = "expr"` — inline check constraint
+/// Derive `IntoTable` for a named struct.
+/// Supports `#[table(name = "...", schema = "...")]` plus column attributes for
+/// naming, explicit SQL types, nullability, defaults, keys, and checks.
 #[proc_macro_derive(IntoTable, attributes(table, column))]
 pub fn derive_into_table(input: TokenStream) -> TokenStream {
     let args = match IntoTableInput::from_derive_input(&parse_macro_input!(input)) {

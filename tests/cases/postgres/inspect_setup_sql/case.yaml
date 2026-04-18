@@ -1,0 +1,17 @@
+description: Inspect a schema created entirely through setup SQL.
+kind: inspect
+setup_sql: |
+  CREATE TABLE users (
+      id integer PRIMARY KEY,
+      email text NOT NULL
+  );
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+        - name: id
+          type: integer
+          primary_key: true
+        - name: email
+          type: text

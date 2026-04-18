@@ -1,0 +1,6 @@
+description: Invalid SQL is rejected with a parse error.
+kind: sql_to_schema
+dialect: postgres
+sql: |
+  NOT VALID SQL !!
+expect_error: "SQL parse error"

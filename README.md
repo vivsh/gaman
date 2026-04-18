@@ -1,21 +1,21 @@
-# Gaman — गमन
+# Gaman
 
 > **Early-stage. Core engine is stable and tested in production use. Public API and file format may change before 1.0.**
 
 [![Crates.io](https://img.shields.io/crates/v/gaman)](https://crates.io/crates/gaman)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A deterministic, offline-first migration engine for PostgreSQL — written in Rust, inspired by Django migrations.
+A deterministic, offline-first migration engine for PostgreSQL, written in Rust and inspired by Django migrations.
 
-Declare your schema as **YAML**, **SQL DDL**, or **Rust structs**. Gaman diffs it against your migration history and generates the next migration — no database connection required at plan time.
+Declare your schema as **YAML**, **SQL DDL**, or **Rust structs**. Gaman diffs that desired state against replayed migration history and writes the next migration without touching a database at plan time.
 
 _Pronounced guh-MUN (गमन, /ɡəˈmən/) — Sanskrit for "movement" or "going forward"._
 
----
-
 ## How It Works
 
-No matter how you declare your schema, every input path is parsed into the same intermediate representation (`Schema`) before any comparison happens:
+Gaman treats migration planning as a pure replay problem.
+
+It takes the schema you want now, reconstructs the previous schema by replaying every existing migration, and diffs those two states. Because both sides are reduced to the same internal `Schema`, there is no hidden database state involved in generation.
 
 ```
 schema.yaml  ─┐
@@ -24,19 +24,14 @@ Rust structs ─┘                  ├─► diff ──► new migration file
 migrations/ (replayed) ──────────┘
 ```
 
-- **Desired state** — your schema file (YAML, SQL DDL, or Rust structs).
-- **Previous state** — fully reconstructed by replaying all existing migrations in topological order. No database needed.
-- **Diff** — the ordered set of operations between the two states, written to a new migration YAML file.
-- **Apply** — `gaman migrate` executes pending migrations and records them in `gaman_migrations`.
+That is what makes the engine deterministic: the same schema input and the same migration history always produce the same next migration.
 
-Migrations form a **directed acyclic graph (DAG)**. Each file declares its `dependencies`, which enables parallel feature branches and explicit merge points:
+Migrations form a DAG. Each file declares its `dependencies`, so parallel feature branches can meet in an explicit merge migration:
 
 ```
 0001_initial → 0002_add_auth ──┐
              → 0003_add_posts ─┴→ 0004_merge
 ```
-
----
 
 ## Quick Start
 
@@ -46,7 +41,7 @@ Migrations form a **directed acyclic graph (DAG)**. Each file declares its `depe
 cargo install gaman
 ```
 
-Configure via environment variables or per-invocation flags (`-d`, `-m`, `-s`):
+Point Gaman at a database, a migrations directory, and a schema file:
 
 ```bash
 DATABASE_URL=postgres://localhost/myapp
@@ -55,10 +50,17 @@ SCHEMA_FILE=schema.yaml   # or schema.sql
 ```
 
 ```bash
-gaman make_migration initial   # diff schema → write migration
-gaman sql_migrate               # preview SQL — no DB needed
-gaman migrate                   # apply to database
+gaman make_migration initial   # diff schema -> write migration
+gaman sql_migrate              # preview SQL without a database
+gaman migrate                  # apply pending migrations
 ```
+
+Typical loop:
+
+1. Change the schema.
+2. Run `gaman make_migration add_whatever_changed`.
+3. Review the generated YAML or `gaman sql_migrate` output.
+4. Run `gaman migrate`.
 
 ### Embedded in Rust
 
@@ -67,7 +69,9 @@ gaman migrate                   # apply to database
 gaman = "0.3"
 ```
 
-**Auto-apply at startup:**
+Use the library when you want migrations to ship with your binary.
+
+Auto-apply on startup:
 
 ```rust
 use gaman::{Config, MigrationEngine, include_migrations};
@@ -81,7 +85,7 @@ fn main() {
 }
 ```
 
-**Expose the full CLI from your binary — struct-based schema:**
+Expose the full CLI from your own binary with a struct-based schema:
 
 ```rust
 use gaman::{Config, IntoTable, MigrationEngine, include_migrations};
@@ -89,7 +93,11 @@ use gaman::{Config, IntoTable, MigrationEngine, include_migrations};
 static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
 
 #[derive(IntoTable)]
-struct User { id: i64, email: String, bio: Option<String> }
+struct User {
+    id: i64,
+    email: String,
+    bio: Option<String>,
+}
 
 fn main() {
     MigrationEngine::new(Config::default(), MIGRATIONS)
@@ -99,43 +107,37 @@ fn main() {
 }
 ```
 
-**Expose the full CLI — file-based schema:**
+Or keep the schema in a file and still reuse the same CLI:
 
 ```rust
-use gaman::{Config, MigrationEngine, include_migrations};
 use gaman::schema::Schema;
+use gaman::{Config, MigrationEngine, include_migrations};
 
 static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
 
 fn main() {
     MigrationEngine::new(Config::default(), MIGRATIONS)
-        .with_schema(|_| Schema::load(std::path::Path::new("schema.sql"))
-            .expect("failed to load schema"))
+        .with_schema(|_| {
+            Schema::load(std::path::Path::new("schema.sql")).expect("failed to load schema")
+        })
         .handle_args()
         .expect("command failed");
 }
 ```
 
-`handle_args()` parses `std::env::args()` and dispatches `make_migration`, `migrate`, `verify_db`, `show_migrations`, and more. CLI flags override `Config`.
+`handle_args()` parses `std::env::args()` and dispatches `make_migration`, `migrate`, `verify_db`, `show_migrations`, and the other built-in commands. `include_migrations!("path")` embeds every `.yaml` migration file at compile time in lexicographic order.
 
-`include_migrations!("path")` embeds all `.yaml` files at compile time, sorted lexicographically. No files needed at runtime.
+## Declaring Schema
 
----
-
-## Schema Formats
+All schema inputs become the same internal `Schema`, so the format choice is mostly about how you want to author it.
 
 ### YAML
 
-Column types are passed verbatim to PostgreSQL. Inline shorthands (`primary_key`, `references`, `check` on columns) are normalised into table-level lists before diffing.
+YAML is the most explicit format. It works well when you want schema, indexes, views, functions, and extensions in one place.
 
 ```yaml
 extensions:
   pgcrypto: {}
-
-enums:
-  order_status:
-    schema: public
-    values: [pending, confirmed, shipped, delivered]
 
 tables:
   users:
@@ -155,70 +157,16 @@ tables:
       - name: users_email_idx
         columns: [email]
         unique: true
-
-  orders:
-    columns:
-      - name: id
-        type: serial
-        nullable: false
-        primary_key: true
-      - name: user_id
-        type: integer
-        nullable: false
-        references: { table: users, column: id }
-      - name: total
-        type: numeric(10,2)
-        nullable: false
-        default: "0.00"
-        check: "total >= 0"
-    indexes:
-      - name: orders_user_id_idx
-        columns: [user_id]
-        unique: false
-        predicate: "total > 0"
-    foreign_keys:
-      - name: fk_orders_user
-        columns: [user_id]
-        to_table: users
-        to_column: id
-        on_delete: cascade
-    constraints:
-      - kind: check
-        name: positive_total
-        expression: "total >= 0"
-    triggers:
-      - name: notify_order_insert
-        timing: after
-        events: [insert]
-        scope: row
-        function_name: notify_order
-
-views:
-  recent_orders:
-    definition: "SELECT id, user_id FROM orders ORDER BY id DESC LIMIT 100"
-
-functions:
-  notify_order:
-    arguments: ""
-    returns: trigger
-    language: plpgsql
-    volatility: volatile
-    security_definer: false
-    body: |
-      BEGIN
-        PERFORM pg_notify('orders', row_to_json(NEW)::text);
-        RETURN NEW;
-      END;
 ```
 
-`SCHEMA_FILE` accepts `.yaml`, `.sql`, or a **directory** — all files inside are merged in alphabetical order.
+Inline shorthands such as `primary_key`, `references`, and `check` are normalized before diffing. `SCHEMA_FILE` can point to a `.yaml`, a `.sql`, or a directory; when you pass a directory, Gaman merges files in alphabetical order.
 
 ### SQL DDL
 
+SQL is useful when you already maintain schema DDL by hand and want Gaman to diff from that source of truth.
+
 ```sql
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
-CREATE TYPE order_status AS ENUM ('pending', 'confirmed', 'shipped');
 
 CREATE TABLE users (
     id bigserial PRIMARY KEY,
@@ -227,13 +175,13 @@ CREATE TABLE users (
 );
 
 CREATE UNIQUE INDEX users_email_idx ON users (email);
-
-CREATE VIEW active_users AS SELECT * FROM users WHERE deleted_at IS NULL;
 ```
 
-Supported: `CREATE TABLE`, `CREATE [UNIQUE] INDEX`, `CREATE VIEW`, `CREATE FUNCTION`, `CREATE EXTENSION`, `CREATE TYPE AS ENUM`. Any other statement is an error.
+Supported statements today are `CREATE TABLE`, `CREATE [UNIQUE] INDEX`, `CREATE VIEW`, `CREATE FUNCTION`, `CREATE EXTENSION`, and `CREATE TYPE AS ENUM`.
 
 ### Rust Structs
+
+Rust structs fit best when the application already owns the schema in code.
 
 ```rust
 use gaman::IntoTable;
@@ -252,54 +200,16 @@ struct User {
     score: i32,
     #[column(references = "orgs.id")]
     org_id: i64,
-    #[column(check = "score >= 0")]
-    rank: i32,
-    #[column(skip)]
-    _cache: Vec<u8>,
 }
 ```
 
-**`#[table(...)]` attributes**
+The common derive controls are `#[table(name = "...")]`, `#[table(schema = "...")]`, `#[column(type = "...")]`, `#[column(nullable)]`, `#[column(default = "...")]`, `#[column(references = "table.col")]`, and `#[column(skip)]`.
 
-| Attribute        | Description                                           |
-| ---------------- | ----------------------------------------------------- |
-| `name = "..."`   | Override table name (default: snake_case struct name) |
-| `schema = "..."` | PostgreSQL schema (omit for `public`)                 |
+For the full derive reference, see [docs/rust-structs.md](docs/rust-structs.md).
 
-**`#[column(...)]` attributes**
+## Migration Files
 
-| Attribute                       | Description                                                                      |
-| ------------------------------- | -------------------------------------------------------------------------------- |
-| `skip`                          | Exclude this field                                                               |
-| `name = "..."`                  | Override column name                                                             |
-| `type = "..."`                  | Explicit SQL type — required for third-party types (`uuid`, `timestamptz`, etc.) |
-| `nullable` / `nullable = false` | Override inferred nullability                                                    |
-| `primary_key`                   | Mark as primary key                                                              |
-| `default = "expr"`              | SQL default expression                                                           |
-| `references = "table.col"`      | Inline foreign key                                                               |
-| `references_name = "fk_name"`   | Explicit FK constraint name                                                      |
-| `check = "expr"`                | Inline check constraint                                                          |
-
-**Custom types** — implement `gaman::schema::ColumnType`:
-
-```rust
-use gaman::schema::{ColumnType, ColumnDesc};
-use gaman::core::Dialect;
-
-struct MyId(i64);
-
-impl ColumnType for MyId {
-    fn column_desc(_dialect: &Dialect) -> ColumnDesc {
-        ColumnDesc { sql_type: "bigint", nullable: false }
-    }
-}
-```
-
----
-
-## Migration File Format
-
-Auto-generated by `make_migration`. Human-readable YAML — hand-edit when needed.
+`make_migration` writes readable YAML. Most migrations stay auto-generated; you only edit them by hand when the change needs something explicit.
 
 ```yaml
 id: 0003_add_posts
@@ -320,7 +230,7 @@ operations:
           to_column: id
 ```
 
-Every migration runs in a single transaction (`atomic: true`). Use `atomic: false` for operations PostgreSQL cannot run transactionally — primarily `CREATE INDEX CONCURRENTLY`:
+Every migration runs in one transaction by default. Set `atomic: false` only for PostgreSQL operations that cannot run transactionally, most notably `CREATE INDEX CONCURRENTLY`.
 
 ```yaml
 id: 0004_add_search_idx
@@ -336,13 +246,11 @@ operations:
     concurrent: true
 ```
 
-Setting `concurrent: true` emits `CREATE INDEX CONCURRENTLY`. Gaman validates that `atomic: false` accompanies it.
-
----
+When `concurrent: true` is present, Gaman validates that `atomic: false` is also set.
 
 ## Escape Hatches
 
-Raw SQL or subprocess calls can be mixed into any migration:
+Sometimes the generated migration is structurally correct but still needs a hand-written step. You can mix raw SQL or subprocess calls into any migration:
 
 ```yaml
 operations:
@@ -355,121 +263,48 @@ operations:
     down: ./scripts/backfill_undo.py
 ```
 
-`invoke` runs the path as a subprocess; it must exit 0.
-
----
+`invoke` runs the path as a subprocess and expects exit code `0`.
 
 ## Disambiguator
 
-The diff engine is conservative — a renamed column is indistinguishable from a drop + add. Before writing a migration, gaman flags ambiguous changes and, in interactive mode, asks for confirmation.
+The diff engine stays conservative on purpose. A renamed column looks exactly like a drop plus an add unless you tell the tool otherwise. Before writing a migration, Gaman flags ambiguous changes and, in interactive mode, asks for confirmation.
 
-| Severity     | Kind            | What it catches                                                  |
-| ------------ | --------------- | ---------------------------------------------------------------- |
-| `Fatal`      | `NotNullAdd`    | NOT NULL column with no default — will fail on non-empty tables  |
-| `Fatal`      | `NotNullChange` | Nullable → NOT NULL — existing NULLs must be backfilled first    |
-| `Warning`    | `TypeCast`      | Type change — requires an explicit CAST or implicit coercion     |
-| `Suggestion` | `RenameColumn`  | Drop + add of compatible types — likely a rename                 |
-| `Suggestion` | `RenameTable`   | Drop + recreate of structurally similar tables — likely a rename |
+- `Fatal`: `NotNullAdd` and `NotNullChange`, where the migration would fail or needs a backfill first.
+- `Warning`: `TypeCast`, where the change needs an explicit cast or relies on PostgreSQL coercion.
+- `Suggestion`: `RenameColumn` and `RenameTable`, where a human likely meant rename rather than drop and recreate.
 
 For `NotNullChange`, a backfill `UPDATE` is automatically injected before the `ALTER COLUMN`.
 
----
+## CLI and Config Reference
 
-## CLI Reference
+The complete command reference, flag details, and environment variables now live in [docs/cli.md](docs/cli.md).
 
-Global flags (before subcommand): `-m <dir>`, `-s <file>`, `-d <url>`.
+The short version:
 
-### `make_migration [name]`
+- `gaman make_migration name` writes the next migration by diffing your schema against replayed history.
+- `gaman migrate` applies pending migrations.
+- `gaman sql_migrate` prints SQL without touching a database.
+- `gaman verify_db` compares the live database against replayed state.
+- `gaman inspect_db` bootstraps a `schema.yaml` from an existing database.
 
-Diff the schema against replayed state and write a new migration file.
-
-| Flag        | Description                                           |
-| ----------- | ----------------------------------------------------- |
-| `--empty`   | Generate an empty migration with no auto-detected ops |
-| `--merge`   | Create a merge migration to resolve multiple heads    |
-| `--check`   | Exit non-zero if changes exist; do not write          |
-| `--dry-run` | Print what would be generated without writing         |
-
-```bash
-gaman make_migration add_posts
-gaman make_migration --check        # CI: fail if schema is out of sync
-gaman make_migration --dry-run      # preview without writing
-```
-
-### `migrate`
-
-Apply pending migrations in topological order. Each runs in its own transaction unless `atomic: false`.
-
-| Flag            | Description                                            |
-| --------------- | ------------------------------------------------------ |
-| `--target <id>` | Migrate forward or backward to a specific migration ID |
-| `--fake`        | Record as applied without executing DDL                |
-| `--plan`        | List what would be applied, then exit                  |
-| `--check`       | Exit non-zero if migrations are pending; do not apply  |
-
-```bash
-gaman migrate
-gaman migrate --target 0003_add_posts
-gaman migrate --fake 0001_initial
-```
-
-### `verify_db`
-
-Compare the live database schema against replayed state and report drift. Tables and columns only; views and functions are excluded.
-
-```bash
-gaman verify_db
-gaman verify_db --schema myschema
-```
-
-### `show_migrations`
-
-List all migrations with `[X]` / `[ ]` applied markers.
-
-### `sql_migrate [id]`
-
-Print the SQL for one or all migrations. No database connection required. `--backwards` for rollback SQL.
-
-### `inspect_db`
-
-Introspect a live database and emit `schema.yaml`. Useful for bootstrapping an existing project.
-
-```bash
-gaman inspect_db > schema.yaml
-gaman inspect_db --schema myschema --table users
-```
-
-### `config`
-
-Print the resolved configuration and exit.
-
----
-
-## Environment Variables
-
-| Variable         | Default       | Description                                    |
-| ---------------- | ------------- | ---------------------------------------------- |
-| `DATABASE_URL`   | —             | PostgreSQL connection string                   |
-| `MIGRATIONS_DIR` | `migrations`  | Directory containing migration YAML files      |
-| `SCHEMA_FILE`    | `schema.yaml` | Path to schema (`.yaml`, `.sql`, or directory) |
-
-All three can be overridden per-invocation with CLI flags `-d`, `-m`, `-s`.
-
----
+Global overrides stay the same: `-m <dir>`, `-s <file>`, `-d <url>`.
 
 ## Development
 
 ```bash
 cargo test
 
-# Integration tests — require a running PostgreSQL instance
+# Offline transform cases.
+cargo test --test offline
+
+# Integration tests require a running PostgreSQL instance.
 export TEST_DATABASE_URL=postgres://localhost/gaman_test
 cargo test --test postgres -- --include-ignored
 ```
 
 Integration tests create and destroy isolated schemas automatically; they leave no lasting state.
 
----
+Offline transform cases live under `tests/cases/offline/`, and PostgreSQL-backed cases live under `tests/cases/postgres/`. Each case is usually a single `case.yaml` with inline inputs and expected outputs.
 
 ## Status
 
@@ -485,4 +320,4 @@ PostgreSQL only. Core migration engine is stable and used in production. Public 
 - Single-column primary and foreign keys only
 - Column order is not tracked
 - `verify_db` does not validate view, function, extension, or enum definitions
-- `alter_enum` has no inverse — migrations containing it cannot be rolled back
+- `alter_enum` has no inverse, so migrations containing it cannot be rolled back

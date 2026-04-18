@@ -15,12 +15,8 @@ pub enum DiffError {
     DependencyCycle,
 }
 
-// ---------------------------------------------------------------------------
-// Stage 1: generate_diff
-//
-// Walks Schema BTreeMaps directly, comparing entities via PartialEq.
-// BTreeMap keys are the canonical identity for each entity.
-// ---------------------------------------------------------------------------
+// Walk the schema maps directly. The BTreeMap keys are the canonical identity
+// for each entity, so a plain keyed comparison is enough here.
 
 pub fn generate_diff(current: &Schema, previous: &Schema) -> Vec<Operation> {
     let mut ops: Vec<Operation> = Vec::new();
@@ -498,15 +494,8 @@ fn merge_operations(ops: Vec<Operation>, dialect: &Dialect) -> Vec<Operation> {
     result
 }
 
-// ---------------------------------------------------------------------------
-// sort_operations
-//
-// Topologically sorts operations using Kahn's algorithm. Each operation is a
-// node; directed edges encode "must come before" constraints. Within each
-// equivalence class (nodes with no ordering constraint between them) we use a
-// deterministic tie-breaker: (type_priority, sub_priority, entity_name) so
-// output is reproducible across runs.
-// ---------------------------------------------------------------------------
+// Topologically sort operations with Kahn's algorithm. When multiple nodes are
+// otherwise equal, break ties deterministically so output stays reproducible.
 
 pub fn sort_operations(ops: Vec<Operation>) -> Result<Vec<Operation>, DiffError> {
     let n = ops.len();
@@ -674,9 +663,7 @@ fn build_dependency_edges(ops: &[Operation], adj: &mut [Vec<usize>], in_deg: &mu
     }
 }
 
-// ---------------------------------------------------------------------------
-// DiffEngine — public entry point
-// ---------------------------------------------------------------------------
+// Public entry point for diff generation.
 
 pub struct DiffEngine;
 

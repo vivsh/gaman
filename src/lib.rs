@@ -18,13 +18,13 @@ pub(crate) mod operations;
 pub(crate) mod prompter;
 pub(crate) mod states;
 
-// Primary entry points — the everyday API.
+// Everyday API.
 pub use gaman_macros::{IntoTable, include_migrations};
 pub use engine::{MigrationEngine, EngineError, TlsMode};
 pub use conf::Config;
 pub use migrations::Migration;
 
-/// All types used to describe and build a database schema.
+/// Schema types and builders.
 pub mod schema {
     pub use crate::states::{
         Schema, Table, Column, FunctionDef, TriggerDef, ViewDef, ExtensionDef, EnumDef,
@@ -39,7 +39,7 @@ pub mod schema {
     pub use crate::sql::SqlParseError;
 }
 
-/// Advanced types for custom executors, migration sources, and programmatic control.
+/// Lower-level APIs for custom executors, sources, and integration work.
 pub mod core {
     pub use crate::migrator::{Migrator, MigratorError};
     pub use crate::executor::{
@@ -49,6 +49,6 @@ pub mod core {
     pub use crate::adapters::{MigrationSource, AdapterError, YamlAdapter, VecAdapter};
     pub use crate::graphs::{MigrationGraph, MigrationNode, GraphError};
     pub use crate::dialects::{Dialect, DialectError};
-    pub use crate::disambiguator::{Decision, PromptEngine};
+    pub use crate::disambiguator::{Answer, Clarification, ClarificationKind, Decision, PromptEngine, Severity};
     pub use crate::prompter::CliPromptEngine;
 }

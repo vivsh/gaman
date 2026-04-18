@@ -812,18 +812,18 @@ mod proptest_diff {
             })
     }
 
-    /// Diffing a schema against itself must produce zero operations.
     proptest! {
         #[test]
+        #[doc = "Diffing a schema against itself must produce zero operations."]
         fn identity_diff_is_empty(schema in arb_schema()) {
             let ops = generate_diff(&schema, &schema);
             prop_assert!(ops.is_empty(), "diff(s, s) should be empty, got {} ops", ops.len());
         }
     }
 
-    /// Applying the diff to the previous schema must reconstruct the current schema.
     proptest! {
         #[test]
+        #[doc = "Applying the diff to the previous schema must reconstruct the current schema."]
         fn apply_roundtrip(current in arb_schema(), previous in arb_schema()) {
             let raw_ops = generate_diff(&current, &previous);
             let ops = inject_orphan_triggers(raw_ops, &previous);
@@ -842,9 +842,9 @@ mod proptest_diff {
         }
     }
 
-    /// Diff output must be deterministic across multiple invocations.
     proptest! {
         #[test]
+        #[doc = "Diff output must be deterministic across multiple invocations."]
         fn deterministic_diff(current in arb_schema(), previous in arb_schema()) {
             let ops1 = generate_diff(&current, &previous);
             let ops2 = generate_diff(&current, &previous);

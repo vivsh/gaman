@@ -1,0 +1,21 @@
+description: Verify reports drift when a live table has an extra column.
+kind: verify
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+mutate_sql: |
+  ALTER TABLE "users" ADD COLUMN "rogue" text;
+expect_verify:
+  - type: add_column
+    table_name: users
+    column:
+      name: rogue
+      type: text
+      nullable: true

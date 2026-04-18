@@ -648,7 +648,7 @@ mod tests {
     /// (the one with the FK) is dropped before the referenced table.
     #[test]
     fn dropped_tables_fk_dep_order() {
-        let mut products = empty_table("products");
+        let products = empty_table("products");
         let mut inventory = empty_table("inventory");
         inventory.foreign_keys.push(ForeignKey {
             name: "inventory_product_id_fkey".to_string(),

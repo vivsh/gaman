@@ -12,7 +12,7 @@ use crate::executor::{Introspectable, PostgresExecutor, SubprocessInvoker};
 use crate::prompter::CliPromptEngine;
 use crate::disambiguator::{Decision, PromptEngine};
 
-/// Gaman — PostgreSQL migration tool
+/// Gaman CLI.
 #[derive(FromArgs, Debug)]
 pub struct GamanArgs {
     /// path to the migrations directory (default: ./migrations)
@@ -43,12 +43,12 @@ pub enum Command {
     VerifyDb(VerifyDbCmd),
 }
 
-/// Print the resolved configuration and exit
+/// Print the resolved configuration.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "config")]
 pub struct ShowConfigCmd {}
 
-/// Generate a new migration from the current schema state
+/// Write a new migration from the current schema.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "make_migration")]
 pub struct MakeMigrationsCmd {
@@ -73,12 +73,12 @@ pub struct MakeMigrationsCmd {
     pub dry_run: bool,
 }
 
-/// Show all migrations with [X] applied / [ ] pending markers
+/// List migrations with applied and pending markers.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "show_migrations")]
 pub struct ShowMigrationsCmd {}
 
-/// Print the SQL statements for one or all migrations — no database connection required
+/// Print SQL for one migration or the full plan.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "sql_migrate")]
 pub struct SqlMigrateCmd {
@@ -91,7 +91,7 @@ pub struct SqlMigrateCmd {
     pub backwards: bool,
 }
 
-/// Apply pending migrations to the database
+/// Apply pending migrations.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "migrate")]
 pub struct MigrateCmd {
@@ -112,7 +112,7 @@ pub struct MigrateCmd {
     pub check: bool,
 }
 
-/// Compare the live database against the replayed migration state and report drift
+/// Compare the live database against replayed migration state.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "verify_db")]
 pub struct VerifyDbCmd {
@@ -121,7 +121,7 @@ pub struct VerifyDbCmd {
     pub schema: Option<String>,
 }
 
-/// Introspect a live database and print the schema state as YAML
+/// Introspect a live database and print schema YAML.
 #[derive(FromArgs, Debug)]
 #[argh(subcommand, name = "inspect_db")]
 pub struct InspectDbCmd {
@@ -159,7 +159,7 @@ fn db_connect(config: &Config) -> Result<PostgresExecutor, CommandError> {
 }
 
 impl GamanArgs {
-    /// Apply the CLI overrides (if any) onto `config` and return the subcommand.
+    /// Apply CLI overrides onto `config` and return the selected subcommand.
     pub(crate) fn apply_to(self, config: &mut Config) -> Command {
         if let Some(dir) = self.migrations_dir {
             config.migrations_dir = std::path::PathBuf::from(dir);

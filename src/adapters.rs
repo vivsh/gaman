@@ -12,18 +12,14 @@ pub enum AdapterError {
     Parse { path: String, message: String },
 }
 
-/// Trait for loading and saving migrations.
-/// Implementations are format- and storage-agnostic.
+/// Load and save migrations.
 pub trait MigrationSource {
     fn load_all(&self) -> Result<Vec<Migration>, AdapterError>;
     fn save(&self, migration: &Migration) -> Result<(), AdapterError>;
 }
 
-/// YAML-backed migration source.
-/// Reads and writes one `.yaml` file per migration in `directory`.
-/// Files are loaded in lexicographic order — migration ids should be prefixed
-/// with a sortable sequence number (e.g. `0001_`, `0002_`) to guarantee a
-/// stable load order.
+/// File-backed migration source.
+/// Stores one `.yaml` file per migration and loads them in lexicographic order.
 pub struct YamlAdapter {
     pub directory: std::path::PathBuf,
 }
@@ -86,8 +82,7 @@ impl MigrationSource for YamlAdapter {
     }
 }
 
-/// In-memory migration source backed by a `Vec`.
-/// No filesystem access. Useful for unit and integration testing.
+/// In-memory migration source for tests and programmatic use.
 pub struct VecAdapter {
     migrations: Vec<Migration>,
 }

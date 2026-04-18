@@ -1,7 +1,5 @@
-/// Embedded mode — apply migrations programmatically on startup.
-///
-/// No CLI, no arg parsing. Just connect and migrate.
-/// Typical use: call this at the top of `main()` before starting a server.
+/// Embedded mode: connect and migrate on startup.
+/// Useful when the app should apply bundled migrations and keep running.
 ///
 ///   cargo run --example embedded_migrate
 use gaman::{Config, MigrationEngine, include_migrations};

@@ -1,7 +1,5 @@
-/// Embedded mode with an external schema.yaml file.
-///
-/// Schema is loaded from disk and passed via the builder callback.
-/// Migrations are embedded at compile time via `include_migrations!`.
+/// Embedded mode with a schema.yaml file on disk.
+/// Useful when migrations are bundled but the schema file stays editable.
 ///
 ///   cargo run --example embedded_yaml -- make_migration add_users
 ///   cargo run --example embedded_yaml -- migrate

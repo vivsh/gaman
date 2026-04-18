@@ -1,18 +1,21 @@
 use std::collections::{HashMap, HashSet};
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::operations::Operation;
 use crate::states::{Column, Table};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Severity {
     Fatal,
     Warning,
     Suggestion,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClarificationKind {
     RenameTable { old: String, candidates: Vec<String> },
     RenameColumn { table: String, old: String, candidates: Vec<String> },
@@ -21,14 +24,15 @@ pub enum ClarificationKind {
     TypeCast { table: String, column: String, from: String, to: String },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Clarification {
     pub id: String,
     pub severity: Severity,
     pub kind: ClarificationKind,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum Answer {
     RenameTo(String),
     RenameNo,
@@ -39,7 +43,7 @@ pub enum Answer {
     TypeCastImplicit,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Decision {
     pub clarification_id: String,
     pub answer: Answer,

@@ -468,25 +468,50 @@ impl Migrator {
 
     /// Compare the replayed schema state against the live database and return any differences.
     /// An empty vec means the database matches migrations exactly — no drift.
-    /// Scoped to tables/columns/indexes/FKs/constraints only; views and functions are excluded
-    /// because their canonical representation differs too much between YAML and pg_catalog.
+    /// Scoped to tables/columns/indexes/FKs/constraints only; views, functions,
+    /// extensions, and enums are excluded because their canonical representation
+    /// differs too much between replayed YAML and pg_catalog.
     pub fn verify(&self, executor: &mut (impl Executor + Introspectable), schema: &str) -> Result<Vec<Operation>, MigratorError> {
         let mut replay = self.replay()?;
+        replay.normalize();
+        scope_tables_for_verify(&mut replay, schema);
         normalize_state_types(&mut replay, &self.dialect);
 
         let mut live = executor
             .inspect_db(&[schema])
             .map_err(MigratorError::Executor)?;
+        live.normalize();
+        scope_tables_for_verify(&mut live, schema);
         normalize_state_types(&mut live, &self.dialect);
 
-        // Strip views and functions — too many representation differences to compare reliably.
+        // Strip objects whose catalog representation does not match replay closely enough.
         live.views.clear();
         replay.views.clear();
         live.functions.clear();
         replay.functions.clear();
+        live.extensions.clear();
+        replay.extensions.clear();
+        live.enums.clear();
+        replay.enums.clear();
 
         Ok(self.diff.diff(&replay, &live, &self.dialect)?)
     }
+}
+
+fn scope_tables_for_verify(state: &mut Schema, schema: &str) {
+    let tables = std::mem::take(&mut state.tables);
+    state.tables = tables
+        .into_values()
+        .filter_map(|mut table| match table.schema.as_deref() {
+            None => Some(table),
+            Some(current) if current == schema || (schema == "public" && current == "public") => {
+                table.schema = None;
+                Some(table)
+            }
+            _ => None,
+        })
+        .map(|table| (table.qualified_name(), table))
+        .collect();
 }
 
 fn normalize_state_types(state: &mut Schema, dialect: &crate::dialects::Dialect) {
@@ -584,6 +609,24 @@ mod tests {
         fn rollback(&mut self) -> Result<(), ExecutorError> { Ok(()) }
         fn acquire_lock(&mut self) -> Result<(), ExecutorError> { self.lock_count += 1; Ok(()) }
         fn release_lock(&mut self) -> Result<(), ExecutorError> { self.lock_count -= 1; Ok(()) }
+    }
+
+    struct InspectingExecutor {
+        live: Schema,
+    }
+
+    impl Executor for InspectingExecutor {
+        fn execute(&mut self, _sql: &str) -> Result<(), ExecutorError> { Ok(()) }
+        fn fetch_strings(&mut self, _sql: &str) -> Result<Vec<String>, ExecutorError> { Ok(vec![]) }
+        fn begin(&mut self) -> Result<(), ExecutorError> { Ok(()) }
+        fn commit(&mut self) -> Result<(), ExecutorError> { Ok(()) }
+        fn rollback(&mut self) -> Result<(), ExecutorError> { Ok(()) }
+    }
+
+    impl Introspectable for InspectingExecutor {
+        fn inspect_db(&mut self, _schemas: &[&str]) -> Result<Schema, ExecutorError> {
+            Ok(self.live.clone())
+        }
     }
 
     /// Regression test: migrate() on a multi-migration chain must not fail at validate_plan.
@@ -810,6 +853,26 @@ mod tests {
         assert_eq!(mig.dependencies, vec!["0002_create_posts"]);
         assert_eq!(mig.operations.len(), 1);
         assert!(matches!(&mig.operations[0], Operation::CreateTable { table } if table.name == "comments"));
+    }
+
+    #[test]
+    fn verify_treats_requested_schema_as_default_namespace() {
+        let migrator = migrator_from(vec![migration_with_ops(
+            "0001_create_users",
+            &[],
+            vec![Operation::CreateTable { table: simple_table("users", &["id"]) }],
+        )]);
+
+        let mut live_users = simple_table("users", &["id"]);
+        live_users.schema = Some("isolated".to_string());
+        let live = state_with_tables(&[live_users]);
+        let mut executor = InspectingExecutor { live };
+
+        let drift = migrator
+            .verify(&mut executor, "isolated")
+            .expect("verify should succeed");
+
+        assert!(drift.is_empty(), "expected no drift, got: {drift:?}");
     }
 
     /// Validates that passing a current state with two primary key columns returns a Config error.

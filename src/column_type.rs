@@ -1,17 +1,14 @@
 use crate::dialects::Dialect;
 
-/// The SQL type and nullability for a column, resolved per-dialect.
+/// Resolved SQL type and nullability for one column.
 #[derive(Clone, Copy)]
 pub struct ColumnDesc {
     pub sql_type: &'static str,
     pub nullable: bool,
 }
 
-/// Maps a Rust type to its SQL column description for a given dialect.
-///
-/// Implement this on your own types to support custom column types in
-/// `#[derive(IntoTable)]`. Use `#[column(type = "...")]` as a per-field
-/// escape hatch for third-party types where you cannot provide an impl.
+/// Map a Rust type to a SQL column description.
+/// Implement this for your own types, or use `#[column(type = "...")]` per field.
 pub trait ColumnType {
     fn column_desc(dialect: &Dialect) -> ColumnDesc;
 }

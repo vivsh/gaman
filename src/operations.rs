@@ -44,12 +44,51 @@ pub enum Operation {
 impl Operation {
     pub fn inverse(&self) -> Option<Operation> {
         match self {
+            Self::CreateTable { .. } | Self::DropTable { .. } | Self::RenameTable { .. } => {
+                self.inverse_table_op()
+            }
+            Self::AddColumn { .. }
+            | Self::DropColumn { .. }
+            | Self::RenameColumn { .. }
+            | Self::AlterColumn { .. }
+            | Self::AddForeignKey { .. }
+            | Self::DropForeignKey { .. }
+            | Self::AddIndex { .. }
+            | Self::DropIndex { .. }
+            | Self::AddConstraint { .. }
+            | Self::DropConstraint { .. } => self.inverse_table_item_op(),
+            Self::Statement { .. }
+            | Self::Invoke { .. }
+            | Self::CreateFunction { .. }
+            | Self::AlterFunction { .. }
+            | Self::DropFunction { .. } => self.inverse_function_op(),
+            Self::CreateTrigger { .. } | Self::AlterTrigger { .. } | Self::DropTrigger { .. } => {
+                self.inverse_trigger_op()
+            }
+            Self::CreateView { .. } | Self::DropView { .. } | Self::ReplaceView { .. } => {
+                self.inverse_view_op()
+            }
+            Self::CreateExtension { .. } | Self::DropExtension { .. } => self.inverse_extension_op(),
+            Self::CreateEnum { .. } | Self::DropEnum { .. } | Self::AlterEnum { .. } => {
+                self.inverse_enum_op()
+            }
+        }
+    }
+
+    fn inverse_table_op(&self) -> Option<Operation> {
+        match self {
             Self::CreateTable { table } => Some(Self::DropTable { table: table.clone() }),
             Self::DropTable { table } => Some(Self::CreateTable { table: table.clone() }),
             Self::RenameTable { old_name, new_name } => Some(Self::RenameTable {
                 old_name: new_name.clone(),
                 new_name: old_name.clone(),
             }),
+            _ => None,
+        }
+    }
+
+    fn inverse_table_item_op(&self) -> Option<Operation> {
+        match self {
             Self::AddColumn { table_name, column } => Some(Self::DropColumn {
                 table_name: table_name.clone(),
                 column: column.clone(),
@@ -97,19 +136,34 @@ impl Operation {
                 table_name: table_name.clone(),
                 constraint: constraint.clone(),
             }),
-            Self::Statement { up, down: Some(d) } => Some(Self::Statement {
-                up: d.clone(),
+            _ => None,
+        }
+    }
+
+    fn inverse_function_op(&self) -> Option<Operation> {
+        match self {
+            Self::Statement { up, down: Some(down) } => Some(Self::Statement {
+                up: down.clone(),
                 down: Some(up.clone()),
             }),
             Self::Statement { down: None, .. } => None,
-            Self::Invoke { up, down: Some(d) } => Some(Self::Invoke {
-                up: d.clone(),
+            Self::Invoke { up, down: Some(down) } => Some(Self::Invoke {
+                up: down.clone(),
                 down: Some(up.clone()),
             }),
             Self::Invoke { down: None, .. } => None,
             Self::CreateFunction { function } => Some(Self::DropFunction { function: function.clone() }),
             Self::DropFunction { function } => Some(Self::CreateFunction { function: function.clone() }),
-            Self::AlterFunction { old, new } => Some(Self::AlterFunction { old: new.clone(), new: old.clone() }),
+            Self::AlterFunction { old, new } => Some(Self::AlterFunction {
+                old: new.clone(),
+                new: old.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    fn inverse_trigger_op(&self) -> Option<Operation> {
+        match self {
             Self::CreateTrigger { table_name, trigger } => Some(Self::DropTrigger {
                 table_name: table_name.clone(),
                 trigger: trigger.clone(),
@@ -123,14 +177,47 @@ impl Operation {
                 old: new.clone(),
                 new: old.clone(),
             }),
+            _ => None,
+        }
+    }
+
+    fn inverse_view_op(&self) -> Option<Operation> {
+        match self {
             Self::CreateView { view } => Some(Self::DropView { view: view.clone() }),
             Self::DropView { view } => Some(Self::CreateView { view: view.clone() }),
-            Self::ReplaceView { old, new } => Some(Self::ReplaceView { old: new.clone(), new: old.clone() }),
-            Self::CreateExtension { extension } => Some(Self::DropExtension { extension: extension.clone() }),
-            Self::DropExtension { extension } => Some(Self::CreateExtension { extension: extension.clone() }),
-            Self::CreateEnum { enum_def } => Some(Self::DropEnum { enum_def: enum_def.clone() }),
-            Self::DropEnum { enum_def } => Some(Self::CreateEnum { enum_def: enum_def.clone() }),
-            Self::AlterEnum { old, new } => Some(Self::AlterEnum { old: new.clone(), new: old.clone() }),
+            Self::ReplaceView { old, new } => Some(Self::ReplaceView {
+                old: new.clone(),
+                new: old.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    fn inverse_extension_op(&self) -> Option<Operation> {
+        match self {
+            Self::CreateExtension { extension } => Some(Self::DropExtension {
+                extension: extension.clone(),
+            }),
+            Self::DropExtension { extension } => Some(Self::CreateExtension {
+                extension: extension.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    fn inverse_enum_op(&self) -> Option<Operation> {
+        match self {
+            Self::CreateEnum { enum_def } => Some(Self::DropEnum {
+                enum_def: enum_def.clone(),
+            }),
+            Self::DropEnum { enum_def } => Some(Self::CreateEnum {
+                enum_def: enum_def.clone(),
+            }),
+            Self::AlterEnum { old, new } => Some(Self::AlterEnum {
+                old: new.clone(),
+                new: old.clone(),
+            }),
+            _ => None,
         }
     }
 

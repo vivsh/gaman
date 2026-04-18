@@ -1,8 +1,5 @@
-/// Embedded mode with schema defined via Rust structs.
-///
-/// Use `#[derive(IntoTable)]` to map structs to tables, then describe the
-/// schema via the builder callback in `with_schema`. No schema.yaml needed,
-/// no `Dialect` or `SchemaBuilder` import required.
+/// Embedded mode with schema defined in Rust structs.
+/// Use `#[derive(IntoTable)]` and pass the built schema into `with_schema`.
 ///
 ///   cargo run --example embedded_structs -- make_migration add_users
 ///   cargo run --example embedded_structs -- migrate
@@ -10,6 +7,7 @@ use gaman::{Config, IntoTable, MigrationEngine, include_migrations};
 
 static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
 
+#[allow(dead_code)]
 #[derive(IntoTable)]
 struct User {
     id: i64,
@@ -20,6 +18,7 @@ struct User {
     last_login: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(IntoTable)]
 #[table(name = "posts")]
 struct Post {

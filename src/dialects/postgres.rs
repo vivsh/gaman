@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::migrations::Migration;
 use crate::operations::Operation;
-use crate::states::{Column, Constraint, Schema, Table, ViewDef, Volatility};
+use crate::states::{Column, Constraint, ForeignKey, Index, Schema, Table, ViewDef, Volatility};
 
 use super::DialectError;
 
@@ -138,18 +138,51 @@ fn quote_table_name(name: &str) -> String {
     }
 }
 
-fn qualified_table(table: &Table) -> String {
-    match table.schema.as_deref() {
-        None | Some("public") => quote_ident(&table.name),
-        Some(s) => format!("{}.{}", quote_ident(s), quote_ident(&table.name)),
+fn qualified_name(name: &str, schema: Option<&str>) -> String {
+    match schema {
+        None | Some("public") => quote_ident(name),
+        Some(schema) => format!("{}.{}", quote_ident(schema), quote_ident(name)),
     }
 }
 
+fn qualified_table(table: &Table) -> String {
+    qualified_name(&table.name, table.schema.as_deref())
+}
+
 fn qualified_view(view: &ViewDef) -> String {
-    match view.schema.as_deref() {
-        None | Some("public") => quote_ident(&view.name),
-        Some(s) => format!("{}.{}", quote_ident(s), quote_ident(&view.name)),
-    }
+    qualified_name(&view.name, view.schema.as_deref())
+}
+
+fn quoted_columns(columns: &[String]) -> String {
+    columns.iter().map(|column| quote_ident(column)).collect::<Vec<_>>().join(", ")
+}
+
+fn foreign_key_clause(foreign_key: &ForeignKey) -> String {
+    format!(
+        "CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({})",
+        quote_ident(&foreign_key.name),
+        quote_ident(&foreign_key.from_column),
+        quote_table_name(&foreign_key.to_table),
+        quote_ident(&foreign_key.to_column),
+    )
+}
+
+fn create_index_sql(index: &Index, table_name: &str, concurrent: bool) -> String {
+    let unique = if index.unique { "UNIQUE " } else { "" };
+    let concurrent = if concurrent { "CONCURRENTLY " } else { "" };
+    format!(
+        "CREATE {}INDEX {}{} ON {} ({})",
+        unique,
+        concurrent,
+        quote_ident(&index.name),
+        quote_table_name(table_name),
+        quoted_columns(&index.columns),
+    )
+}
+
+fn drop_index_sql(index_name: &str, concurrent: bool) -> String {
+    let concurrent = if concurrent { " CONCURRENTLY" } else { "" };
+    format!("DROP INDEX{} {}", concurrent, quote_ident(index_name))
 }
 
 pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
@@ -157,22 +190,15 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
         Operation::CreateTable { table } => {
             let mut parts: Vec<String> = table.columns.iter().map(col_def).collect();
             for fk in &table.foreign_keys {
-                parts.push(format!(
-                    "CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({})",
-                    quote_ident(&fk.name),
-                    quote_ident(&fk.from_column),
-                    quote_table_name(&fk.to_table),
-                    quote_ident(&fk.to_column),
-                ));
+                parts.push(foreign_key_clause(fk));
             }
             for c in &table.constraints {
                 parts.push(format!("CONSTRAINT {}", inline_constraint_def(c)));
             }
             let mut stmts = vec![format!("CREATE TABLE {} ({})", qualified_table(table), parts.join(", "))];
+            let table_name = table.qualified_name();
             for index in &table.indexes {
-                let unique = if index.unique { "UNIQUE " } else { "" };
-                let cols: Vec<String> = index.columns.iter().map(|c| quote_ident(c)).collect();
-                stmts.push(format!("CREATE {}INDEX {} ON {} ({})", unique, quote_ident(&index.name), qualified_table(table), cols.join(", ")));
+                stmts.push(create_index_sql(index, &table_name, false));
             }
             stmts
         }
@@ -196,28 +222,17 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             alter_column_statements(table_name, old, new, cast_expr.as_deref())
         }
         Operation::AddForeignKey { table_name, foreign_key } => {
-            vec![format!(
-                "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({})",
-                quote_table_name(table_name),
-                quote_ident(&foreign_key.name),
-                quote_ident(&foreign_key.from_column),
-                quote_table_name(&foreign_key.to_table),
-                quote_ident(&foreign_key.to_column),
-            )]
+            vec![format!("ALTER TABLE {} ADD {}", quote_table_name(table_name), foreign_key_clause(foreign_key))]
         }
         Operation::DropForeignKey { table_name, foreign_key, cascade } => {
             let suffix = if *cascade { " CASCADE" } else { "" };
             vec![format!("ALTER TABLE {} DROP CONSTRAINT {}{}", quote_table_name(table_name), quote_ident(&foreign_key.name), suffix)]
         }
         Operation::AddIndex { table_name, index, concurrent } => {
-            let unique = if index.unique { "UNIQUE " } else { "" };
-            let conc = if *concurrent { "CONCURRENTLY " } else { "" };
-            let cols: Vec<String> = index.columns.iter().map(|c| quote_ident(c)).collect();
-            vec![format!("CREATE {}INDEX {}{} ON {} ({})", unique, conc, quote_ident(&index.name), quote_table_name(table_name), cols.join(", "))]
+            vec![create_index_sql(index, table_name, *concurrent)]
         }
         Operation::DropIndex { index, concurrent, .. } => {
-            let conc = if *concurrent { " CONCURRENTLY" } else { "" };
-            vec![format!("DROP INDEX{} {}", conc, quote_ident(&index.name))]
+            vec![drop_index_sql(&index.name, *concurrent)]
         }
         Operation::AddConstraint { table_name, constraint } => {
             vec![format!("ALTER TABLE {} ADD CONSTRAINT {}", quote_table_name(table_name), inline_constraint_def(constraint))]
@@ -289,24 +304,15 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             let values: Vec<String> = enum_def.values.iter()
                 .map(|v| format!("'{}'", v.replace('\'', "''")))
                 .collect();
-            let name = match enum_def.schema.as_deref() {
-                None | Some("public") => quote_ident(&enum_def.name),
-                Some(s) => format!("{}.{}", quote_ident(s), quote_ident(&enum_def.name)),
-            };
+            let name = qualified_name(&enum_def.name, enum_def.schema.as_deref());
             vec![format!("CREATE TYPE {name} AS ENUM ({})", values.join(", "))]
         }
         Operation::DropEnum { enum_def } => {
-            let name = match enum_def.schema.as_deref() {
-                None | Some("public") => quote_ident(&enum_def.name),
-                Some(s) => format!("{}.{}", quote_ident(s), quote_ident(&enum_def.name)),
-            };
+            let name = qualified_name(&enum_def.name, enum_def.schema.as_deref());
             vec![format!("DROP TYPE {name}")]
         }
         Operation::AlterEnum { old, new } => {
-            let name = match new.schema.as_deref() {
-                None | Some("public") => quote_ident(&new.name),
-                Some(s) => format!("{}.{}", quote_ident(s), quote_ident(&new.name)),
-            };
+            let name = qualified_name(&new.name, new.schema.as_deref());
             let old_set: std::collections::HashSet<&str> = old.values.iter().map(|v| v.as_str()).collect();
             new.values.iter()
                 .filter(|v| !old_set.contains(v.as_str()))

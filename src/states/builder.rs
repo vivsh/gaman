@@ -4,8 +4,7 @@ use super::{
     Schema, Table, ViewDef, schema_qualified_key,
 };
 
-/// A Rust struct that maps to a database table. Implement this to make the
-/// struct usable as a schema definition that gaman can diff and migrate against.
+/// Map a Rust type to a table definition.
 pub trait IntoTable {
     fn into_table(dialect: &Dialect) -> Table;
 }
@@ -15,6 +14,20 @@ pub struct ColumnBuilder {
 }
 
 impl ColumnBuilder {
+    fn with_reference(
+        mut self,
+        name: Option<String>,
+        table: impl Into<String>,
+        column: impl Into<String>,
+    ) -> Self {
+        self.col.references = Some(ColumnRef {
+            table: table.into(),
+            column: column.into(),
+            name,
+        });
+        self
+    }
+
     pub fn nullable(mut self) -> Self {
         self.col.nullable = true;
         self
@@ -35,27 +48,17 @@ impl ColumnBuilder {
         self
     }
 
-    pub fn references(mut self, table: impl Into<String>, column: impl Into<String>) -> Self {
-        self.col.references = Some(ColumnRef {
-            table: table.into(),
-            column: column.into(),
-            name: None,
-        });
-        self
+    pub fn references(self, table: impl Into<String>, column: impl Into<String>) -> Self {
+        self.with_reference(None, table, column)
     }
 
     pub fn references_named(
-        mut self,
+        self,
         name: impl Into<String>,
         table: impl Into<String>,
         column: impl Into<String>,
     ) -> Self {
-        self.col.references = Some(ColumnRef {
-            table: table.into(),
-            column: column.into(),
-            name: Some(name.into()),
-        });
-        self
+        self.with_reference(Some(name.into()), table, column)
     }
 
     pub fn check(mut self, expr: impl Into<String>) -> Self {
@@ -73,6 +76,32 @@ pub struct TableBuilder {
 }
 
 impl TableBuilder {
+    fn push_foreign_key(
+        mut self,
+        name: String,
+        from: impl Into<String>,
+        to_table: impl Into<String>,
+        to_column: impl Into<String>,
+    ) -> Self {
+        self.table.foreign_keys.push(ForeignKey {
+            name,
+            from_column: from.into(),
+            to_table: to_table.into(),
+            to_column: to_column.into(),
+        });
+        self
+    }
+
+    fn push_index(mut self, name: impl Into<String>, columns: &[&str], unique: bool) -> Self {
+        self.table.indexes.push(Index {
+            name: name.into(),
+            columns: columns.iter().map(|s| s.to_string()).collect(),
+            unique,
+            predicate: None,
+        });
+        self
+    }
+
     pub fn new(name: impl Into<String>) -> Self {
         let name = name.into();
         Self {
@@ -116,56 +145,32 @@ impl TableBuilder {
     }
 
     pub fn foreign_key(
-        mut self,
+        self,
         from: impl Into<String>,
         to_table: impl Into<String>,
         to_column: impl Into<String>,
     ) -> Self {
         let from = from.into();
         let name = format!("{}_{}_fkey", self.table.name, from);
-        self.table.foreign_keys.push(ForeignKey {
-            name,
-            from_column: from,
-            to_table: to_table.into(),
-            to_column: to_column.into(),
-        });
-        self
+        self.push_foreign_key(name, from, to_table, to_column)
     }
 
     pub fn foreign_key_named(
-        mut self,
+        self,
         fk_name: impl Into<String>,
         from: impl Into<String>,
         to_table: impl Into<String>,
         to_column: impl Into<String>,
     ) -> Self {
-        self.table.foreign_keys.push(ForeignKey {
-            name: fk_name.into(),
-            from_column: from.into(),
-            to_table: to_table.into(),
-            to_column: to_column.into(),
-        });
-        self
+        self.push_foreign_key(fk_name.into(), from, to_table, to_column)
     }
 
-    pub fn index(mut self, name: impl Into<String>, columns: &[&str]) -> Self {
-        self.table.indexes.push(Index {
-            name: name.into(),
-            columns: columns.iter().map(|s| s.to_string()).collect(),
-            unique: false,
-            predicate: None,
-        });
-        self
+    pub fn index(self, name: impl Into<String>, columns: &[&str]) -> Self {
+        self.push_index(name, columns, false)
     }
 
-    pub fn unique_index(mut self, name: impl Into<String>, columns: &[&str]) -> Self {
-        self.table.indexes.push(Index {
-            name: name.into(),
-            columns: columns.iter().map(|s| s.to_string()).collect(),
-            unique: true,
-            predicate: None,
-        });
-        self
+    pub fn unique_index(self, name: impl Into<String>, columns: &[&str]) -> Self {
+        self.push_index(name, columns, true)
     }
 
     pub fn check(mut self, name: impl Into<String>, expression: impl Into<String>) -> Self {
@@ -195,6 +200,19 @@ pub struct SchemaBuilder {
 }
 
 impl SchemaBuilder {
+    fn insert_extension(mut self, name: impl Into<String>, version: Option<String>) -> Self {
+        let name = name.into();
+        self.state.extensions.insert(
+            name.clone(),
+            ExtensionDef {
+                name,
+                schema: None,
+                version,
+            },
+        );
+        self
+    }
+
     pub fn new(dialect: Dialect) -> Self {
         Self { dialect, state: Schema::default() }
     }
@@ -207,25 +225,16 @@ impl SchemaBuilder {
         self
     }
 
-    pub fn extension(mut self, name: impl Into<String>) -> Self {
-        let name = name.into();
-        self.state
-            .extensions
-            .insert(name.clone(), ExtensionDef { name, schema: None, version: None });
-        self
+    pub fn extension(self, name: impl Into<String>) -> Self {
+        self.insert_extension(name, None)
     }
 
     pub fn extension_versioned(
-        mut self,
+        self,
         name: impl Into<String>,
         version: impl Into<String>,
     ) -> Self {
-        let name = name.into();
-        self.state.extensions.insert(
-            name.clone(),
-            ExtensionDef { name, schema: None, version: Some(version.into()) },
-        );
-        self
+        self.insert_extension(name, Some(version.into()))
     }
 
     pub fn view(mut self, name: impl Into<String>, definition: impl Into<String>) -> Self {

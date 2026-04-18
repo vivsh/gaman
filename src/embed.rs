@@ -1,8 +1,7 @@
 use crate::adapters::{AdapterError, MigrationSource};
 use crate::migrations::Migration;
 
-/// In-memory migration source backed by static content, typically produced by
-/// `include_migrations!` from the `gaman-macros` crate.
+/// Embedded migration source, usually built with `include_migrations!`.
 pub struct EmbedSource {
     migrations: &'static [(&'static str, &'static str)],
 }
