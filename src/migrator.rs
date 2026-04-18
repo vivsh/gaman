@@ -82,7 +82,7 @@ impl Migrator {
         self.graph.detect_conflict()?;
         current.validate().map_err(MigratorError::Config)?;
         let previous = self.replay()?;
-        let raw_ops = self.diff.diff(&current, &previous)?;
+        let raw_ops = self.diff.diff(&current, &previous, &self.dialect)?;
         if raw_ops.is_empty() {
             return Ok(None);
         }
@@ -485,7 +485,7 @@ impl Migrator {
         live.functions.clear();
         replay.functions.clear();
 
-        Ok(self.diff.diff(&replay, &live)?)
+        Ok(self.diff.diff(&replay, &live, &self.dialect)?)
     }
 }
 

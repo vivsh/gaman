@@ -7,7 +7,8 @@ pub(crate) mod engine;
 pub(crate) mod conf;
 pub(crate) mod dialects;
 pub(crate) mod diff;
-pub(crate) mod diff2;
+#[allow(dead_code)]
+pub(crate) mod diff_legacy;
 pub(crate) mod disambiguator;
 pub(crate) mod executor;
 pub(crate) mod graphs;

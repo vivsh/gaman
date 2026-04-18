@@ -30,6 +30,15 @@ impl Dialect {
         }
     }
 
+    /// Whether a decomposed sub-entity op should be folded back into its
+    /// parent CreateTable. Postgres can inline everything; other dialects
+    /// (e.g. SQLite) may need FKs kept inline while indexes stay separate.
+    pub fn should_merge(&self, _table_name: &str, _op: &Operation) -> bool {
+        match self {
+            Dialect::Postgres => true,
+        }
+    }
+
     /// Returns the DDL statements to bootstrap the migration tracking table.
     /// Uses CREATE TABLE IF NOT EXISTS so it is safe to call repeatedly.
     pub fn create_tracking_table_sql(&self) -> Vec<String> {
@@ -69,4 +78,3 @@ impl Dialect {
 }
 
 mod postgres;
-pub use postgres::col_def;

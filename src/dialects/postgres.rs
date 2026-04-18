@@ -111,6 +111,7 @@ pub fn reorder_ops(ops: Vec<Operation>, previous: &Schema, current: &Schema) -> 
 
 pub fn normalize_type(t: &str) -> &str {
     match t {
+        "int"               => "integer",
         "int2"              => "smallint",
         "int4"              => "integer",
         "int8"              => "bigint",
@@ -119,6 +120,8 @@ pub fn normalize_type(t: &str) -> &str {
         "float8"            => "double precision",
         "bpchar"            => "char",
         "character varying" => "varchar",
+        "timestamp"         => "timestamp without time zone",
+        "timestamptz"       => "timestamp with time zone",
         other               => other,
     }
 }

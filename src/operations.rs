@@ -1,10 +1,13 @@
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 
+use crate::states::types::{Dep, EntityKind};
 use crate::states::{Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, Table, TriggerDef, ViewDef};
 
 /// All possible schema change operations.
 /// Each variant carries the minimal data needed to describe the change.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Operation {
     CreateTable { table: Table },
@@ -127,8 +130,69 @@ impl Operation {
             Self::DropExtension { extension } => Some(Self::CreateExtension { extension: extension.clone() }),
             Self::CreateEnum { enum_def } => Some(Self::DropEnum { enum_def: enum_def.clone() }),
             Self::DropEnum { enum_def } => Some(Self::CreateEnum { enum_def: enum_def.clone() }),
-            // Adding enum values is irreversible in PostgreSQL — there's no DROP VALUE.
-            Self::AlterEnum { .. } => None,
+            Self::AlterEnum { old, new } => Some(Self::AlterEnum { old: new.clone(), new: old.clone() }),
+        }
+    }
+
+    pub fn table_name(&self) -> Option<&str> {
+        match self {
+            Self::CreateTable { table } | Self::DropTable { table } => Some(&table.name),
+            Self::RenameTable { old_name, .. } => Some(old_name),
+            Self::AddColumn { table_name, .. }
+            | Self::DropColumn { table_name, .. }
+            | Self::RenameColumn { table_name, .. }
+            | Self::AlterColumn { table_name, .. }
+            | Self::AddForeignKey { table_name, .. }
+            | Self::DropForeignKey { table_name, .. }
+            | Self::AddIndex { table_name, .. }
+            | Self::DropIndex { table_name, .. }
+            | Self::AddConstraint { table_name, .. }
+            | Self::DropConstraint { table_name, .. }
+            | Self::CreateTrigger { table_name, .. }
+            | Self::AlterTrigger { table_name, .. }
+            | Self::DropTrigger { table_name, .. } => Some(table_name),
+            _ => None,
+        }
+    }
+
+    pub fn entity_name(&self) -> Cow<'_, str> {
+        match self {
+            Self::CreateTable { table } | Self::DropTable { table } => {
+                if table.schema.is_some() { Cow::Owned(table.qualified_name()) } else { Cow::Borrowed(&table.name) }
+            }
+            Self::RenameTable { old_name, .. } => Cow::Borrowed(old_name),
+            Self::AddColumn { column, .. } | Self::DropColumn { column, .. } => Cow::Borrowed(&column.name),
+            Self::RenameColumn { old_name, .. } => Cow::Borrowed(old_name),
+            Self::AlterColumn { old, .. } => Cow::Borrowed(&old.name),
+            Self::AddForeignKey { foreign_key, .. } | Self::DropForeignKey { foreign_key, .. } => Cow::Borrowed(&foreign_key.name),
+            Self::AddIndex { index, .. } | Self::DropIndex { index, .. } => Cow::Borrowed(&index.name),
+            Self::AddConstraint { constraint, .. } | Self::DropConstraint { constraint, .. } => Cow::Borrowed(constraint.name()),
+            Self::CreateTrigger { trigger, .. } | Self::DropTrigger { trigger, .. } => {
+                Cow::Borrowed(trigger.name.as_deref().unwrap_or(""))
+            }
+            Self::AlterTrigger { old, .. } => Cow::Borrowed(old.name.as_deref().unwrap_or("")),
+            Self::CreateFunction { function } | Self::DropFunction { function } => {
+                if function.schema.is_some() { Cow::Owned(function.qualified_name()) } else { Cow::Borrowed(&function.name) }
+            }
+            Self::AlterFunction { old, .. } => {
+                if old.schema.is_some() { Cow::Owned(old.qualified_name()) } else { Cow::Borrowed(&old.name) }
+            }
+            Self::CreateView { view } | Self::DropView { view } => {
+                if view.schema.is_some() { Cow::Owned(view.qualified_name()) } else { Cow::Borrowed(&view.name) }
+            }
+            Self::ReplaceView { old, .. } => {
+                if old.schema.is_some() { Cow::Owned(old.qualified_name()) } else { Cow::Borrowed(&old.name) }
+            }
+            Self::CreateExtension { extension } | Self::DropExtension { extension } => {
+                if extension.schema.is_some() { Cow::Owned(extension.qualified_name()) } else { Cow::Borrowed(&extension.name) }
+            }
+            Self::CreateEnum { enum_def } | Self::DropEnum { enum_def } => {
+                if enum_def.schema.is_some() { Cow::Owned(enum_def.qualified_name()) } else { Cow::Borrowed(&enum_def.name) }
+            }
+            Self::AlterEnum { old, .. } => {
+                if old.schema.is_some() { Cow::Owned(old.qualified_name()) } else { Cow::Borrowed(&old.name) }
+            }
+            Self::Statement { up, .. } | Self::Invoke { up, .. } => Cow::Borrowed(up),
         }
     }
 
@@ -163,6 +227,102 @@ impl Operation {
             Self::CreateEnum { .. } => "create_enum",
             Self::DropEnum { .. } => "drop_enum",
             Self::AlterEnum { .. } => "alter_enum",
+        }
+    }
+
+    pub fn entity_kind(&self) -> Option<EntityKind> {
+        match self {
+            Self::CreateTable { .. } | Self::DropTable { .. } => Some(EntityKind::Table),
+            Self::CreateFunction { .. } | Self::AlterFunction { .. } | Self::DropFunction { .. } => Some(EntityKind::Function),
+            Self::CreateEnum { .. } | Self::AlterEnum { .. } | Self::DropEnum { .. } => Some(EntityKind::Enum),
+            Self::CreateExtension { .. } | Self::DropExtension { .. } => Some(EntityKind::Extension),
+            Self::CreateView { .. } | Self::DropView { .. } | Self::ReplaceView { .. } => Some(EntityKind::View),
+            Self::AddColumn { .. } | Self::DropColumn { .. } | Self::AlterColumn { .. } | Self::RenameColumn { .. } => Some(EntityKind::Column),
+            Self::AddForeignKey { .. } | Self::DropForeignKey { .. } => Some(EntityKind::ForeignKey),
+            Self::AddIndex { .. } | Self::DropIndex { .. } => Some(EntityKind::Index),
+            Self::AddConstraint { .. } | Self::DropConstraint { .. } => Some(EntityKind::Constraint),
+            Self::CreateTrigger { .. } | Self::AlterTrigger { .. } | Self::DropTrigger { .. } => Some(EntityKind::Trigger),
+            Self::RenameTable { .. } | Self::Statement { .. } | Self::Invoke { .. } => None,
+        }
+    }
+
+    pub fn is_create(&self) -> bool {
+        matches!(self,
+            Self::CreateTable { .. } | Self::CreateFunction { .. } | Self::CreateEnum { .. }
+            | Self::CreateExtension { .. } | Self::CreateView { .. } | Self::CreateTrigger { .. }
+            | Self::AddColumn { .. } | Self::AddForeignKey { .. } | Self::AddIndex { .. }
+            | Self::AddConstraint { .. }
+        )
+    }
+
+    pub fn is_drop(&self) -> bool {
+        matches!(self,
+            Self::DropTable { .. } | Self::DropFunction { .. } | Self::DropEnum { .. }
+            | Self::DropExtension { .. } | Self::DropView { .. } | Self::DropTrigger { .. }
+            | Self::DropColumn { .. } | Self::DropForeignKey { .. } | Self::DropIndex { .. }
+            | Self::DropConstraint { .. }
+        )
+    }
+
+    pub fn forward_deps(&self) -> Vec<Dep> {
+        match self {
+            Self::CreateTable { table } | Self::DropTable { table } => {
+                let mut deps = vec![Dep::all_of(EntityKind::Extension)];
+                for col in &table.columns {
+                    deps.push(Dep::new(EntityKind::Enum, &col.col_type));
+                }
+                deps
+            }
+            Self::AddColumn { table_name, column } | Self::DropColumn { table_name, column, .. } => {
+                vec![Dep::new(EntityKind::Table, table_name), Dep::new(EntityKind::Enum, &column.col_type)]
+            }
+            Self::AlterColumn { table_name, new, .. } => {
+                vec![Dep::new(EntityKind::Table, table_name), Dep::new(EntityKind::Enum, &new.col_type)]
+            }
+            Self::AddForeignKey { table_name, foreign_key }
+            | Self::DropForeignKey { table_name, foreign_key, .. } => {
+                vec![Dep::new(EntityKind::Table, table_name), Dep::new(EntityKind::Table, &foreign_key.to_table)]
+            }
+            Self::AddIndex { table_name, .. } | Self::DropIndex { table_name, .. } => {
+                vec![Dep::new(EntityKind::Table, table_name)]
+            }
+            Self::AddConstraint { table_name, .. } | Self::DropConstraint { table_name, .. } => {
+                vec![Dep::new(EntityKind::Table, table_name)]
+            }
+            Self::CreateTrigger { table_name, trigger }
+            | Self::AlterTrigger { table_name, new: trigger, .. } => {
+                let mut deps = vec![Dep::new(EntityKind::Table, table_name)];
+                if let Some(fn_name) = trigger.function_name.as_deref() {
+                    deps.push(Dep::new(EntityKind::Function, fn_name));
+                }
+                deps
+            }
+            Self::DropTrigger { table_name, trigger } => {
+                let mut deps = vec![Dep::new(EntityKind::Table, table_name)];
+                if let Some(fn_name) = trigger.function_name.as_deref() {
+                    deps.push(Dep::new(EntityKind::Function, fn_name));
+                }
+                deps
+            }
+            Self::CreateFunction { .. } | Self::AlterFunction { .. } | Self::DropFunction { .. } => {
+                vec![Dep::all_of(EntityKind::Extension)]
+            }
+            Self::CreateView { .. } | Self::ReplaceView { .. } | Self::DropView { .. } => {
+                vec![Dep::all_of(EntityKind::Table), Dep::all_of(EntityKind::Function)]
+            }
+            Self::CreateExtension { .. } | Self::DropExtension { .. } => vec![],
+            Self::CreateEnum { .. } | Self::AlterEnum { .. } | Self::DropEnum { .. } => vec![],
+            Self::RenameTable { .. } | Self::RenameColumn { .. }
+            | Self::Statement { .. } | Self::Invoke { .. } => vec![],
+        }
+    }
+
+    pub fn backward_deps(&self) -> Vec<Dep> {
+        match self {
+            Self::AlterColumn { table_name, old, .. } => {
+                vec![Dep::new(EntityKind::Table, table_name), Dep::new(EntityKind::Enum, &old.col_type)]
+            }
+            _ => self.forward_deps(),
         }
     }
 }

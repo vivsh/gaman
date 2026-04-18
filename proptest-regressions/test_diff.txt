@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a38e170c35b4c07eb474f4903aab40e79692d79cb2a5fc1ba9f5a1272557d648 # shrinks to current = Schema { tables: {"aaa": Table { name: "aaa", schema: None, columns: [Column { name: "aaa", col_type: "integer", nullable: false, default: None, primary_key: true, references: None, check: None }, Column { name: "aaa", col_type: "integer", nullable: false, default: None, primary_key: true, references: None, check: None }], foreign_keys: [], indexes: [], constraints: [], triggers: [] }}, views: {}, functions: {}, extensions: {}, enums: {} }, previous = Schema { tables: {}, views: {}, functions: {}, extensions: {}, enums: {} }

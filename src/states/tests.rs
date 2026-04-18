@@ -971,3 +971,116 @@ fn builder_enum_type() {
     assert!(state.enums.contains_key("status"));
     assert_eq!(state.enums["status"].values, vec!["active", "inactive"]);
 }
+
+/// qualified_name() returns plain name when schema is None.
+#[test]
+fn qualified_name_no_schema() {
+    let t = basic_table("users");
+    assert_eq!(t.qualified_name(), "users");
+}
+
+/// qualified_name() returns plain name when schema is "public".
+#[test]
+fn qualified_name_public_schema() {
+    let t = Table { schema: Some("public".to_string()), ..basic_table("users") };
+    assert_eq!(t.qualified_name(), "users");
+}
+
+/// qualified_name() returns schema.name for non-public schemas.
+#[test]
+fn qualified_name_custom_schema() {
+    let t = Table { schema: Some("analytics".to_string()), ..basic_table("events") };
+    assert_eq!(t.qualified_name(), "analytics.events");
+}
+
+/// qualified_name() works on all entity types with schema fields.
+#[test]
+fn qualified_name_all_entities() {
+    let f = FunctionDef {
+        name: "my_fn".to_string(),
+        schema: Some("utils".to_string()),
+        arguments: String::new(),
+        returns: "void".to_string(),
+        language: "sql".to_string(),
+        body: String::new(),
+        volatility: Volatility::Volatile,
+        security_definer: false,
+    };
+    assert_eq!(f.qualified_name(), "utils.my_fn");
+
+    let v = ViewDef { name: "v1".to_string(), schema: None, definition: "SELECT 1".to_string() };
+    assert_eq!(v.qualified_name(), "v1");
+
+    let e = ExtensionDef { name: "pgcrypto".to_string(), schema: Some("public".to_string()), version: None };
+    assert_eq!(e.qualified_name(), "pgcrypto");
+
+    let en = EnumDef { name: "status".to_string(), schema: Some("core".to_string()), values: vec![] };
+    assert_eq!(en.qualified_name(), "core.status");
+}
+
+/// canonicalize normalizes schema: Some("public") to None for tables.
+#[test]
+fn canonicalize_public_schema_to_none() {
+    let mut s = Schema::default();
+    s.tables.insert("users".to_string(), Table {
+        schema: Some("public".to_string()),
+        ..basic_table("users")
+    });
+    s.canonicalize(&Dialect::Postgres);
+    assert_eq!(s.tables["users"].schema, None);
+}
+
+/// canonicalize normalizes schema: Some("pg_catalog") to None for extensions.
+#[test]
+fn canonicalize_pg_catalog_extension() {
+    let mut s = Schema::default();
+    s.extensions.insert("plpgsql".to_string(), ExtensionDef {
+        name: "plpgsql".to_string(),
+        schema: Some("pg_catalog".to_string()),
+        version: None,
+    });
+    s.canonicalize(&Dialect::Postgres);
+    assert_eq!(s.extensions["plpgsql"].schema, None);
+}
+
+/// canonicalize does NOT normalize pg_catalog for non-extension entities.
+#[test]
+fn canonicalize_pg_catalog_not_for_tables() {
+    let mut s = Schema::default();
+    s.tables.insert("pg_catalog.sometable".to_string(), Table {
+        name: "sometable".to_string(),
+        schema: Some("pg_catalog".to_string()),
+        ..basic_table("sometable")
+    });
+    s.canonicalize(&Dialect::Postgres);
+    assert_eq!(s.tables["pg_catalog.sometable"].schema, Some("pg_catalog".to_string()));
+}
+
+/// canonicalize re-keys BTreeMaps when schema normalization changes the qualified name.
+#[test]
+fn canonicalize_rekeys_btreemap() {
+    let mut s = Schema::default();
+    s.enums.insert("public.status".to_string(), EnumDef {
+        name: "status".to_string(),
+        schema: Some("public".to_string()),
+        values: vec!["active".to_string()],
+    });
+    s.canonicalize(&Dialect::Postgres);
+    assert!(!s.enums.contains_key("public.status"));
+    assert!(s.enums.contains_key("status"));
+    assert_eq!(s.enums["status"].schema, None);
+}
+
+/// apply(CreateTable) with non-public schema inserts under qualified key.
+#[test]
+fn apply_create_table_qualified_key() {
+    let mut s = Schema::default();
+    let table = Table {
+        name: "events".to_string(),
+        schema: Some("analytics".to_string()),
+        ..basic_table("events")
+    };
+    apply_ok(&mut s, Operation::CreateTable { table });
+    assert!(s.tables.contains_key("analytics.events"));
+    assert!(!s.tables.contains_key("events"));
+}

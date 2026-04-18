@@ -246,24 +246,98 @@ impl Schema {
         SchemaBuilder::new(dialect)
     }
 
+    pub fn canonicalize(&mut self, dialect: &Dialect) {
+        for table in self.tables.values_mut() {
+            for col in &mut table.columns {
+                let normalized = dialect.normalize_type(&col.col_type);
+                if normalized != col.col_type {
+                    col.col_type = normalized.to_string();
+                }
+            }
+        }
+        self.normalize_schemas();
+    }
+
+    fn normalize_schemas(&mut self) {
+        fn normalize_schema(schema: &mut Option<String>) {
+            if let Some(s) = schema {
+                if s == "public" {
+                    *schema = None;
+                }
+            }
+        }
+
+        fn normalize_extension_schema(schema: &mut Option<String>) {
+            if let Some(s) = schema {
+                if s == "public" || s == "pg_catalog" {
+                    *schema = None;
+                }
+            }
+        }
+
+        fn rekey<T>(
+            map: &mut BTreeMap<String, T>,
+            key_fn: impl Fn(&T) -> String,
+        ) {
+            let stale: Vec<String> = map
+                .iter()
+                .filter(|(k, v)| **k != key_fn(v))
+                .map(|(k, _)| k.clone())
+                .collect();
+            for old_key in stale {
+                if let Some(val) = map.remove(&old_key) {
+                    let new_key = key_fn(&val);
+                    map.insert(new_key, val);
+                }
+            }
+        }
+
+        for table in self.tables.values_mut() {
+            normalize_schema(&mut table.schema);
+        }
+        rekey(&mut self.tables, |t| t.qualified_name());
+
+        for func in self.functions.values_mut() {
+            normalize_schema(&mut func.schema);
+        }
+        rekey(&mut self.functions, |f| f.qualified_name());
+
+        for view in self.views.values_mut() {
+            normalize_schema(&mut view.schema);
+        }
+        rekey(&mut self.views, |v| v.qualified_name());
+
+        for ext in self.extensions.values_mut() {
+            normalize_extension_schema(&mut ext.schema);
+        }
+        rekey(&mut self.extensions, |e| e.qualified_name());
+
+        for en in self.enums.values_mut() {
+            normalize_schema(&mut en.schema);
+        }
+        rekey(&mut self.enums, |e| e.qualified_name());
+    }
+
     /// Apply a single operation to this state, mutating it in place.
     /// `Statement` and `Invoke` are no-ops: they carry raw SQL/code that cannot
     /// be reflected into the in-memory schema model.
     pub fn apply(&mut self, op: &Operation) -> Result<(), ReplayError> {
         match op {
             Operation::CreateTable { table } => {
-                if self.tables.contains_key(&table.name) {
-                    return Err(ReplayError::TableAlreadyExists(table.name.clone()));
+                let key = table.qualified_name();
+                if self.tables.contains_key(&key) {
+                    return Err(ReplayError::TableAlreadyExists(key));
                 }
                 if table.columns.iter().filter(|c| c.primary_key).count() > 1 {
-                    return Err(ReplayError::MultiplePrimaryKeys(table.name.clone()));
+                    return Err(ReplayError::MultiplePrimaryKeys(key));
                 }
-                self.tables.insert(table.name.clone(), table.clone());
+                self.tables.insert(key, table.clone());
             }
 
             Operation::DropTable { table } => {
-                if self.tables.remove(&table.name).is_none() {
-                    return Err(ReplayError::TableNotFound(table.name.clone()));
+                let key = table.qualified_name();
+                if self.tables.remove(&key).is_none() {
+                    return Err(ReplayError::TableNotFound(key));
                 }
             }
 
@@ -405,23 +479,27 @@ impl Schema {
             Operation::Statement { .. } | Operation::Invoke { .. } => {}
 
             Operation::CreateFunction { function } => {
-                if self.functions.contains_key(&function.name) {
-                    return Err(ReplayError::FunctionAlreadyExists(function.name.clone()));
+                let key = function.qualified_name();
+                if self.functions.contains_key(&key) {
+                    return Err(ReplayError::FunctionAlreadyExists(key));
                 }
-                self.functions.insert(function.name.clone(), function.clone());
+                self.functions.insert(key, function.clone());
             }
 
             Operation::DropFunction { function } => {
-                if self.functions.remove(&function.name).is_none() {
-                    return Err(ReplayError::FunctionNotFound(function.name.clone()));
+                let key = function.qualified_name();
+                if self.functions.remove(&key).is_none() {
+                    return Err(ReplayError::FunctionNotFound(key));
                 }
             }
 
             Operation::AlterFunction { old, new } => {
-                if self.functions.remove(&old.name).is_none() {
-                    return Err(ReplayError::FunctionNotFound(old.name.clone()));
+                let old_key = old.qualified_name();
+                if self.functions.remove(&old_key).is_none() {
+                    return Err(ReplayError::FunctionNotFound(old_key));
                 }
-                self.functions.insert(new.name.clone(), new.clone());
+                let new_key = new.qualified_name();
+                self.functions.insert(new_key, new.clone());
             }
 
             Operation::CreateTrigger { table_name, trigger } => {
@@ -461,7 +539,7 @@ impl Schema {
             }
 
             Operation::CreateView { view } => {
-                let key = schema_qualified_key(&view.name, view.schema.as_deref());
+                let key = view.qualified_name();
                 if self.views.contains_key(&key) {
                     return Err(ReplayError::ViewAlreadyExists(key));
                 }
@@ -469,52 +547,58 @@ impl Schema {
             }
 
             Operation::DropView { view } => {
-                let key = schema_qualified_key(&view.name, view.schema.as_deref());
+                let key = view.qualified_name();
                 if self.views.remove(&key).is_none() {
                     return Err(ReplayError::ViewNotFound(key));
                 }
             }
 
             Operation::ReplaceView { old, new } => {
-                let old_key = schema_qualified_key(&old.name, old.schema.as_deref());
+                let old_key = old.qualified_name();
                 if self.views.remove(&old_key).is_none() {
                     return Err(ReplayError::ViewNotFound(old_key));
                 }
-                let new_key = schema_qualified_key(&new.name, new.schema.as_deref());
+                let new_key = new.qualified_name();
                 self.views.insert(new_key, new.clone());
             }
 
             Operation::CreateExtension { extension } => {
-                if self.extensions.contains_key(&extension.name) {
-                    return Err(ReplayError::ExtensionAlreadyExists(extension.name.clone()));
+                let key = extension.qualified_name();
+                if self.extensions.contains_key(&key) {
+                    return Err(ReplayError::ExtensionAlreadyExists(key));
                 }
-                self.extensions.insert(extension.name.clone(), extension.clone());
+                self.extensions.insert(key, extension.clone());
             }
 
             Operation::DropExtension { extension } => {
-                if self.extensions.remove(&extension.name).is_none() {
-                    return Err(ReplayError::ExtensionNotFound(extension.name.clone()));
+                let key = extension.qualified_name();
+                if self.extensions.remove(&key).is_none() {
+                    return Err(ReplayError::ExtensionNotFound(key));
                 }
             }
 
             Operation::CreateEnum { enum_def } => {
-                if self.enums.contains_key(&enum_def.name) {
-                    return Err(ReplayError::EnumAlreadyExists(enum_def.name.clone()));
+                let key = enum_def.qualified_name();
+                if self.enums.contains_key(&key) {
+                    return Err(ReplayError::EnumAlreadyExists(key));
                 }
-                self.enums.insert(enum_def.name.clone(), enum_def.clone());
+                self.enums.insert(key, enum_def.clone());
             }
 
             Operation::DropEnum { enum_def } => {
-                if self.enums.remove(&enum_def.name).is_none() {
-                    return Err(ReplayError::EnumNotFound(enum_def.name.clone()));
+                let key = enum_def.qualified_name();
+                if self.enums.remove(&key).is_none() {
+                    return Err(ReplayError::EnumNotFound(key));
                 }
             }
 
             Operation::AlterEnum { old, new } => {
-                if self.enums.remove(&old.name).is_none() {
-                    return Err(ReplayError::EnumNotFound(old.name.clone()));
+                let old_key = old.qualified_name();
+                if self.enums.remove(&old_key).is_none() {
+                    return Err(ReplayError::EnumNotFound(old_key));
                 }
-                self.enums.insert(new.name.clone(), new.clone());
+                let new_key = new.qualified_name();
+                self.enums.insert(new_key, new.clone());
             }
         }
         Ok(())

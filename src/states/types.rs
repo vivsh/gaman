@@ -1,5 +1,35 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum EntityKind {
+    Extension,
+    Enum,
+    Function,
+    Table,
+    Column,
+    ForeignKey,
+    Index,
+    Constraint,
+    Trigger,
+    View,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dep {
+    pub kind: EntityKind,
+    pub name: Option<String>,
+}
+
+impl Dep {
+    pub fn new(kind: EntityKind, name: &str) -> Self {
+        Self { kind, name: Some(name.to_string()) }
+    }
+
+    pub fn all_of(kind: EntityKind) -> Self {
+        Self { kind, name: None }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Volatility {
@@ -33,6 +63,12 @@ pub struct FunctionDef {
     pub volatility: Volatility,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub security_definer: bool,
+}
+
+impl FunctionDef {
+    pub fn qualified_name(&self) -> String {
+        schema_qualified_key(&self.name, self.schema.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -87,6 +123,12 @@ pub struct ViewDef {
     pub definition: String,
 }
 
+impl ViewDef {
+    pub fn qualified_name(&self) -> String {
+        schema_qualified_key(&self.name, self.schema.as_deref())
+    }
+}
+
 /// A PostgreSQL extension (e.g. pgcrypto, postgis).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExtensionDef {
@@ -97,6 +139,12 @@ pub struct ExtensionDef {
     pub version: Option<String>,
 }
 
+impl ExtensionDef {
+    pub fn qualified_name(&self) -> String {
+        schema_qualified_key(&self.name, self.schema.as_deref())
+    }
+}
+
 /// A named enum type with an ordered set of label values.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EnumDef {
@@ -104,6 +152,12 @@ pub struct EnumDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     pub values: Vec<String>,
+}
+
+impl EnumDef {
+    pub fn qualified_name(&self) -> String {
+        schema_qualified_key(&self.name, self.schema.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -124,6 +178,10 @@ pub struct Table {
 }
 
 impl Table {
+    pub fn qualified_name(&self) -> String {
+        schema_qualified_key(&self.name, self.schema.as_deref())
+    }
+
     pub fn pk_constraint_name(&self) -> String {
         format!("{}_pkey", self.name)
     }
