@@ -71,7 +71,7 @@ gaman = "0.3"
 
 Use the library when you want migrations to ship with your binary.
 
-Auto-apply on startup:
+**Auto-apply on startup** — `migrate()` returns the number of migrations applied:
 
 ```rust
 use gaman::{Config, MigrationEngine, include_migrations};
@@ -79,13 +79,36 @@ use gaman::{Config, MigrationEngine, include_migrations};
 static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
 
 fn main() {
-    MigrationEngine::new(Config::default(), MIGRATIONS)
+    let applied = MigrationEngine::new(Config::default(), MIGRATIONS)
         .migrate()
         .expect("migrations failed");
+    if applied > 0 {
+        println!("{applied} migration(s) applied");
+    }
 }
 ```
 
-Expose the full CLI from your own binary with a struct-based schema:
+**Full control** — check, plan, verify, and make migrations programmatically:
+
+```rust
+use gaman::{Config, MigrationEngine, include_migrations};
+
+static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
+
+fn main() {
+    let engine = MigrationEngine::new(Config::default(), MIGRATIONS);
+
+    // Check before migrating
+    if engine.check().expect("db check failed") {
+        let applied = MigrationEngine::new(Config::default(), MIGRATIONS)
+            .migrate()
+            .expect("migrations failed");
+        println!("{applied} migration(s) applied");
+    }
+}
+```
+
+**Expose the full CLI from your own binary** with a struct-based schema:
 
 ```rust
 use gaman::{Config, IntoTable, MigrationEngine, include_migrations};
@@ -126,6 +149,21 @@ fn main() {
 ```
 
 `handle_args()` parses `std::env::args()` and dispatches `make_migration`, `migrate`, `verify_db`, `show_migrations`, and the other built-in commands. `include_migrations!("path")` embeds every `.yaml` migration file at compile time in lexicographic order.
+
+### MigrationEngine API
+
+| Method                 | Description                                                                             |
+| ---------------------- | --------------------------------------------------------------------------------------- |
+| `migrate()`            | Apply all pending migrations. Returns count applied.                                    |
+| `migrate_to(id)`       | Migrate forward or backward to a specific migration ID.                                 |
+| `fake_migrate()`       | Mark all pending as applied without running SQL.                                        |
+| `check()`              | Returns `true` if unapplied migrations exist.                                           |
+| `plan()`               | Returns ordered list of pending migration IDs.                                          |
+| `show_migrations()`    | All migrations with applied/pending status.                                             |
+| `verify(schema)`       | Compare replayed state against live DB. Empty vec = clean.                              |
+| `inspect_db(schemas)`  | Introspect live database and return the schema.                                         |
+| `make_migration(name)` | Diff stored schema against replay, save migration if changed. Requires `with_schema()`. |
+| `handle_args()`        | Full CLI dispatched from `std::env::args()`.                                            |
 
 ## Declaring Schema
 
@@ -250,20 +288,14 @@ When `concurrent: true` is present, Gaman validates that `atomic: false` is also
 
 ## Escape Hatches
 
-Sometimes the generated migration is structurally correct but still needs a hand-written step. You can mix raw SQL or subprocess calls into any migration:
+Sometimes the generated migration is structurally correct but still needs a hand-written step. Use `statement` to embed raw SQL that runs inside the migration's transaction:
 
 ```yaml
 operations:
   - type: statement
     up: "UPDATE users SET role = 'member' WHERE role IS NULL"
     down: "UPDATE users SET role = NULL WHERE role = 'member'"
-
-  - type: invoke
-    up: ./scripts/backfill.py
-    down: ./scripts/backfill_undo.py
 ```
-
-`invoke` runs the path as a subprocess and expects exit code `0`.
 
 ## Disambiguator
 
@@ -304,16 +336,11 @@ cargo test --test postgres -- --include-ignored
 
 Integration tests create and destroy isolated schemas automatically; they leave no lasting state.
 
-Offline transform cases live under `tests/cases/offline/`, and PostgreSQL-backed cases live under `tests/cases/postgres/`. Each case is usually a single `case.yaml` with inline inputs and expected outputs.
+Offline transform cases live under `tests/cases/offline/`, and PostgreSQL-backed cases live under `tests/cases/postgres/`. Each case is a single `case.yaml` with inline inputs and expected outputs.
 
 ## Status
 
 PostgreSQL only. Core migration engine is stable and used in production. Public API may change before 1.0.
-
-### Not yet implemented
-
-- `squashmigrations`
-- C-FFI interface
 
 ### Known limitations
 
