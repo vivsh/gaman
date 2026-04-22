@@ -5,17 +5,17 @@ use gaman::schema::Schema;
 use support::{
     OfflineCase, OfflineSpec, TestSupportError, assert_error_contains, assert_ops_match,
     assert_schema_matches, assert_sql_matches, build_migrator, case_label, case_name,
-    discover_case_dirs, offline_cases_root, ordered_migrations, read_case_file, replay_schema,
+    discover_cases, offline_cases_root, ordered_migrations, read_case_file, replay_schema,
 };
 
 /// Runs offline transform cases for SQL->schema, schema->migration, migration->replay, and migration->SQL.
 #[test]
 fn offline_cases() {
-    let dirs = discover_case_dirs(&offline_cases_root()).expect("failed to discover offline cases");
+    let files = discover_cases(&offline_cases_root()).expect("failed to discover offline cases");
     let mut failures = Vec::new();
 
-    for dir in dirs {
-        let name = match case_name(&dir) {
+    for file in files {
+        let name = match case_name(&file) {
             Ok(name) => name,
             Err(error) => {
                 failures.push(error.to_string());
@@ -24,7 +24,7 @@ fn offline_cases() {
         };
 
         let result = (|| -> Result<String, TestSupportError> {
-            let case: OfflineCase = read_case_file(&dir)?;
+            let case: OfflineCase = read_case_file(&file)?;
             let label = case_label(&name, case.description.as_deref());
             run_offline_case(&name, &case)?;
             Ok(label)

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use gaman::Config;
 use gaman::Migration;
-use gaman::core::{Decision, Dialect, Executor, ExecutorError, Introspectable, Migrator, PostgresExecutor, VecAdapter};
+use gaman::core::{Decision, Dialect, Environment, EnvironmentError, EnvironmentExecutor, Executor, ExecutorError, Invoker, Introspectable, Migrator, PostgresExecutor, VecAdapter};
 use gaman::schema::{Operation, Schema};
 use postgres::{Client, NoTls};
 use serde::de::DeserializeOwned;
@@ -40,6 +40,77 @@ impl FixtureDialect {
         match self {
             Self::Postgres => Dialect::Postgres,
         }
+    }
+}
+
+struct FixtureEnvironment {
+    config: Arc<Config>,
+    dialect: Dialect,
+}
+
+impl FixtureEnvironment {
+    fn new(config: Arc<Config>, dialect: Dialect) -> Self {
+        Self { config, dialect }
+    }
+}
+
+impl Environment for FixtureEnvironment {
+    fn config(&self) -> &Arc<Config> {
+        &self.config
+    }
+
+    fn executor(&self) -> Result<Box<dyn EnvironmentExecutor>, EnvironmentError> {
+        Err(EnvironmentError::Config("executor is not available in the fixture environment".into()))
+    }
+
+    fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
+        Ok(None)
+    }
+
+    fn dialect(&self) -> Dialect {
+        self.dialect
+    }
+}
+
+struct PostgresHarnessEnvironment {
+    config: Arc<Config>,
+    schema: String,
+}
+
+impl PostgresHarnessEnvironment {
+    fn new(url: &str, schema: &str) -> Self {
+        let mut config = Config::default();
+        config.database_url = Some(url.to_string());
+        Self {
+            config: Arc::new(config),
+            schema: schema.to_string(),
+        }
+    }
+}
+
+impl Environment for PostgresHarnessEnvironment {
+    fn config(&self) -> &Arc<Config> {
+        &self.config
+    }
+
+    fn executor(&self) -> Result<Box<dyn EnvironmentExecutor>, EnvironmentError> {
+        let url = self.config.database_url.as_deref().ok_or_else(|| {
+            EnvironmentError::Config("TEST_DATABASE_URL is not configured for the harness environment".into())
+        })?;
+        let mut client = Client::connect(url, NoTls)
+            .map_err(|error| EnvironmentError::Connect(error.to_string()))?;
+        client
+            .batch_execute(&format!("SET search_path TO \"{}\";", self.schema))
+            .map_err(|error| EnvironmentError::Connect(format!("failed to set search_path: {error}")))?;
+        Ok(Box::new(PostgresExecutor::new(client)))
+    }
+
+    fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
+        Ok(None)
+    }
+
+    fn dialect(&self) -> Dialect {
+        Dialect::Postgres
     }
 }
 
@@ -183,42 +254,38 @@ pub fn postgres_cases_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cases/postgres")
 }
 
-pub fn discover_case_dirs(root: &Path) -> Result<Vec<PathBuf>, TestSupportError> {
+pub fn discover_cases(root: &Path) -> Result<Vec<PathBuf>, TestSupportError> {
     if !root.exists() {
         return Ok(vec![]);
     }
 
-    let mut dirs = Vec::new();
+    let mut files = Vec::new();
     for entry in fs::read_dir(root).map_err(|error| TestSupportError::io(root, error))? {
         let entry = entry.map_err(|error| TestSupportError::io(root, error))?;
         let path = entry.path();
-        if !entry.file_type().map_err(|error| TestSupportError::io(&path, error))?.is_dir() {
-            continue;
-        }
-        if path.join("case.yaml").exists() {
-            dirs.push(path);
+        if path.extension().and_then(|e| e.to_str()) == Some("yaml") {
+            files.push(path);
         }
     }
 
-    dirs.sort();
-    Ok(dirs)
+    files.sort();
+    Ok(files)
 }
 
-pub fn case_name(dir: &Path) -> Result<String, TestSupportError> {
-    dir.file_name()
+pub fn case_name(path: &Path) -> Result<String, TestSupportError> {
+    path.file_stem()
         .and_then(|value| value.to_str())
         .map(str::to_owned)
-        .ok_or_else(|| TestSupportError::parse(dir, "case directory name is not valid UTF-8"))
+        .ok_or_else(|| TestSupportError::parse(path, "case file name is not valid UTF-8"))
 }
 
 pub fn case_label(case_name: &str, description: Option<&str>) -> String {
     description.unwrap_or(case_name).to_string()
 }
 
-pub fn read_case_file<T: DeserializeOwned>(dir: &Path) -> Result<T, TestSupportError> {
-    let path = dir.join("case.yaml");
-    let raw = fs::read_to_string(&path).map_err(|error| TestSupportError::io(&path, error))?;
-    serde_yaml::from_str(&raw).map_err(|error| TestSupportError::parse(&path, error))
+pub fn read_case_file<T: DeserializeOwned>(path: &Path) -> Result<T, TestSupportError> {
+    let raw = fs::read_to_string(path).map_err(|error| TestSupportError::io(path, error))?;
+    serde_yaml::from_str(&raw).map_err(|error| TestSupportError::parse(path, error))
 }
 
 pub fn build_migrator(
@@ -228,7 +295,20 @@ pub fn build_migrator(
 ) -> Result<Migrator, TestSupportError> {
     let config = Arc::new(Config::default());
     let source = Box::new(VecAdapter::new(to_migrations(migrations)));
-    Migrator::new(config, source, dialect.to_dialect()).map_err(|error| {
+    let environment = Box::new(FixtureEnvironment::new(config, dialect.to_dialect()));
+    Migrator::new(source, environment).map_err(|error| {
+        TestSupportError::message(format!("{case_name}: failed to construct migrator: {error}"))
+    })
+}
+
+pub fn build_postgres_migrator(
+    case_name: &str,
+    harness: &PgHarness,
+    migrations: &[InlineMigration],
+) -> Result<Migrator, TestSupportError> {
+    let source = Box::new(VecAdapter::new(to_migrations(migrations)));
+    let environment = Box::new(PostgresHarnessEnvironment::new(&harness.url, &harness.schema));
+    Migrator::new(source, environment).map_err(|error| {
         TestSupportError::message(format!("{case_name}: failed to construct migrator: {error}"))
     })
 }
@@ -455,14 +535,8 @@ impl PgHarness {
     }
 
     pub fn verify(&mut self, migrator: &Migrator) -> Result<Vec<Operation>, TestSupportError> {
-        let client = Client::connect(&self.url, NoTls)
-            .map_err(|error| TestSupportError::message(format!("failed to connect for verify: {error}")))?;
-        let mut executor = PostgresExecutor::new(client);
-        executor
-            .execute(&format!("SET search_path TO \"{}\"", self.schema))
-            .map_err(|error| TestSupportError::message(format!("failed to set verify search_path: {error}")))?;
         migrator
-            .verify(&mut executor, self.schema.as_str())
+            .verify(self.schema.as_str())
             .map_err(|error| TestSupportError::message(format!("verify failed: {error}")))
     }
 

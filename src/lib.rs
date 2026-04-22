@@ -2,10 +2,10 @@ pub(crate) mod adapters;
 pub mod sql;
 pub mod cli;
 pub(crate) mod column_type;
-pub(crate) mod embed;
 pub(crate) mod engine;
 pub(crate) mod conf;
 pub(crate) mod dialects;
+pub(crate) mod environment;
 pub(crate) mod diff;
 #[allow(dead_code)]
 pub(crate) mod diff_legacy;
@@ -46,6 +46,7 @@ pub mod core {
         Executor, ExecutorError, Invoker, InvokerError, Introspectable,
         PostgresExecutor, SubprocessInvoker,
     };
+    pub use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
     pub use crate::adapters::{MigrationSource, AdapterError, YamlAdapter, VecAdapter};
     pub use crate::graphs::{MigrationGraph, MigrationNode, GraphError};
     pub use crate::dialects::{Dialect, DialectError};

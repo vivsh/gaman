@@ -4,11 +4,12 @@ use argh::FromArgs;
 use postgres::{Client, NoTls};
 
 use crate::conf::Config;
+use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
 use crate::migrator::{Migrator, MigratorError};
 use crate::states::Schema;
 use crate::adapters::YamlAdapter;
 use crate::dialects::Dialect;
-use crate::executor::{Introspectable, PostgresExecutor, SubprocessInvoker};
+use crate::executor::{Invoker, PostgresExecutor, SubprocessInvoker};
 use crate::prompter::CliPromptEngine;
 use crate::disambiguator::{Decision, PromptEngine};
 
@@ -143,19 +144,43 @@ pub enum CommandError {
     #[error("{0}")]
     Migrator(#[from] MigratorError),
     #[error("{0}")]
-    Db(#[from] postgres::Error),
-    #[error("{0}")]
     Config(String),
     #[error("{0}")]
     Io(#[from] std::io::Error),
 }
 
-fn db_connect(config: &Config) -> Result<PostgresExecutor, CommandError> {
-    let url = config.database_url.as_deref()
-        .ok_or_else(|| CommandError::Config(
-            "DATABASE_URL is not set — pass --database-url or set it in .env".into(),
-        ))?;
-    Ok(PostgresExecutor::new(Client::connect(url, NoTls)?))
+struct CommandEnvironment {
+    config: Arc<Config>,
+}
+
+impl CommandEnvironment {
+    fn new(config: Arc<Config>) -> Self {
+        Self { config }
+    }
+}
+
+impl Environment for CommandEnvironment {
+    fn config(&self) -> &Arc<Config> {
+        &self.config
+    }
+
+    fn executor(&self) -> Result<Box<dyn EnvironmentExecutor>, EnvironmentError> {
+        let url = self.config.database_url.as_deref()
+            .ok_or_else(|| EnvironmentError::Config(
+                "DATABASE_URL is not set — pass --database-url or set it in .env".into(),
+            ))?;
+        match self.dialect() {
+            Dialect::Postgres => {
+                let client = Client::connect(url, NoTls)
+                    .map_err(|e| EnvironmentError::Connect(e.to_string()))?;
+                Ok(Box::new(PostgresExecutor::new(client)))
+            }
+        }
+    }
+
+    fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
+        Ok(Some(Box::new(SubprocessInvoker)))
+    }
 }
 
 impl GamanArgs {
@@ -179,18 +204,19 @@ pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
     let cmd = args.apply_to(&mut config);
     let config = Arc::new(config);
     let source = Box::new(YamlAdapter { directory: config.migrations_dir.clone() });
-    let migrator = Migrator::new(config, source, Dialect::Postgres)?;
+    let environment = Box::new(CommandEnvironment::new(Arc::clone(&config)));
+    let migrator = Migrator::new(source, environment)?;
     dispatch(migrator, None, cmd)
 }
 
 pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd: Command) -> Result<(), CommandError> {
     match cmd {
         Command::Config(_) => {
-            println!("  migrations_dir  {}", migrator.config.migrations_dir.display());
-            println!("  schema_file     {}", migrator.config.schema_file.display());
+            println!("  migrations_dir  {}", migrator.config().migrations_dir.display());
+            println!("  schema_file     {}", migrator.config().schema_file.display());
             println!(
                 "  database_url    {}",
-                migrator.config.database_url.as_deref().unwrap_or("(not set)")
+                migrator.config().database_url.as_deref().unwrap_or("(not set)")
             );
             Ok(())
         }
@@ -206,7 +232,7 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
             } else if cmd.check {
                 let current = match embedded_schema {
                     Some(s) => s,
-                    None => Schema::load(&migrator.config.schema_file)
+                    None => Schema::load(&migrator.config().schema_file)
                         .map_err(|e| CommandError::Config(e.to_string()))?,
                 };
                 let name = cmd.name.unwrap_or_else(|| "check".into());
@@ -218,7 +244,7 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
                 let name = cmd.name.ok_or_else(|| CommandError::Config("a migration name is required".into()))?;
                 let current = match embedded_schema {
                     Some(s) => s,
-                    None => Schema::load(&migrator.config.schema_file)
+                    None => Schema::load(&migrator.config().schema_file)
                         .map_err(|e| CommandError::Config(e.to_string()))?,
                 };
                 let engine = CliPromptEngine;
@@ -237,10 +263,8 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
             }
         }
         Command::Migrate(cmd) => {
-            let mut executor = db_connect(&migrator.config)?;
-            let invoker = SubprocessInvoker;
             if cmd.plan {
-                match migrator.plan(&mut executor) {
+                match migrator.plan() {
                     Ok(pending) if pending.is_empty() => {
                         println!("No pending migrations.");
                         Ok(())
@@ -254,7 +278,7 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
                     Err(e) => Err(CommandError::Migrator(e)),
                 }
             } else if cmd.check {
-                migrator.check(&mut executor).map_err(CommandError::from).and_then(|has_pending| {
+                migrator.check().map_err(CommandError::from).and_then(|has_pending| {
                     if has_pending {
                         Err(CommandError::Config("pending migrations exist".into()))
                     } else {
@@ -262,12 +286,11 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
                     }
                 })
             } else {
-                migrator.migrate(&mut executor, Some(&invoker), cmd.target.as_deref(), cmd.fake).map_err(CommandError::from)
+                migrator.migrate(cmd.target.as_deref(), cmd.fake).map(|_| ()).map_err(CommandError::from)
             }
         }
         Command::ShowMigrations(_) => {
-            let mut executor = db_connect(&migrator.config)?
-;            let rows = migrator.show_migrations(&mut executor)?;
+            let rows = migrator.show_migrations()?;
             if rows.is_empty() {
                 println!("No migrations found.");
             } else {
@@ -322,16 +345,12 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
             Ok(())
         }
         Command::InspectDb(cmd) => {
-            let mut executor = db_connect(&migrator.config)?;
-
             let schemas: Vec<&str> = if cmd.schema.is_empty() {
                 vec!["public"]
             } else {
                 cmd.schema.iter().map(|s| s.as_str()).collect()
             };
-            let mut state = executor
-                .inspect_db(&schemas)
-                .map_err(|e| CommandError::Config(e.to_string()))?;
+            let mut state = migrator.inspect_db(&schemas).map_err(CommandError::from)?;
 
             if let Some(table) = &cmd.table {
                 state.tables.retain(|k, _| k == table);
@@ -347,9 +366,8 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
             Ok(())
         }
         Command::VerifyDb(cmd) => {
-            let mut executor = db_connect(&migrator.config)?;
             let schema = cmd.schema.as_deref().unwrap_or("public");
-            let drift = migrator.verify(&mut executor, schema).map_err(CommandError::from)?;
+            let drift = migrator.verify(schema).map_err(CommandError::from)?;
             if drift.is_empty() {
                 println!("No drift detected.");
                 Ok(())

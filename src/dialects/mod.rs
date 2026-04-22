@@ -10,6 +10,7 @@ pub enum DialectError {
     Unsupported(String, String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialect {
     Postgres,
 }

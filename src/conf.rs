@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::dialects::Dialect;
+
 /// Runtime configuration for gaman.
 /// Loaded once at startup and passed through the call chain.
 #[derive(Clone)]
@@ -17,6 +19,17 @@ impl Config {
             schema_file,
         }
     }
+
+    pub fn dialect(&self) -> Option<Dialect> {
+        let url = self.database_url.as_deref()?;
+        let (scheme, _) = url.split_once("://")?;
+
+        if scheme.eq_ignore_ascii_case("postgres") || scheme.eq_ignore_ascii_case("postgresql") {
+            Some(Dialect::Postgres)
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for Config {
@@ -30,5 +43,53 @@ impl Default for Config {
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("schema.yaml")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+    use crate::dialects::Dialect;
+
+    fn config_with_url(database_url: Option<&str>) -> Config {
+        Config::new(
+            database_url.map(str::to_owned),
+            PathBuf::from("migrations"),
+            PathBuf::from("schema.yaml"),
+        )
+    }
+
+    use std::path::PathBuf;
+
+    /// Verifies that `postgres://` URLs resolve to the PostgreSQL dialect.
+    #[test]
+    fn parses_postgres_dialect_from_database_url() {
+        let config = config_with_url(Some("postgres://localhost/app"));
+
+        assert!(matches!(config.dialect(), Some(Dialect::Postgres)));
+    }
+
+    /// Verifies that `postgresql://` URLs resolve to the PostgreSQL dialect.
+    #[test]
+    fn parses_postgresql_dialect_from_database_url() {
+        let config = config_with_url(Some("postgresql://localhost/app"));
+
+        assert!(matches!(config.dialect(), Some(Dialect::Postgres)));
+    }
+
+    /// Verifies that unsupported URL schemes do not resolve to a known dialect.
+    #[test]
+    fn returns_none_for_unsupported_database_url_scheme() {
+        let config = config_with_url(Some("mysql://localhost/app"));
+
+        assert!(config.dialect().is_none());
+    }
+
+    /// Verifies that a missing database URL leaves the dialect unspecified.
+    #[test]
+    fn returns_none_without_database_url() {
+        let config = config_with_url(None);
+
+        assert!(config.dialect().is_none());
     }
 }

@@ -2,19 +2,19 @@ mod support;
 
 use support::{
     PgHarness, PostgresCase, PostgresSpec, TestSupportError, assert_error_contains,
-    assert_ops_match, assert_schema_matches, build_migrator, case_label, case_name,
-    discover_case_dirs, postgres_cases_root, read_case_file, scope_schema_for_compare,
+    assert_ops_match, assert_schema_matches, build_postgres_migrator, case_label, case_name,
+    discover_cases, postgres_cases_root, read_case_file, scope_schema_for_compare,
 };
 
 /// Runs PostgreSQL-backed cases for migrate, verify, and inspect.
 #[test]
 #[ignore = "set TEST_DATABASE_URL and pass -- --include-ignored to run"]
 fn postgres_cases() {
-    let dirs = discover_case_dirs(&postgres_cases_root()).expect("failed to discover postgres cases");
+    let files = discover_cases(&postgres_cases_root()).expect("failed to discover postgres cases");
     let mut failures = Vec::new();
 
-    for dir in dirs {
-        let name = match case_name(&dir) {
+    for file in files {
+        let name = match case_name(&file) {
             Ok(name) => name,
             Err(error) => {
                 failures.push(error.to_string());
@@ -23,7 +23,7 @@ fn postgres_cases() {
         };
 
         let result = (|| -> Result<String, TestSupportError> {
-            let case: PostgresCase = read_case_file(&dir)?;
+            let case: PostgresCase = read_case_file(&file)?;
             let label = case_label(&name, case.description.as_deref());
             run_postgres_case(&name, &case)?;
             Ok(label)
@@ -56,8 +56,8 @@ fn run_postgres_case(name: &str, case: &PostgresCase) -> Result<(), TestSupportE
             if let Some(sql) = setup_sql {
                 harness.batch_execute(sql)?;
             }
-            let migrator = build_migrator(name, support::FixtureDialect::Postgres, migrations)?;
-            let result = migrator.migrate(&mut harness, None, target.as_deref(), *fake);
+            let migrator = build_postgres_migrator(name, &harness, migrations)?;
+            let result = migrator.migrate(target.as_deref(), *fake);
             if let Some(expected) = expect_error {
                 return assert_error_contains(name, result.map(|_| ()), expected);
             }
@@ -81,9 +81,9 @@ fn run_postgres_case(name: &str, case: &PostgresCase) -> Result<(), TestSupportE
             if let Some(sql) = setup_sql {
                 harness.batch_execute(sql)?;
             }
-            let migrator = build_migrator(name, support::FixtureDialect::Postgres, migrations)?;
+            let migrator = build_postgres_migrator(name, &harness, migrations)?;
             if !migrations.is_empty() {
-                migrator.migrate(&mut harness, None, None, false).map_err(|error| {
+                migrator.migrate(None, false).map_err(|error| {
                     TestSupportError::message(format!("{name}: setup migrate failed unexpectedly: {error}"))
                 })?;
             }

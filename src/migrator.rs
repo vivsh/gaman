@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use thiserror::Error;
 
@@ -8,7 +7,8 @@ use crate::conf::Config;
 use crate::dialects::{Dialect, DialectError};
 use crate::diff::{DiffEngine, DiffError};
 use crate::disambiguator::{Clarification, Decision, Disambiguator, DisambiguationResult, DisambiguatorError};
-use crate::executor::{Executor, ExecutorError, Introspectable, Invoker, InvokerError};
+use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
+use crate::executor::{Executor, ExecutorError, Invoker, InvokerError};
 use crate::graphs::{GraphError, MigrationGraph};
 use crate::migrations::Migration;
 use crate::operations::Operation;
@@ -30,6 +30,8 @@ pub enum MigratorError {
     Replay(#[from] ReplayError),
     #[error("subprocess invocation failed: {0}")]
     Invoke(#[from] InvokerError),
+    #[error("{0}")]
+    Environment(#[from] EnvironmentError),
     #[error("configuration error: {0}")]
     Config(String),
     #[error("disambiguation error: {0}")]
@@ -39,18 +41,17 @@ pub enum MigratorError {
 }
 
 /// Central orchestrator for all migration actions.
-/// Holds shared config, the migration graph, the diff engine, and the SQL dialect.
+/// Holds the shared runtime environment, the migration graph, and the diff engine.
 /// The CLI constructs one instance and calls its methods directly.
 pub struct Migrator {
-    pub config: Arc<Config>,
+    environment: Box<dyn Environment>,
     pub source: Box<dyn MigrationSource>,
     pub graph: MigrationGraph,
     pub diff: DiffEngine,
-    pub dialect: Dialect,
 }
 
 impl Migrator {
-    pub fn new(config: Arc<Config>, source: Box<dyn MigrationSource>, dialect: Dialect) -> Result<Self, MigratorError> {
+    pub fn new(source: Box<dyn MigrationSource>, environment: Box<dyn Environment>) -> Result<Self, MigratorError> {
         let mut graph = MigrationGraph::new();
         let migrations = source.load_all()?;
         for migration in migrations {
@@ -59,12 +60,27 @@ impl Migrator {
         // Validate dependency integrity eagerly so broken repos fail at construction, not at migrate-time.
         graph.topological_order()?;
         Ok(Self {
-            config,
+            environment,
             source,
             graph,
             diff: DiffEngine::new(),
-            dialect,
         })
+    }
+
+    pub fn config(&self) -> &Config {
+        self.environment.config().as_ref()
+    }
+
+    pub fn dialect(&self) -> Dialect {
+        self.environment.dialect()
+    }
+
+    fn executor(&self) -> Result<Box<dyn EnvironmentExecutor>, MigratorError> {
+        self.environment.executor().map_err(MigratorError::from)
+    }
+
+    fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, MigratorError> {
+        self.environment.invoker().map_err(MigratorError::from)
     }
 
     /// Generate a new migration by diffing `current` against the replayed previous state.
@@ -82,7 +98,8 @@ impl Migrator {
         self.graph.detect_conflict()?;
         current.validate().map_err(MigratorError::Config)?;
         let previous = self.replay()?;
-        let raw_ops = self.diff.diff(&current, &previous, &self.dialect)?;
+        let dialect = self.dialect();
+        let raw_ops = self.diff.diff(&current, &previous, &dialect)?;
         if raw_ops.is_empty() {
             return Ok(None);
         }
@@ -90,7 +107,7 @@ impl Migrator {
             DisambiguationResult::NeedsInput(clars) => return Err(MigratorError::NeedsInput(clars)),
             DisambiguationResult::Resolved(ops) => ops,
         };
-        let ops = self.dialect.reorder(ops, &previous, &current);
+        let ops = dialect.reorder(ops, &previous, &current);
         let id = format!("{:04}_{}", self.graph.next_number(), name);
         MigrationGraph::validate_id(&id).map_err(MigratorError::Graph)?;
         let mut dependencies: Vec<String> = self.graph.heads().iter().map(|s| s.to_string()).collect();
@@ -148,10 +165,11 @@ impl Migrator {
     /// The caller controls direction — pass operations as-is for forward, or pre-mapped
     /// inverses in reverse order for backward. Does not include tracking INSERT/DELETE.
     pub fn sql_migrate(&self, migrations: &[Migration]) -> Result<Vec<String>, MigratorError> {
+        let dialect = self.dialect();
         let mut stmts = Vec::new();
         for migration in migrations {
             for op in &migration.operations {
-                stmts.extend(self.dialect.operation_to_sql(op)?);
+                stmts.extend(dialect.operation_to_sql(op)?);
             }
         }
         Ok(stmts)
@@ -169,6 +187,7 @@ impl Migrator {
         migrations: &[Migration],
         direction_forward: bool,
     ) -> Result<(), MigratorError> {
+        let dialect = self.dialect();
         if !direction_forward {
             for m in migrations {
                 for (i, op) in m.operations.iter().enumerate() {
@@ -190,20 +209,14 @@ impl Migrator {
             std::collections::HashMap::new();
 
         for m in migrations {
-            // Invoke runs a subprocess that connects to the DB in its own session — its
-            // changes cannot share gaman's transaction. Mixing Invoke with DDL in the same
-            // migration means a failure after the DDL runs could leave the subprocess changes
-            // committed but the DDL rolled back, or vice-versa. Require Invoke-only migrations.
-            let has_invoke = m.operations.iter().any(|op| matches!(op, crate::operations::Operation::Invoke { .. }));
-            let has_other = m.operations.iter().any(|op| !matches!(op, crate::operations::Operation::Invoke { .. }));
-            if has_invoke && has_other {
-                return Err(MigratorError::Config(format!(
-                    "migration '{}': Invoke operations must be in a migration by themselves — \
-                     mixing them with DDL operations risks partial commits that cannot be rolled back",
-                    m.id
-                )));
-            }
             for (i, op) in m.operations.iter().enumerate() {
+                if matches!(op, crate::operations::Operation::Invoke { .. }) {
+                    return Err(MigratorError::Config(format!(
+                        "migration '{}' (operation {}): Invoke operations are not yet supported \
+                         and cannot be executed — remove or replace with a Statement operation",
+                        m.id, i + 1
+                    )));
+                }
                 match op {
                     crate::operations::Operation::CreateTable { table } => {
                         for fk in &table.foreign_keys {
@@ -267,7 +280,7 @@ impl Migrator {
                     inner: Box::new(e),
                 })?;
             }
-            self.dialect.validate_migration(m)?;
+            dialect.validate_migration(m)?;
         }
         Ok(())
     }
@@ -275,7 +288,7 @@ impl Migrator {
     /// Create the migration tracking table if it does not already exist.
     /// Safe to call repeatedly — uses CREATE TABLE IF NOT EXISTS internally.
     pub fn install(&self, executor: &mut dyn Executor) -> Result<(), MigratorError> {
-        for sql in self.dialect.create_tracking_table_sql() {
+        for sql in self.dialect().create_tracking_table_sql() {
             executor.execute(&sql)?;
         }
         Ok(())
@@ -285,14 +298,16 @@ impl Migrator {
         &self,
         ops: &[Operation],
         executor: &mut dyn Executor,
-        invoker: Option<&dyn Invoker>,
+        _invoker: Option<&dyn Invoker>,
     ) -> Result<(), MigratorError> {
+        let dialect = self.dialect();
         for op in ops {
-            if let Operation::Invoke { up, .. } = op {
-                let inv = invoker.ok_or(InvokerError::NoInvoker)?;
-                inv.invoke(up, executor)?;
+            if let Operation::Invoke { .. } = op {
+                return Err(MigratorError::Config(
+                    "Invoke operations are not yet supported and cannot be executed".into()
+                ));
             } else {
-                for sql in self.dialect.operation_to_sql(op)? {
+                for sql in dialect.operation_to_sql(op)? {
                     executor.execute(&sql)?;
                 }
             }
@@ -301,7 +316,7 @@ impl Migrator {
     }
 
     fn applied_set(&self, executor: &mut dyn Executor) -> Result<HashSet<String>, MigratorError> {
-        Ok(executor.fetch_strings(self.dialect.applied_migrations_sql())?.into_iter().collect())
+        Ok(executor.fetch_strings(self.dialect().applied_migrations_sql())?.into_iter().collect())
     }
 
     fn apply_one(
@@ -318,7 +333,7 @@ impl Migrator {
                 return Err(e);
             }
         }
-        if let Err(e) = executor.execute(&self.dialect.record_sql(&migration.id)) {
+        if let Err(e) = executor.execute(&self.dialect().record_sql(&migration.id)) {
             if migration.atomic { let _ = executor.rollback(); }
             return Err(e.into());
         }
@@ -337,13 +352,20 @@ impl Migrator {
     /// Refuses if there are multiple heads — resolve with `make_merge_migration` first.
     /// Calls `install` internally so the tracking table is always present.
     /// Each migration runs in its own transaction; a failure rolls back only that migration.
-    pub fn migrate(
+    /// Returns the number of migrations applied (forward direction only).
+    pub fn migrate(&self, target: Option<&str>, fake: bool) -> Result<usize, MigratorError> {
+        let mut executor = self.executor()?;
+        let invoker = self.invoker()?;
+        self.migrate_with(executor.as_mut(), invoker.as_deref(), target, fake)
+    }
+
+    fn migrate_with(
         &self,
         executor: &mut dyn Executor,
         invoker: Option<&dyn Invoker>,
         target: Option<&str>,
         fake: bool,
-    ) -> Result<(), MigratorError> {
+    ) -> Result<usize, MigratorError> {
         self.graph.detect_conflict()?;
         let all_ordered = self.graph.topological_order()?;
 
@@ -398,7 +420,7 @@ impl Migrator {
                         return Err(e);
                     }
                 }
-                if let Err(e) = executor.execute(&self.dialect.unrecord_sql(id)) {
+                if let Err(e) = executor.execute(&self.dialect().unrecord_sql(id)) {
                     if migration.atomic { let _ = executor.rollback(); }
                     return Err(e.into());
                 }
@@ -415,13 +437,14 @@ impl Migrator {
                 .filter(|id| !applied.contains(*id as &str))
                 .copied()
                 .collect();
+            let applied_count = pending.len();
             for id in pending {
                 let migration = self.graph.get(id).expect("pending id must exist in graph");
                 self.apply_one(migration, executor, invoker, fake)?;
             }
 
             executor.release_lock()?;
-            return Ok(());
+            return Ok(applied_count);
         }
 
         let applied: HashSet<String> = self.applied_set(executor)?;
@@ -434,13 +457,18 @@ impl Migrator {
             self.apply_one(migration, executor, invoker, fake)?;
         }
         executor.release_lock()?;
-        Ok(())
+        Ok(pending.len())
     }
 
     /// Return the ordered list of migration ids that would be applied.
     /// Refuses on conflict — the graph must have a single head to produce a linear plan.
     /// Calls `install` internally so the tracking table is always present.
-    pub fn plan(&self, executor: &mut dyn Executor) -> Result<Vec<String>, MigratorError> {
+    pub fn plan(&self) -> Result<Vec<String>, MigratorError> {
+        let mut executor = self.executor()?;
+        self.plan_with(executor.as_mut())
+    }
+
+    fn plan_with(&self, executor: &mut dyn Executor) -> Result<Vec<String>, MigratorError> {
         self.graph.detect_conflict()?;
         self.install(executor)?;
         let order = self.graph.topological_order()?;
@@ -453,12 +481,22 @@ impl Migrator {
     }
 
     /// Return true if there are unapplied migrations, false otherwise.
-    pub fn check(&self, executor: &mut dyn Executor) -> Result<bool, MigratorError> {
-        self.plan(executor).map(|pending| !pending.is_empty())
+    pub fn check(&self) -> Result<bool, MigratorError> {
+        let mut executor = self.executor()?;
+        self.check_with(executor.as_mut())
+    }
+
+    fn check_with(&self, executor: &mut dyn Executor) -> Result<bool, MigratorError> {
+        self.plan_with(executor).map(|pending| !pending.is_empty())
     }
 
     /// Return all migration ids in topological order paired with whether each has been applied.
-    pub fn show_migrations(&self, executor: &mut dyn Executor) -> Result<Vec<(String, bool)>, MigratorError> {
+    pub fn show_migrations(&self) -> Result<Vec<(String, bool)>, MigratorError> {
+        let mut executor = self.executor()?;
+        self.show_migrations_with(executor.as_mut())
+    }
+
+    fn show_migrations_with(&self, executor: &mut dyn Executor) -> Result<Vec<(String, bool)>, MigratorError> {
         self.graph.detect_conflict()?;
         self.install(executor)?;
         let order = self.graph.topological_order()?;
@@ -466,23 +504,34 @@ impl Migrator {
         Ok(order.iter().map(|id| (id.to_string(), applied.contains(*id))).collect())
     }
 
+    pub fn inspect_db(&self, schemas: &[&str]) -> Result<Schema, MigratorError> {
+        let mut executor = self.executor()?;
+        executor.inspect_db(schemas).map_err(MigratorError::Executor)
+    }
+
     /// Compare the replayed schema state against the live database and return any differences.
     /// An empty vec means the database matches migrations exactly — no drift.
     /// Scoped to tables/columns/indexes/FKs/constraints only; views, functions,
     /// extensions, and enums are excluded because their canonical representation
     /// differs too much between replayed YAML and pg_catalog.
-    pub fn verify(&self, executor: &mut (impl Executor + Introspectable), schema: &str) -> Result<Vec<Operation>, MigratorError> {
+    pub fn verify(&self, schema: &str) -> Result<Vec<Operation>, MigratorError> {
+        let mut executor = self.executor()?;
+        self.verify_with(executor.as_mut(), schema)
+    }
+
+    fn verify_with(&self, executor: &mut dyn EnvironmentExecutor, schema: &str) -> Result<Vec<Operation>, MigratorError> {
+        let dialect = self.dialect();
         let mut replay = self.replay()?;
         replay.normalize();
         scope_tables_for_verify(&mut replay, schema);
-        normalize_state_types(&mut replay, &self.dialect);
+        normalize_state_types(&mut replay, &dialect);
 
         let mut live = executor
             .inspect_db(&[schema])
             .map_err(MigratorError::Executor)?;
         live.normalize();
         scope_tables_for_verify(&mut live, schema);
-        normalize_state_types(&mut live, &self.dialect);
+        normalize_state_types(&mut live, &dialect);
 
         // Strip objects whose catalog representation does not match replay closely enough.
         live.views.clear();
@@ -494,7 +543,7 @@ impl Migrator {
         live.enums.clear();
         replay.enums.clear();
 
-        Ok(self.diff.diff(&replay, &live, &self.dialect)?)
+        Ok(self.diff.diff(&replay, &live, &dialect)?)
     }
 }
 
@@ -531,6 +580,8 @@ mod tests {
     use super::*;
     use crate::adapters::AdapterError;
     use crate::dialects::Dialect;
+    use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
+    use crate::executor::Introspectable;
     use crate::operations::Operation;
     use crate::states::{Column, Schema, Table};
 
@@ -547,6 +598,38 @@ mod tests {
         fn save(&self, m: &Migration) -> Result<(), AdapterError> {
             self.saved.borrow_mut().push(m.clone());
             Ok(())
+        }
+    }
+
+    struct TestEnvironment {
+        config: Arc<Config>,
+        dialect: Dialect,
+    }
+
+    impl TestEnvironment {
+        fn new(dialect: Dialect) -> Self {
+            Self {
+                config: Arc::new(Config::default()),
+                dialect,
+            }
+        }
+    }
+
+    impl Environment for TestEnvironment {
+        fn config(&self) -> &Arc<Config> {
+            &self.config
+        }
+
+        fn executor(&self) -> Result<Box<dyn EnvironmentExecutor>, EnvironmentError> {
+            Err(EnvironmentError::Config("executor is not available in the test environment".into()))
+        }
+
+        fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
+            Ok(None)
+        }
+
+        fn dialect(&self) -> Dialect {
+            self.dialect
         }
     }
 
@@ -585,7 +668,7 @@ mod tests {
 
     fn migrator_from(migrations: Vec<Migration>) -> Migrator {
         let source = MockSource { migrations, ..MockSource::default() };
-        Migrator::new(Arc::new(Config::default()), Box::new(source), Dialect::Postgres).unwrap()
+        Migrator::new(Box::new(source), Box::new(TestEnvironment::new(Dialect::Postgres))).unwrap()
     }
 
     struct NullExecutor {
@@ -640,7 +723,7 @@ mod tests {
             migration_with_ops("0001_create_users", &[], vec![Operation::CreateTable { table: users }]),
             migration_with_ops("0002_create_posts", &["0001_create_users"], vec![Operation::CreateTable { table: posts }]),
         ]);
-        m.migrate(&mut NullExecutor::empty(), None, None, false)
+        m.migrate_with(&mut NullExecutor::empty(), None, None, false)
             .expect("migrate must succeed on a valid multi-migration chain");
     }
 
@@ -652,24 +735,17 @@ mod tests {
             migration_with_ops("0001_init", &[], vec![Operation::CreateTable { table: simple_table("t", &["id"]) }]),
         ]);
         let mut ex = NullExecutor::empty();
-        m.migrate(&mut ex, None, None, false).expect("migrate should succeed");
+        m.migrate_with(&mut ex, None, None, false).expect("migrate should succeed");
         assert_eq!(ex.lock_count, 0, "lock must be released after migrate completes");
     }
     // we build the Migrator manually to keep a reference to the inner saved vec.
     fn migrator_with_source(migrations: Vec<Migration>) -> (Migrator, Arc<MockSourceShared>) {
         let shared = Arc::new(MockSourceShared::default());
         let source = ArcMockSource { shared: Arc::clone(&shared), migrations };
-        let mut graph = MigrationGraph::new();
-        for m in source.migrations.clone() {
-            graph.add(m).unwrap();
-        }
-        let migrator = Migrator {
-            config: Arc::new(Config::default()),
-            source: Box::new(source),
-            graph,
-            diff: DiffEngine::new(),
-            dialect: Dialect::Postgres,
-        };
+        let migrator = Migrator::new(
+            Box::new(source),
+            Box::new(TestEnvironment::new(Dialect::Postgres)),
+        ).unwrap();
         (migrator, shared)
     }
 
@@ -869,7 +945,7 @@ mod tests {
         let mut executor = InspectingExecutor { live };
 
         let drift = migrator
-            .verify(&mut executor, "isolated")
+            .verify_with(&mut executor, "isolated")
             .expect("verify should succeed");
 
         assert!(drift.is_empty(), "expected no drift, got: {drift:?}");
@@ -1061,103 +1137,14 @@ mod tests {
         assert!(err.contains("duplicate column"));
     }
 
-    /// migrate() with an Invoke op and no invoker returns MigratorError::Invoke(NoInvoker).
     #[test]
-    fn invoke_op_without_invoker_returns_error() {
+    fn invoke_op_is_not_supported() {
         let m = migrator_from(vec![migration_with_ops(
             "0001_seed", &[],
             vec![Operation::Invoke { up: "echo hello".into(), down: None }],
         )]);
-        let err = m.migrate(&mut NullExecutor::empty(), None, None, false).unwrap_err();
-        assert!(matches!(err, MigratorError::Invoke(InvokerError::NoInvoker)));
-    }
-
-    /// migrate() with a MockInvoker that does not commit records the invoke call and the correct
-    /// begin/commit sequence around the migration.
-    #[test]
-    fn invoke_op_with_no_commit_invoker_is_called() {
-        use std::cell::Cell;
-
-        struct NoCommitInvoker {
-            called: Cell<bool>,
-        }
-        impl Invoker for NoCommitInvoker {
-            fn invoke(&self, _command: &str, _tx: &mut dyn Executor) -> Result<(), InvokerError> {
-                self.called.set(true);
-                Ok(())
-            }
-        }
-
-        let inv = NoCommitInvoker { called: Cell::new(false) };
-        let m = migrator_from(vec![migration_with_ops(
-            "0001_seed", &[],
-            vec![Operation::Invoke { up: "noop".into(), down: None }],
-        )]);
-        m.migrate(&mut NullExecutor::empty(), Some(&inv), None, false).unwrap();
-        assert!(inv.called.get(), "invoker must have been called");
-    }
-
-    /// An invoke-only migration runs in a single transaction without mid-migration commit.
-    #[test]
-    fn invoke_op_with_commit_invoker_commits_before_invoke() {
-        use std::cell::RefCell;
-
-        struct CommitInvoker {
-            events: RefCell<Vec<&'static str>>,
-        }
-        impl Invoker for CommitInvoker {
-            fn invoke(&self, _command: &str, _tx: &mut dyn Executor) -> Result<(), InvokerError> {
-                self.events.borrow_mut().push("invoke");
-                Ok(())
-            }
-        }
-
-        struct RecordingExecutor {
-            events: RefCell<Vec<&'static str>>,
-        }
-        impl Executor for RecordingExecutor {
-            fn execute(&mut self, _sql: &str) -> Result<(), ExecutorError> { Ok(()) }
-            fn fetch_strings(&mut self, _sql: &str) -> Result<Vec<String>, ExecutorError> { Ok(vec![]) }
-            fn begin(&mut self) -> Result<(), ExecutorError> { self.events.borrow_mut().push("begin"); Ok(()) }
-            fn commit(&mut self) -> Result<(), ExecutorError> { self.events.borrow_mut().push("commit"); Ok(()) }
-            fn rollback(&mut self) -> Result<(), ExecutorError> { self.events.borrow_mut().push("rollback"); Ok(()) }
-        }
-
-        let inv = CommitInvoker { events: RefCell::new(vec![]) };
-        let mut exec = RecordingExecutor { events: RefCell::new(vec![]) };
-
-        // Invoke-only migration: runs fine, no mid-migration commit
-        let m = migrator_from(vec![migration_with_ops(
-            "0001_seed", &[],
-            vec![Operation::Invoke { up: "noop".into(), down: None }],
-        )]);
-        m.migrate(&mut exec, Some(&inv), None, false).unwrap();
-
-        let exec_events = exec.events.borrow();
-        let inv_events = inv.events.borrow();
-        // Expect exactly: begin, commit (one clean transaction wrapping the invoke)
-        let commits: Vec<_> = exec_events.iter().filter(|&&e| e == "commit").collect();
-        let begins: Vec<_> = exec_events.iter().filter(|&&e| e == "begin").collect();
-        assert_eq!(begins.len(), 1, "exactly one BEGIN for an invoke-only migration");
-        assert_eq!(commits.len(), 1, "exactly one COMMIT for an invoke-only migration");
-        assert_eq!(inv_events.as_slice(), &["invoke"]);
-    }
-
-    /// A migration that mixes Invoke with DDL ops is rejected at validation time.
-    #[test]
-    fn invoke_mixed_with_ddl_is_rejected() {
-        let table = simple_table("users", &["id"]);
-        let m = migrator_from(vec![migration_with_ops(
-            "0001_mixed", &[],
-            vec![
-                Operation::Invoke { up: "noop".into(), down: None },
-                Operation::CreateTable { table },
-            ],
-        )]);
-        let mut exec = NullExecutor::empty();
-        let err = m.migrate(&mut exec, None, None, false).unwrap_err();
-        assert!(err.to_string().contains("Invoke operations must be in a migration by themselves"),
-            "unexpected error: {err}");
+        let err = m.migrate_with(&mut NullExecutor::empty(), None, None, false).unwrap_err();
+        assert!(err.to_string().contains("not yet supported"), "unexpected error: {err}");
     }
 
     #[test]
@@ -1168,7 +1155,7 @@ mod tests {
             migration_with_ops("0002_add_email", &["0001_create_users"], vec![]),
         ]);
         let mut exec = NullExecutor { applied: vec!["0001_create_users".to_string()], lock_count: 0 };
-        let rows = m.show_migrations(&mut exec).unwrap();
+        let rows = m.show_migrations_with(&mut exec).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0], ("0001_create_users".to_string(), true));
         assert_eq!(rows[1], ("0002_add_email".to_string(), false));
@@ -1178,7 +1165,7 @@ mod tests {
     fn show_migrations_empty_graph() {
         let m = migrator_from(vec![]);
         let mut exec = NullExecutor::empty();
-        let rows = m.show_migrations(&mut exec).unwrap();
+        let rows = m.show_migrations_with(&mut exec).unwrap();
         assert!(rows.is_empty());
     }
 }
