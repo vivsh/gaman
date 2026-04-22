@@ -19,8 +19,8 @@ pub(crate) mod prompter;
 pub(crate) mod states;
 
 // Everyday API.
-pub use gaman_macros::{IntoTable, include_migrations};
-pub use engine::{MigrationEngine, EngineError, TlsMode};
+pub use gaman_macros::{IntoTable, embedded_migrations};
+pub use engine::{MigrationEngine, EngineError, TlsMode, EmbeddedMigrations};
 pub use conf::Config;
 pub use migrations::Migration;
 

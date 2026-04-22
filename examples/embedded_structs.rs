@@ -3,9 +3,9 @@
 ///
 ///   cargo run --example embedded_structs -- make_migration add_users
 ///   cargo run --example embedded_structs -- migrate
-use gaman::{Config, IntoTable, MigrationEngine, include_migrations};
+use gaman::{Config, EmbeddedMigrations, IntoTable, MigrationEngine, embedded_migrations};
 
-static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
+static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
 
 #[allow(dead_code)]
 #[derive(IntoTable)]
@@ -34,7 +34,7 @@ struct Post {
 fn main() {
     let _ = dotenvy::dotenv();
 
-    if let Err(e) = MigrationEngine::new(Config::default(), MIGRATIONS)
+    if let Err(e) = MigrationEngine::new(Config::default(), &MIGRATIONS)
         .with_schema(|s| s.table::<User>().table::<Post>().build())
         .handle_args()
     {

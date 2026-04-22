@@ -69,15 +69,15 @@ Typical loop:
 gaman = "0.3"
 ```
 
-Use the library when you want migrations to ship with your binary. `include_migrations!("path")` embeds every `.yaml` file at compile time; `MigrationEngine` runs them.
+Use the library when you want migrations to ship with your binary. `embedded_migrations!("path")` embeds every `.yaml` file at compile time; `MigrationEngine` runs them.
 
 ```rust
-use gaman::{Config, MigrationEngine, include_migrations};
+use gaman::{Config, EmbeddedMigrations, MigrationEngine, embedded_migrations};
 
-static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
+static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
 
 fn main() {
-    let n = MigrationEngine::new(Config::default(), MIGRATIONS)
+    let n = MigrationEngine::new(Config::default(), &MIGRATIONS)
         .migrate()
         .expect("migrations failed");
     if n > 0 {

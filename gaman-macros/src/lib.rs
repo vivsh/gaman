@@ -6,9 +6,10 @@ use syn::{LitStr, Type, parse_macro_input};
 use darling::{FromDeriveInput, FromField, ast};
 
 /// Embed `.yaml` migrations from a directory at compile time.
-/// Returns `&'static [(&'static str, &'static str)]`, sorted lexicographically by filename.
+/// Returns an `EmbeddedMigrations` value carrying both the compiled-in files and the source
+/// directory path, so the runtime can validate against `config.migrations_dir`.
 #[proc_macro]
-pub fn include_migrations(input: TokenStream) -> TokenStream {
+pub fn embedded_migrations(input: TokenStream) -> TokenStream {
     let path_lit = parse_macro_input!(input as LitStr);
     let rel_path = path_lit.value();
 
@@ -44,8 +45,13 @@ pub fn include_migrations(input: TokenStream) -> TokenStream {
         })
         .collect();
 
+    let dir_lit = LitStr::new(&rel_path, Span::call_site());
+
     quote! {
-        &[#(#pairs),*] as &[(&'static str, &'static str)]
+        gaman::EmbeddedMigrations {
+            files: &[#(#pairs),*],
+            dir: #dir_lit,
+        }
     }
     .into()
 }

@@ -2,14 +2,14 @@
 /// Useful when the app should apply bundled migrations and keep running.
 ///
 ///   cargo run --example embedded_migrate
-use gaman::{Config, MigrationEngine, include_migrations};
+use gaman::{Config, EmbeddedMigrations, MigrationEngine, embedded_migrations};
 
-static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
+static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
 
 fn main() {
     let _ = dotenvy::dotenv();
 
-    MigrationEngine::new(Config::default(), MIGRATIONS)
+    MigrationEngine::new(Config::default(), &MIGRATIONS)
         .migrate()
         .expect("migrations failed");
 

@@ -9,14 +9,15 @@ Gaman can run entirely inside your binary — no separate CLI process, no extern
 gaman = "0.3"
 ```
 
-Embed migration files at compile time with the `include_migrations!` macro. It reads every `.yaml` file in the given directory in lexicographic order.
+Embed migration files at compile time with the `embedded_migrations!` macro. It reads every `.yaml` file in the given directory in lexicographic order and produces an `EmbeddedMigrations` value that carries both the compiled-in files and the source directory path.
 
 ```rust
-use gaman::include_migrations;
+use gaman::{EmbeddedMigrations, embedded_migrations};
 
-static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
-// Each element is (migration_id, yaml_content).
+static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
 // The path is relative to the crate root (same as include_str!).
+// MIGRATIONS.files — the embedded (id, yaml) pairs
+// MIGRATIONS.dir  — the source directory string, used to validate config.migrations_dir
 ```
 
 ## MigrationEngine
@@ -26,7 +27,7 @@ static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
 ```rust
 use gaman::{Config, MigrationEngine};
 
-let engine = MigrationEngine::new(Config::default(), MIGRATIONS);
+let engine = MigrationEngine::new(Config::default(), &MIGRATIONS);
 ```
 
 ### Config
@@ -46,7 +47,7 @@ let engine = MigrationEngine::new(Config::default(), MIGRATIONS);
 All builder methods take `self` and return `Self`. Call them in any order before the action.
 
 ```rust
-MigrationEngine::new(config, MIGRATIONS)
+MigrationEngine::new(config, &MIGRATIONS)
     .with_database_url("postgres://localhost/myapp")  // override DATABASE_URL
     .with_schema(|s| s.table::<User>().build())       // provide schema for make_migration
     .with_tls(TlsMode::NoTls)                         // TLS mode (only NoTls exists today)
@@ -89,11 +90,12 @@ let schema: Schema = engine.inspect_db(&["public"])?;
 
 // Diff with_schema() against replayed state, write a migration file if changed.
 // Returns Some(migration) or None if already up to date.
-// The new file is written to config.migrations_dir (default: "migrations/").
-// After writing, re-compile so include_migrations! picks it up.
+// Reads and writes to config.migrations_dir on disk (always disk, never the embedded slice).
+// After writing, re-compile so embedded_migrations! picks up the new file.
 // Requires with_schema() — returns Err(EngineError::NoSchema) otherwise.
+// Returns Err(EngineError::MigrationsDirMismatch) if config.migrations_dir != MIGRATIONS.dir.
 // Disambiguations (renames, etc.) are resolved via interactive terminal prompts.
-let migration: Option<Migration> = engine.make_migration("add_posts")?;
+let migration: Option<Migration> = engine.make_migration("add_posts")?;;
 
 // Parse std::env::args() and dispatch the full CLI.
 // Supports make_migration, migrate, verify_db, show_migrations, inspect_db, sql_migrate.
@@ -110,18 +112,19 @@ All action methods return `Result<T, EngineError>`. The variants:
 - `Adapter(AdapterError)` — migration file parse/load error
 - `Config(String)` — misconfiguration (e.g. missing `database_url`)
 - `NoSchema` — `make_migration` called without `with_schema()`
+- `MigrationsDirMismatch(String, &'static str)` — `config.migrations_dir` differs from the path baked into `EmbeddedMigrations`; fix by making sure the argument to `embedded_migrations!` matches `config.migrations_dir`
 
 ## Common patterns
 
 ### Auto-migrate on startup
 
 ```rust
-use gaman::{Config, MigrationEngine, include_migrations};
+use gaman::{Config, EmbeddedMigrations, MigrationEngine, embedded_migrations};
 
-static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
+static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
 
 fn main() {
-    let n = MigrationEngine::new(Config::default(), MIGRATIONS)
+    let n = MigrationEngine::new(Config::default(), &MIGRATIONS)
         .migrate()
         .expect("migrations failed");
     if n > 0 {
@@ -133,9 +136,9 @@ fn main() {
 ### Expose the full CLI with a struct-based schema
 
 ```rust
-use gaman::{Config, IntoTable, MigrationEngine, include_migrations};
+use gaman::{Config, EmbeddedMigrations, IntoTable, MigrationEngine, embedded_migrations};
 
-static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
+static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
 
 #[derive(IntoTable)]
 #[table(name = "users")]
@@ -145,7 +148,7 @@ struct User {
 }
 
 fn main() {
-    MigrationEngine::new(Config::default(), MIGRATIONS)
+    MigrationEngine::new(Config::default(), &MIGRATIONS)
         .with_schema(|s| s.table::<User>().build())
         .handle_args()
         .expect("command failed");
@@ -155,13 +158,13 @@ fn main() {
 ### Expose the full CLI with a file-based schema
 
 ```rust
-use gaman::{Config, MigrationEngine, include_migrations};
+use gaman::{Config, EmbeddedMigrations, MigrationEngine, embedded_migrations};
 use gaman::states::Schema;
 
-static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
+static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
 
 fn main() {
-    MigrationEngine::new(Config::default(), MIGRATIONS)
+    MigrationEngine::new(Config::default(), &MIGRATIONS)
         .with_schema(|_| Schema::load(std::path::Path::new("schema.sql")).unwrap())
         .handle_args()
         .expect("command failed");
@@ -171,17 +174,17 @@ fn main() {
 ### Programmatic control
 
 ```rust
-use gaman::{Config, MigrationEngine, include_migrations};
+use gaman::{Config, EmbeddedMigrations, MigrationEngine, embedded_migrations};
 
-static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
+static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
 
 fn run_migrations(db_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let config = Config { database_url: Some(db_url.to_string()), ..Config::default() };
 
-    if MigrationEngine::new(config.clone(), MIGRATIONS).check()? {
-        let plan = MigrationEngine::new(config.clone(), MIGRATIONS).plan()?;
+    if MigrationEngine::new(config.clone(), &MIGRATIONS).check()? {
+        let plan = MigrationEngine::new(config.clone(), &MIGRATIONS).plan()?;
         eprintln!("applying: {plan:?}");
-        let n = MigrationEngine::new(config, MIGRATIONS).migrate()?;
+        let n = MigrationEngine::new(config, &MIGRATIONS).migrate()?;
         eprintln!("{n} applied");
     }
 
@@ -192,7 +195,7 @@ fn run_migrations(db_url: &str) -> Result<(), Box<dyn std::error::Error>> {
 ### Detect drift at runtime
 
 ```rust
-let drift = MigrationEngine::new(config, MIGRATIONS)
+let drift = MigrationEngine::new(config, &MIGRATIONS)
     .verify("public")?;
 
 if !drift.is_empty() {

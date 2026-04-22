@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -15,6 +16,11 @@ use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::prompter::CliPromptEngine;
 use crate::states::{Schema, SchemaBuilder};
+
+pub struct EmbeddedMigrations {
+    pub files: &'static [(&'static str, &'static str)],
+    pub dir: &'static str,
+}
 
 struct EmbedSource {
     migrations: &'static [(&'static str, &'static str)],
@@ -64,11 +70,13 @@ pub enum EngineError {
     Config(String),
     #[error("no schema set — call with_schema() before make_migration()")]
     NoSchema,
+    #[error("migrations dir mismatch: config has '{0}', embedded was compiled from '{1}' — they must match for make_migration")]
+    MigrationsDirMismatch(String, &'static str),
 }
 
 pub struct MigrationEngine {
     config: Config,
-    migrations: &'static [(&'static str, &'static str)],
+    migrations: &'static EmbeddedMigrations,
     schema: Option<Schema>,
     tls: TlsMode,
 }
@@ -112,7 +120,7 @@ impl Environment for EngineEnvironment {
 }
 
 impl MigrationEngine {
-    pub fn new(config: Config, migrations: &'static [(&'static str, &'static str)]) -> Self {
+    pub fn new(config: Config, migrations: &'static EmbeddedMigrations) -> Self {
         Self {
             config,
             migrations,
@@ -138,7 +146,7 @@ impl MigrationEngine {
     }
 
     fn build_migrator(&self) -> Result<Migrator, EngineError> {
-        let source = Box::new(EmbedSource::new(self.migrations));
+        let source = Box::new(EmbedSource::new(self.migrations.files));
         let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone()), self.tls));
         Ok(Migrator::new(source, environment)?)
     }
@@ -192,6 +200,12 @@ impl MigrationEngine {
     /// Requires `with_schema()` to have been called — returns `Err(EngineError::NoSchema)` if not.
     /// Any rename/ambiguity clarifications are resolved interactively via terminal prompts.
     pub fn make_migration(self, name: &str) -> Result<Option<Migration>, EngineError> {
+        if PathBuf::from(self.migrations.dir) != self.config.migrations_dir {
+            return Err(EngineError::MigrationsDirMismatch(
+                self.config.migrations_dir.display().to_string(),
+                self.migrations.dir,
+            ));
+        }
         let source = Box::new(YamlAdapter { directory: self.config.migrations_dir.clone() });
         let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone()), self.tls));
         let migrator = Migrator::new(source, environment)?;
