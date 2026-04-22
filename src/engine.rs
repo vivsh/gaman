@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
-use crate::adapters::{AdapterError, MigrationSource};
+use crate::adapters::{AdapterError, MigrationSource, YamlAdapter};
 use crate::cli::{CommandError, GamanArgs, dispatch};
 use crate::conf::Config;
 use crate::dialects::Dialect;
@@ -192,7 +192,9 @@ impl MigrationEngine {
     /// Requires `with_schema()` to have been called — returns `Err(EngineError::NoSchema)` if not.
     /// Any rename/ambiguity clarifications are resolved interactively via terminal prompts.
     pub fn make_migration(self, name: &str) -> Result<Option<Migration>, EngineError> {
-        let migrator = self.build_migrator()?;
+        let source = Box::new(YamlAdapter { directory: self.config.migrations_dir.clone() });
+        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone()), self.tls));
+        let migrator = Migrator::new(source, environment)?;
         let schema = self.schema.ok_or(EngineError::NoSchema)?;
         let engine = CliPromptEngine;
         let mut decisions: Vec<Decision> = vec![];
@@ -217,7 +219,7 @@ impl MigrationEngine {
         let mut config = self.config;
         let cmd = args.apply_to(&mut config);
         let config = Arc::new(config);
-        let source = Box::new(EmbedSource::new(self.migrations));
+        let source = Box::new(YamlAdapter { directory: config.migrations_dir.clone() });
         let environment = Box::new(EngineEnvironment::new(config, self.tls));
         let migrator = Migrator::new(source, environment)?;
         dispatch(migrator, self.schema, cmd)?;

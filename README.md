@@ -69,9 +69,7 @@ Typical loop:
 gaman = "0.3"
 ```
 
-Use the library when you want migrations to ship with your binary.
-
-**Auto-apply on startup** — `migrate()` returns the number of migrations applied:
+Use the library when you want migrations to ship with your binary. `include_migrations!("path")` embeds every `.yaml` file at compile time; `MigrationEngine` runs them.
 
 ```rust
 use gaman::{Config, MigrationEngine, include_migrations};
@@ -79,91 +77,16 @@ use gaman::{Config, MigrationEngine, include_migrations};
 static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
 
 fn main() {
-    let applied = MigrationEngine::new(Config::default(), MIGRATIONS)
+    let n = MigrationEngine::new(Config::default(), MIGRATIONS)
         .migrate()
         .expect("migrations failed");
-    if applied > 0 {
-        println!("{applied} migration(s) applied");
+    if n > 0 {
+        eprintln!("{n} migration(s) applied");
     }
 }
 ```
 
-**Full control** — check, plan, verify, and make migrations programmatically:
-
-```rust
-use gaman::{Config, MigrationEngine, include_migrations};
-
-static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
-
-fn main() {
-    let engine = MigrationEngine::new(Config::default(), MIGRATIONS);
-
-    // Check before migrating
-    if engine.check().expect("db check failed") {
-        let applied = MigrationEngine::new(Config::default(), MIGRATIONS)
-            .migrate()
-            .expect("migrations failed");
-        println!("{applied} migration(s) applied");
-    }
-}
-```
-
-**Expose the full CLI from your own binary** with a struct-based schema:
-
-```rust
-use gaman::{Config, IntoTable, MigrationEngine, include_migrations};
-
-static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
-
-#[derive(IntoTable)]
-struct User {
-    id: i64,
-    email: String,
-    bio: Option<String>,
-}
-
-fn main() {
-    MigrationEngine::new(Config::default(), MIGRATIONS)
-        .with_schema(|s| s.table::<User>().build())
-        .handle_args()
-        .expect("command failed");
-}
-```
-
-Or keep the schema in a file and still reuse the same CLI:
-
-```rust
-use gaman::schema::Schema;
-use gaman::{Config, MigrationEngine, include_migrations};
-
-static MIGRATIONS: &[(&str, &str)] = include_migrations!("migrations");
-
-fn main() {
-    MigrationEngine::new(Config::default(), MIGRATIONS)
-        .with_schema(|_| {
-            Schema::load(std::path::Path::new("schema.sql")).expect("failed to load schema")
-        })
-        .handle_args()
-        .expect("command failed");
-}
-```
-
-`handle_args()` parses `std::env::args()` and dispatches `make_migration`, `migrate`, `verify_db`, `show_migrations`, and the other built-in commands. `include_migrations!("path")` embeds every `.yaml` migration file at compile time in lexicographic order.
-
-### MigrationEngine API
-
-| Method                 | Description                                                                             |
-| ---------------------- | --------------------------------------------------------------------------------------- |
-| `migrate()`            | Apply all pending migrations. Returns count applied.                                    |
-| `migrate_to(id)`       | Migrate forward or backward to a specific migration ID.                                 |
-| `fake_migrate()`       | Mark all pending as applied without running SQL.                                        |
-| `check()`              | Returns `true` if unapplied migrations exist.                                           |
-| `plan()`               | Returns ordered list of pending migration IDs.                                          |
-| `show_migrations()`    | All migrations with applied/pending status.                                             |
-| `verify(schema)`       | Compare replayed state against live DB. Empty vec = clean.                              |
-| `inspect_db(schemas)`  | Introspect live database and return the schema.                                         |
-| `make_migration(name)` | Diff stored schema against replay, save migration if changed. Requires `with_schema()`. |
-| `handle_args()`        | Full CLI dispatched from `std::env::args()`.                                            |
+`MigrationEngine` also exposes `check()`, `plan()`, `show_migrations()`, `verify()`, `inspect_db()`, `make_migration()`, and `handle_args()` for the full CLI surface. See [docs/embedding.md](docs/embedding.md) for the complete API reference.
 
 ## Declaring Schema
 
