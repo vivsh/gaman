@@ -124,16 +124,16 @@ engine.handle_args()?;
 
 All action methods return `Result<T, EngineError>`.
 
-| Variant                         | When                                                                               |
-| ------------------------------- | ---------------------------------------------------------------------------------- |
-| `Command(CommandError)`         | CLI dispatch error — only from `handle_args`                                       |
-| `Migrator(MigratorError)`       | Migration execution error                                                          |
-| `Connect(String)`               | Database connection failed                                                         |
-| `Adapter(AdapterError)`         | Migration file parse or load error                                                 |
-| `Config(String)`                | Misconfiguration, e.g. missing `database_url`                                      |
-| `NoSchema`                      | `make_migration` called without `with_schema()`                                    |
-| `SchemaLoad(SchemaLoadError)`   | `with_schema()` closure returned an error loading a schema file                    |
-| `MigrationsDirMismatch(…)`      | `config.migrations_dir` differs from the path baked into `embedded_migrations!()`  |
+| Variant                       | When                                                                              |
+| ----------------------------- | --------------------------------------------------------------------------------- |
+| `Command(CommandError)`       | CLI dispatch error — only from `handle_args`                                      |
+| `Migrator(MigratorError)`     | Migration execution error                                                         |
+| `Connect(String)`             | Database connection failed                                                        |
+| `Adapter(AdapterError)`       | Migration file parse or load error                                                |
+| `Config(String)`              | Misconfiguration, e.g. missing `database_url`                                     |
+| `NoSchema`                    | `make_migration` called without `with_schema()`                                   |
+| `SchemaLoad(SchemaLoadError)` | `with_schema()` closure returned an error loading a schema file                   |
+| `MigrationsDirMismatch(…)`    | `config.migrations_dir` differs from the path baked into `embedded_migrations!()` |
 
 ## Common patterns
 
