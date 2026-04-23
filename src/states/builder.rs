@@ -266,7 +266,9 @@ impl SchemaBuilder {
     }
 
     pub fn build(self) -> Schema {
-        self.state
+        let mut state = self.state;
+        state.normalize();
+        state
     }
 
     /// Load schema from a `.yaml`, `.sql`, or directory path.

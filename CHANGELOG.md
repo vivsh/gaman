@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.16] - 2026-04-23
+
+## [0.3.16] - 2026-04-23
+
+### Added
+
+- `Migration::get_entities()` — returns the set of `(EntityKind, name)` pairs touched by a migration's operations; used internally for dependency tracking
+- Automatic cross-namespace dependency injection in `make_migration` and `make_empty_migration` — previously, cross-crate migrations had to declare `dependencies` manually or risk applying in the wrong order when a table in one namespace referenced a table in another. Now gaman scans the new operations for referenced entities, resolves which namespace last touched each one, and injects those namespace heads as `dependencies` automatically (Django-style app dependencies)
+
+### Fixed
+
+- `SchemaBuilder::build()` now calls `Schema::normalize()` before returning, so foreign keys declared via `ColumnBuilder::references()` or `#[derive(IntoTable)]` are correctly promoted to `table.foreign_keys` and visible to the diff engine — previously these FKs were silently dropped during diffing, causing `make_migration` to never emit `AddForeignKey` operations for programmatically-built schemas
+
 ## [0.3.15] - 2026-04-23
 
 ### Added
@@ -177,7 +190,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `make_migration`, `migrate`, `fake_migrate`, `show_migrations`, `inspect_db` commands
 - DAG-based migration graph with dependency tracking
 
-[unreleased]: https://github.com/vivsh/gaman/compare/v0.3.15...HEAD
+[unreleased]: https://github.com/vivsh/gaman/compare/v0.3.16...HEAD
+[0.3.16]: https://github.com/vivsh/gaman/compare/v0.3.15...v0.3.16
 [0.3.15]: https://github.com/vivsh/gaman/compare/v0.3.14...v0.3.15
 [0.3.14]: https://github.com/vivsh/gaman/compare/v0.3.13...v0.3.14
 [0.3.13]: https://github.com/vivsh/gaman/compare/v0.3.12...v0.3.13

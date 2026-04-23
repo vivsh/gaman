@@ -33,6 +33,8 @@ Migrations form a DAG. Each file declares its `dependencies`, so parallel featur
              → 0003_add_posts ─┴→ 0004_merge
 ```
 
+When using multi-crate composition, `make_migration` automatically infers cross-namespace dependencies by tracking which namespace last touched each entity — so you rarely need to write `dependencies` by hand.
+
 ## Quick Start
 
 ### CLI

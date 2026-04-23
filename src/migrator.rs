@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
@@ -13,6 +13,7 @@ use crate::graphs::{GraphError, MigrationGraph};
 use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::states::{ReplayError, Schema};
+use crate::states::types::EntityKind;
 
 #[derive(Debug, Error)]
 pub enum MigratorError {
@@ -97,7 +98,7 @@ impl Migrator {
     ) -> Result<Option<Migration>, MigratorError> {
         self.graph.detect_conflict()?;
         current.validate().map_err(MigratorError::Config)?;
-        let previous = self.replay()?;
+        let (previous, last_per_ns, entity_ns) = self.replay_with_sources()?;
         let dialect = self.dialect();
         let raw_ops = self.diff.diff(&current, &previous, &dialect)?;
         if raw_ops.is_empty() {
@@ -110,8 +111,7 @@ impl Migrator {
         let ops = dialect.reorder(ops, &previous, &current);
         let id = format!("{:04}_{}", self.graph.next_number(), name);
         MigrationGraph::validate_id(&id).map_err(MigratorError::Graph)?;
-        let mut dependencies: Vec<String> = self.graph.heads().iter().map(|s| s.to_string()).collect();
-        dependencies.sort();
+        let dependencies = compute_deps(&ops, &last_per_ns, &entity_ns);
         let migration = Migration { id, dependencies, operations: ops, atomic: true };
         if !dry_run {
             self.source.save(&migration)?;
@@ -120,8 +120,15 @@ impl Migrator {
     }
 
     fn replay(&self) -> Result<Schema, MigratorError> {
+        let (state, _, _) = self.replay_with_sources()?;
+        Ok(state)
+    }
+
+    fn replay_with_sources(&self) -> Result<(Schema, HashMap<String, String>, HashMap<(EntityKind, String), String>), MigratorError> {
         let order = self.graph.topological_order()?;
         let mut state = Schema::default();
+        let mut last_per_ns: HashMap<String, String> = HashMap::new();
+        let mut entity_ns: HashMap<(EntityKind, String), String> = HashMap::new();
         for id in order {
             if let Some(migration) = self.graph.get(id) {
                 for (i, op) in migration.operations.iter().enumerate() {
@@ -131,20 +138,24 @@ impl Migrator {
                         inner: Box::new(e),
                     })?;
                 }
+                let ns = namespace_of(id).to_string();
+                for entity in migration.get_entities() {
+                    entity_ns.insert(entity, ns.clone());
+                }
+                last_per_ns.insert(ns, id.to_string());
             }
         }
-        Ok(state)
+        Ok((state, last_per_ns, entity_ns))
     }
 
     /// Generate an empty migration with no operations.
     /// Dependencies are set to the current graph heads so it slots in at the tip.
     /// The id is auto-prefixed with the next sequential number: `{n:04}_{name}`.
     pub fn make_empty_migration(&self, name: String) -> Result<Migration, MigratorError> {
-        self.graph.topological_order()?;
+        let (_, last_per_ns, entity_ns) = self.replay_with_sources()?;
         let id = format!("{:04}_{}", self.graph.next_number(), name);
         MigrationGraph::validate_id(&id).map_err(MigratorError::Graph)?;
-        let mut dependencies: Vec<String> = self.graph.heads().iter().map(|s| s.to_string()).collect();
-        dependencies.sort();
+        let dependencies = compute_deps(&[], &last_per_ns, &entity_ns);
         let migration = Migration { id, dependencies, operations: vec![], atomic: true };
         self.source.save(&migration)?;
         Ok(migration)
@@ -545,6 +556,90 @@ impl Migrator {
 
         Ok(self.diff.diff(&replay, &live, &dialect)?)
     }
+}
+
+fn namespace_of(id: &str) -> &str {
+    match id.rfind('/') {
+        Some(pos) => &id[..pos],
+        None => "",
+    }
+}
+
+fn compute_deps(
+    ops: &[Operation],
+    last_per_ns: &HashMap<String, String>,
+    entity_ns: &HashMap<(EntityKind, String), String>,
+) -> Vec<String> {
+    let mut ns_set: HashSet<String> = HashSet::new();
+    ns_set.insert(String::new());
+
+    for op in ops {
+        let entities: Vec<(EntityKind, String)> = match op {
+            Operation::CreateTable { table } | Operation::DropTable { table } => {
+                let mut v = vec![(EntityKind::Table, table.qualified_name())];
+                for fk in &table.foreign_keys {
+                    v.push((EntityKind::Table, fk.to_table.clone()));
+                }
+                v
+            }
+            Operation::AddForeignKey { table_name, foreign_key }
+            | Operation::DropForeignKey { table_name, foreign_key, .. } => {
+                vec![
+                    (EntityKind::Table, table_name.clone()),
+                    (EntityKind::Table, foreign_key.to_table.clone()),
+                ]
+            }
+            Operation::CreateEnum { enum_def }
+            | Operation::DropEnum { enum_def }
+            | Operation::AlterEnum { new: enum_def, .. } => {
+                vec![(EntityKind::Enum, enum_def.qualified_name())]
+            }
+            Operation::CreateFunction { function }
+            | Operation::DropFunction { function }
+            | Operation::AlterFunction { new: function, .. } => {
+                vec![(EntityKind::Function, function.qualified_name())]
+            }
+            Operation::CreateView { view }
+            | Operation::DropView { view }
+            | Operation::ReplaceView { new: view, .. } => {
+                vec![(EntityKind::View, view.qualified_name())]
+            }
+            Operation::CreateExtension { extension }
+            | Operation::DropExtension { extension } => {
+                vec![(EntityKind::Extension, extension.qualified_name())]
+            }
+            Operation::AddColumn { table_name, .. }
+            | Operation::DropColumn { table_name, .. }
+            | Operation::AlterColumn { table_name, .. }
+            | Operation::RenameColumn { table_name, .. }
+            | Operation::AddIndex { table_name, .. }
+            | Operation::DropIndex { table_name, .. }
+            | Operation::AddConstraint { table_name, .. }
+            | Operation::DropConstraint { table_name, .. }
+            | Operation::CreateTrigger { table_name, .. }
+            | Operation::AlterTrigger { table_name, .. }
+            | Operation::DropTrigger { table_name, .. } => {
+                vec![(EntityKind::Table, table_name.clone())]
+            }
+            Operation::RenameTable { old_name, .. } => {
+                vec![(EntityKind::Table, old_name.clone())]
+            }
+            Operation::Statement { .. } | Operation::Invoke { .. } => vec![],
+        };
+        for entity in entities {
+            if let Some(ns) = entity_ns.get(&entity) {
+                ns_set.insert(ns.clone());
+            }
+        }
+    }
+
+    let mut deps: Vec<String> = ns_set
+        .iter()
+        .filter_map(|ns| last_per_ns.get(ns).cloned())
+        .collect();
+    deps.sort();
+    deps.dedup();
+    deps
 }
 
 fn scope_tables_for_verify(state: &mut Schema, schema: &str) {
@@ -1167,6 +1262,247 @@ mod tests {
         let mut exec = NullExecutor::empty();
         let rows = m.show_migrations_with(&mut exec).unwrap();
         assert!(rows.is_empty());
+    }
+
+    fn table_with_fk(name: &str, fk_to: &str) -> Table {
+        use crate::states::ForeignKey;
+        Table {
+            name: name.to_string(),
+            schema: None,
+            columns: vec![simple_column("id")],
+            foreign_keys: vec![ForeignKey {
+                name: format!("{name}_{fk_to}_fkey"),
+                from_column: "ref_id".to_string(),
+                to_table: fk_to.to_string(),
+                to_column: "id".to_string(),
+            }],
+            indexes: vec![],
+            constraints: vec![],
+            triggers: vec![],
+        }
+    }
+
+    /// New migration on an empty graph has no dependencies.
+    #[test]
+    fn deps_empty_graph_yields_no_deps() {
+        let m = migrator_from(vec![]);
+        let current = state_with_tables(&[simple_table("users", &["id"])]);
+        let mig = m.make_migrations("initial".into(), current, false, &[]).unwrap().unwrap();
+        assert!(mig.dependencies.is_empty(), "no migrations exist, so no deps expected");
+    }
+
+    /// When one root migration exists and the new migration only creates a new table
+    /// with no cross-namespace FK, deps = last root migration.
+    #[test]
+    fn deps_single_root_migration_is_dep() {
+        let m = migrator_from(vec![migration_with_ops(
+            "0001_create_users", &[],
+            vec![Operation::CreateTable { table: simple_table("users", &["id"]) }],
+        )]);
+        let current = state_with_tables(&[
+            simple_table("users", &["id"]),
+            simple_table("posts", &["id"]),
+        ]);
+        let mig = m.make_migrations("add_posts".into(), current, false, &[]).unwrap().unwrap();
+        assert_eq!(mig.dependencies, vec!["0001_create_users"]);
+    }
+
+    /// A FK pointing to a table in the same (root) namespace does not add extra deps
+    /// beyond the last root migration — both source and target share namespace "".
+    #[test]
+    fn deps_fk_to_root_ns_table_is_just_root_dep() {
+        let users = simple_table("users", &["id"]);
+        let m = migrator_from(vec![migration_with_ops(
+            "0001_create_users", &[],
+            vec![Operation::CreateTable { table: users }],
+        )]);
+        let posts = table_with_fk("posts", "users");
+        let current = state_with_tables(&[simple_table("users", &["id"]), posts]);
+        let mig = m.make_migrations("add_posts".into(), current, false, &[]).unwrap().unwrap();
+        assert_eq!(mig.dependencies, vec!["0001_create_users"]);
+    }
+
+    /// A FK pointing to a table owned by a namespaced migration adds that namespace's
+    /// last migration id to deps, alongside the last root migration.
+    /// auth/0001_create_users depends on 0001_root_init (as it would have been generated),
+    /// making auth/0001_create_users the single head.
+    #[test]
+    fn deps_fk_to_namespaced_table_adds_namespace_dep() {
+        let auth_users = simple_table("auth_users", &["id"]);
+        let m = migrator_from(vec![
+            migration_with_ops(
+                "0001_root_init", &[],
+                vec![Operation::CreateTable { table: simple_table("settings", &["id"]) }],
+            ),
+            migration_with_ops(
+                "auth/0001_create_users", &["0001_root_init"],
+                vec![Operation::CreateTable { table: auth_users }],
+            ),
+        ]);
+        let posts = table_with_fk("posts", "auth_users");
+        let current = state_with_tables(&[
+            simple_table("settings", &["id"]),
+            simple_table("auth_users", &["id"]),
+            posts,
+        ]);
+        let mig = m.make_migrations("add_posts".into(), current, false, &[]).unwrap().unwrap();
+        assert!(mig.dependencies.contains(&"0001_root_init".to_string()), "must include last root migration");
+        assert!(mig.dependencies.contains(&"auth/0001_create_users".to_string()), "must include last auth migration");
+    }
+
+    /// When the new migration references tables from two different namespaces,
+    /// both namespace heads appear in deps. The namespaced migrations are chained from root
+    /// (as they would be in practice) to produce a single head.
+    #[test]
+    fn deps_multiple_cross_namespace_fks_include_all() {
+        let auth_users = simple_table("auth_users", &["id"]);
+        let billing_plans = simple_table("billing_plans", &["id"]);
+        let m = migrator_from(vec![
+            migration_with_ops(
+                "0001_root", &[],
+                vec![Operation::CreateTable { table: simple_table("root_t", &["id"]) }],
+            ),
+            migration_with_ops(
+                "auth/0001_users", &["0001_root"],
+                vec![Operation::CreateTable { table: auth_users }],
+            ),
+            migration_with_ops(
+                "billing/0001_plans", &["auth/0001_users"],
+                vec![Operation::CreateTable { table: billing_plans }],
+            ),
+        ]);
+        let t = {
+            use crate::states::ForeignKey;
+            Table {
+                name: "subscriptions".to_string(),
+                schema: None,
+                columns: vec![simple_column("id")],
+                foreign_keys: vec![
+                    ForeignKey { name: "sub_user_fkey".into(), from_column: "user_id".into(), to_table: "auth_users".into(), to_column: "id".into() },
+                    ForeignKey { name: "sub_plan_fkey".into(), from_column: "plan_id".into(), to_table: "billing_plans".into(), to_column: "id".into() },
+                ],
+                indexes: vec![],
+                constraints: vec![],
+                triggers: vec![],
+            }
+        };
+        let current = state_with_tables(&[
+            simple_table("root_t", &["id"]),
+            simple_table("auth_users", &["id"]),
+            simple_table("billing_plans", &["id"]),
+            t,
+        ]);
+        let mig = m.make_migrations("add_subscriptions".into(), current, false, &[]).unwrap().unwrap();
+        assert!(mig.dependencies.contains(&"0001_root".to_string()));
+        assert!(mig.dependencies.contains(&"auth/0001_users".to_string()));
+        assert!(mig.dependencies.contains(&"billing/0001_plans".to_string()));
+    }
+
+    /// When there are no root migrations but namespaced ones exist, the new root migration
+    /// has no deps (last_per_ns[""] is absent).
+    #[test]
+    fn deps_no_root_migrations_yields_empty_deps() {
+        let auth_users = simple_table("auth_users", &["id"]);
+        let m = migrator_from(vec![migration_with_ops(
+            "auth/0001_create_users", &[],
+            vec![Operation::CreateTable { table: auth_users }],
+        )]);
+        let current = state_with_tables(&[
+            simple_table("auth_users", &["id"]),
+            simple_table("settings", &["id"]),
+        ]);
+        let mig = m.make_migrations("add_settings".into(), current, false, &[]).unwrap().unwrap();
+        assert!(!mig.dependencies.contains(&"auth/0001_create_users".to_string()),
+            "new root migration should not dep on unrelated auth namespace");
+        assert!(mig.dependencies.is_empty(), "no root ns migration exists, so deps must be empty");
+    }
+
+    /// The last migration in a namespace, not just the first one, is used as the dep.
+    #[test]
+    fn deps_uses_last_not_first_migration_in_namespace() {
+        let m = migrator_from(vec![
+            migration_with_ops("0001_create_users", &[], vec![
+                Operation::CreateTable { table: simple_table("users", &["id"]) },
+            ]),
+            migration_with_ops("0002_add_email", &["0001_create_users"], vec![
+                Operation::AddColumn { table_name: "users".into(), column: simple_column("email") },
+            ]),
+        ]);
+        let current = state_with_tables(&[
+            simple_table("users", &["id", "email"]),
+            simple_table("posts", &["id"]),
+        ]);
+        let mig = m.make_migrations("add_posts".into(), current, false, &[]).unwrap().unwrap();
+        assert_eq!(mig.dependencies, vec!["0002_add_email"], "must dep on last migration, not first");
+    }
+
+    /// An empty migration always deps on the last root migration only.
+    #[test]
+    fn make_empty_migration_deps_on_last_root() {
+        let (m, _) = migrator_with_source(vec![
+            migration_with_ops("0001_init", &[], vec![
+                Operation::CreateTable { table: simple_table("users", &["id"]) },
+            ]),
+            migration_with_ops("0002_more", &["0001_init"], vec![
+                Operation::AddColumn { table_name: "users".into(), column: simple_column("email") },
+            ]),
+        ]);
+        let mig = m.make_empty_migration("placeholder".into()).unwrap();
+        assert_eq!(mig.dependencies, vec!["0002_more"]);
+    }
+
+    /// namespace_of correctly strips the last segment, including nested namespaces.
+    #[test]
+    fn namespace_of_handles_nested_and_root() {
+        assert_eq!(namespace_of("0001_init"), "");
+        assert_eq!(namespace_of("auth/0001_users"), "auth");
+        assert_eq!(namespace_of("auth/sub/0001_users"), "auth/sub");
+    }
+
+    /// A new migration that only modifies existing root-ns entities still gets
+    /// exactly the last root migration as its sole dep.
+    #[test]
+    fn deps_alter_existing_table_uses_last_root_dep() {
+        let m = migrator_from(vec![
+            migration_with_ops("0001_create_users", &[], vec![
+                Operation::CreateTable { table: simple_table("users", &["id"]) },
+            ]),
+            migration_with_ops("0002_add_email", &["0001_create_users"], vec![
+                Operation::AddColumn { table_name: "users".into(), column: simple_column("email") },
+            ]),
+        ]);
+        let current = state_with_tables(&[simple_table("users", &["id", "email", "name"])]);
+        let mig = m.make_migrations("add_name".into(), current, false, &[]).unwrap().unwrap();
+        assert_eq!(mig.dependencies, vec!["0002_add_email"]);
+    }
+
+    /// When a namespaced migration has multiple entries, only the last one is used.
+    /// auth/0001_users chains from root; auth/0002_groups is the single head.
+    #[test]
+    fn deps_namespaced_ns_uses_last_migration() {
+        let m = migrator_from(vec![
+            migration_with_ops("0001_root", &[], vec![
+                Operation::CreateTable { table: simple_table("root_t", &["id"]) },
+            ]),
+            migration_with_ops("auth/0001_users", &["0001_root"], vec![
+                Operation::CreateTable { table: simple_table("auth_users", &["id"]) },
+            ]),
+            migration_with_ops("auth/0002_groups", &["auth/0001_users"], vec![
+                Operation::CreateTable { table: simple_table("auth_groups", &["id"]) },
+            ]),
+        ]);
+        let posts = table_with_fk("posts", "auth_users");
+        let current = state_with_tables(&[
+            simple_table("root_t", &["id"]),
+            simple_table("auth_users", &["id"]),
+            simple_table("auth_groups", &["id"]),
+            posts,
+        ]);
+        let mig = m.make_migrations("add_posts".into(), current, false, &[]).unwrap().unwrap();
+        assert!(mig.dependencies.contains(&"auth/0002_groups".to_string()),
+            "must use last auth migration, not auth/0001_users");
+        assert!(!mig.dependencies.contains(&"auth/0001_users".to_string()),
+            "must not include non-last auth migration");
     }
 }
 

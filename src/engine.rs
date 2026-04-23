@@ -26,11 +26,12 @@ pub struct EmbeddedMigrations {
 
 struct EmbedSource {
     root: &'static EmbeddedMigrations,
+    extra: Vec<(&'static str, &'static EmbeddedMigrations)>,
 }
 
 impl EmbedSource {
-    fn new(root: &'static EmbeddedMigrations) -> Self {
-        Self { root }
+    fn new(root: &'static EmbeddedMigrations, extra: Vec<(&'static str, &'static EmbeddedMigrations)>) -> Self {
+        Self { root, extra }
     }
 
     fn collect(source: &'static EmbeddedMigrations, prefix: &str, out: &mut Vec<Migration>) -> Result<(), AdapterError> {
@@ -70,6 +71,9 @@ impl MigrationSource for EmbedSource {
     fn load_all(&self) -> Result<Vec<Migration>, AdapterError> {
         let mut out = Vec::new();
         Self::collect(self.root, "", &mut out)?;
+        for (ns, child) in &self.extra {
+            Self::collect(child, ns, &mut out)?;
+        }
         Ok(out)
     }
 
@@ -104,6 +108,7 @@ pub enum EngineError {
 pub struct MigrationEngine {
     config: Config,
     migrations: &'static EmbeddedMigrations,
+    extra: Vec<(&'static str, &'static EmbeddedMigrations)>,
     schema: Option<Schema>,
 }
 
@@ -144,8 +149,14 @@ impl MigrationEngine {
         Self {
             config,
             migrations,
+            extra: Vec::new(),
             schema: None,
         }
+    }
+
+    pub fn add_migrations(mut self, ns: &'static str, m: &'static EmbeddedMigrations) -> Self {
+        self.extra.push((ns, m));
+        self
     }
 
     /// Set the target schema. The closure receives a `SchemaBuilder` and can return either a
@@ -158,7 +169,7 @@ impl MigrationEngine {
     }
 
     fn build_migrator(&self) -> Result<Migrator, EngineError> {
-        let source = Box::new(EmbedSource::new(self.migrations));
+        let source = Box::new(EmbedSource::new(self.migrations, self.extra.clone()));
         let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone())));
         Ok(Migrator::new(source, environment)?)
     }
