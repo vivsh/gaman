@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.15] - 2026-04-23
 
 ### Added
+
 - `CHANGELOG.md` — full history from 0.1.0
 - `release.sh` — automated patch/minor/major release script (bump, commit, tag, push, publish)
 
