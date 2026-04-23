@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::adapters::{AdapterError, MigrationSource, YamlAdapter};
 use crate::cli::{CommandError, GamanArgs, dispatch};
-use crate::conf::Config;
+use crate::conf::{Config, TlsMode};
 use crate::dialects::Dialect;
 use crate::disambiguator::{Decision, PromptEngine};
 use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
@@ -15,37 +15,62 @@ use crate::migrator::{Migrator, MigratorError};
 use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::prompter::CliPromptEngine;
-use crate::states::{Schema, SchemaBuilder};
+use crate::states::{Schema, SchemaBuilder, SchemaLoadError, IntoSchema};
 
+#[derive(Copy, Clone)]
 pub struct EmbeddedMigrations {
     pub files: &'static [(&'static str, &'static str)],
     pub dir: &'static str,
+    pub children: &'static [(&'static str, &'static EmbeddedMigrations)],
 }
 
 struct EmbedSource {
-    migrations: &'static [(&'static str, &'static str)],
+    root: &'static EmbeddedMigrations,
 }
 
 impl EmbedSource {
-    fn new(migrations: &'static [(&'static str, &'static str)]) -> Self {
-        Self { migrations }
+    fn new(root: &'static EmbeddedMigrations) -> Self {
+        Self { root }
+    }
+
+    fn collect(source: &'static EmbeddedMigrations, prefix: &str, out: &mut Vec<Migration>) -> Result<(), AdapterError> {
+        for (id, content) in source.files {
+            let qualified_id = if prefix.is_empty() {
+                id.to_string()
+            } else {
+                format!("{prefix}/{id}")
+            };
+            let mut m: Migration = serde_yaml::from_str(content).map_err(|e| AdapterError::Parse {
+                path: qualified_id.clone(),
+                message: e.to_string(),
+            })?;
+            m.id = qualified_id;
+            if !prefix.is_empty() {
+                for dep in &mut m.dependencies {
+                    if !dep.contains('/') {
+                        *dep = format!("{prefix}/{dep}");
+                    }
+                }
+            }
+            out.push(m);
+        }
+        for (ns, child) in source.children {
+            let child_prefix = if prefix.is_empty() {
+                ns.to_string()
+            } else {
+                format!("{prefix}/{ns}")
+            };
+            Self::collect(child, &child_prefix, out)?;
+        }
+        Ok(())
     }
 }
 
 impl MigrationSource for EmbedSource {
     fn load_all(&self) -> Result<Vec<Migration>, AdapterError> {
-        self.migrations
-            .iter()
-            .map(|(id, content)| {
-                let mut m: Migration =
-                    serde_yaml::from_str(content).map_err(|e| AdapterError::Parse {
-                        path: id.to_string(),
-                        message: e.to_string(),
-                    })?;
-                m.id = id.to_string();
-                Ok(m)
-            })
-            .collect()
+        let mut out = Vec::new();
+        Self::collect(self.root, "", &mut out)?;
+        Ok(out)
     }
 
     fn save(&self, _migration: &Migration) -> Result<(), AdapterError> {
@@ -70,6 +95,8 @@ pub enum EngineError {
     Config(String),
     #[error("no schema set — call with_schema() before make_migration()")]
     NoSchema,
+    #[error("schema load error: {0}")]
+    SchemaLoad(#[from] SchemaLoadError),
     #[error("migrations dir mismatch: config has '{0}', embedded was compiled from '{1}' — they must match for make_migration")]
     MigrationsDirMismatch(String, &'static str),
 }
@@ -78,22 +105,15 @@ pub struct MigrationEngine {
     config: Config,
     migrations: &'static EmbeddedMigrations,
     schema: Option<Schema>,
-    tls: TlsMode,
-}
-
-#[derive(Clone, Copy)]
-pub enum TlsMode {
-    NoTls,
 }
 
 struct EngineEnvironment {
     config: Arc<Config>,
-    tls: TlsMode,
 }
 
 impl EngineEnvironment {
-    fn new(config: Arc<Config>, tls: TlsMode) -> Self {
-        Self { config, tls }
+    fn new(config: Arc<Config>) -> Self {
+        Self { config }
     }
 }
 
@@ -107,7 +127,7 @@ impl Environment for EngineEnvironment {
             .ok_or_else(|| EnvironmentError::Config(
                 "database_url is not set — set DATABASE_URL or pass it in Config".into(),
             ))?;
-        let client = match (self.dialect(), self.tls) {
+        let client = match (self.dialect(), self.config.tls) {
             (Dialect::Postgres, TlsMode::NoTls) => postgres::Client::connect(url, postgres::NoTls)
                 .map_err(|e| EnvironmentError::Connect(e.to_string()))?,
         };
@@ -125,29 +145,21 @@ impl MigrationEngine {
             config,
             migrations,
             schema: None,
-            tls: TlsMode::NoTls,
         }
     }
 
-    pub fn with_schema(mut self, f: impl FnOnce(SchemaBuilder) -> Schema) -> Self {
+    /// Set the target schema. The closure receives a `SchemaBuilder` and can return either a
+    /// `Schema` directly (infallible) or a `Result<Schema, SchemaLoadError>` (for file loading).
+    /// Calling this more than once replaces the previous schema — last call wins.
+    pub fn with_schema<R: IntoSchema>(mut self, f: impl FnOnce(SchemaBuilder) -> R) -> Result<Self, EngineError> {
         let dialect = self.config.dialect().unwrap_or(Dialect::Postgres);
-        self.schema = Some(f(SchemaBuilder::new(dialect)));
-        self
-    }
-
-    pub fn with_tls(mut self, tls: TlsMode) -> Self {
-        self.tls = tls;
-        self
-    }
-
-    pub fn with_database_url(mut self, url: impl Into<String>) -> Self {
-        self.config.database_url = Some(url.into());
-        self
+        self.schema = Some(f(SchemaBuilder::new(dialect)).into_schema()?);
+        Ok(self)
     }
 
     fn build_migrator(&self) -> Result<Migrator, EngineError> {
-        let source = Box::new(EmbedSource::new(self.migrations.files));
-        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone()), self.tls));
+        let source = Box::new(EmbedSource::new(self.migrations));
+        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone())));
         Ok(Migrator::new(source, environment)?)
     }
 
@@ -207,7 +219,7 @@ impl MigrationEngine {
             ));
         }
         let source = Box::new(YamlAdapter { directory: self.config.migrations_dir.clone() });
-        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone()), self.tls));
+        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone())));
         let migrator = Migrator::new(source, environment)?;
         let schema = self.schema.ok_or(EngineError::NoSchema)?;
         let engine = CliPromptEngine;
@@ -224,8 +236,22 @@ impl MigrationEngine {
         }
     }
 
-    /// Parse `std::env::args()` and dispatch the corresponding subcommand using
-    /// the embedded migration source and the optionally provided schema.
+    /// Create an empty migration with no operations. Useful as a shell to fill by hand.
+    /// Writes to config.migrations_dir. Validates that dir matches the embedded source.
+    pub fn make_empty_migration(self, name: &str) -> Result<Migration, EngineError> {
+        if PathBuf::from(self.migrations.dir) != self.config.migrations_dir {
+            return Err(EngineError::MigrationsDirMismatch(
+                self.config.migrations_dir.display().to_string(),
+                self.migrations.dir,
+            ));
+        }
+        let source = Box::new(YamlAdapter { directory: self.config.migrations_dir.clone() });
+        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone())));
+        let migrator = Migrator::new(source, environment)?;
+        Ok(migrator.make_empty_migration(name.to_string())?)
+    }
+
+    /// Parse `std::env::args()` and dispatch the corresponding subcommand using    /// the embedded migration source and the optionally provided schema.
     /// Supports the full CLI interface: make_migration, migrate, verify_db, etc.
     pub fn handle_args(self) -> Result<(), EngineError> {
         let _ = dotenvy::dotenv();
@@ -234,9 +260,116 @@ impl MigrationEngine {
         let cmd = args.apply_to(&mut config);
         let config = Arc::new(config);
         let source = Box::new(YamlAdapter { directory: config.migrations_dir.clone() });
-        let environment = Box::new(EngineEnvironment::new(config, self.tls));
+        let environment = Box::new(EngineEnvironment::new(config));
         let migrator = Migrator::new(source, environment)?;
         dispatch(migrator, self.schema, cmd)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CHILD_FILES: &[(&str, &str)] = &[(
+        "0001_init",
+        "id: 0001_init\ndependencies: []\noperations: []\natomic: true\n",
+    )];
+
+    const CHILD: EmbeddedMigrations = EmbeddedMigrations {
+        files: CHILD_FILES,
+        dir: "auth/migrations",
+        children: &[],
+    };
+
+    const ROOT_FILES: &[(&str, &str)] = &[(
+        "0001_initial",
+        "id: 0001_initial\ndependencies: []\noperations: []\natomic: true\n",
+    )];
+
+    const ROOT: EmbeddedMigrations = EmbeddedMigrations {
+        files: ROOT_FILES,
+        dir: "migrations",
+        children: &[("auth", &CHILD)],
+    };
+
+    fn collect_ids(source: &'static EmbeddedMigrations) -> Vec<String> {
+        let mut out = Vec::new();
+        EmbedSource::collect(source, "", &mut out).unwrap();
+        out.into_iter().map(|m| m.id).collect()
+    }
+
+    /// Root-only migrations get plain ids with no prefix.
+    #[test]
+    fn collect_root_only() {
+        const SRC: EmbeddedMigrations = EmbeddedMigrations {
+            files: ROOT_FILES,
+            dir: "migrations",
+            children: &[],
+        };
+        let ids = collect_ids(&SRC);
+        assert_eq!(ids, vec!["0001_initial"]);
+    }
+
+    /// Child migrations are prefixed with the namespace key.
+    #[test]
+    fn collect_with_child_prefixes() {
+        let ids = collect_ids(&ROOT);
+        assert!(ids.contains(&"0001_initial".to_string()), "root id present");
+        assert!(ids.contains(&"auth/0001_init".to_string()), "child id prefixed");
+    }
+
+    /// Dependencies within a child are rewritten to include the namespace prefix.
+    #[test]
+    fn collect_child_deps_rewritten() {
+        const DEP_FILES: &[(&str, &str)] = &[
+            ("0001_a", "id: 0001_a\ndependencies: []\noperations: []\natomic: true\n"),
+            ("0002_b", "id: 0002_b\ndependencies: [0001_a]\noperations: []\natomic: true\n"),
+        ];
+        const DEP_CHILD: EmbeddedMigrations = EmbeddedMigrations {
+            files: DEP_FILES,
+            dir: "auth/migrations",
+            children: &[],
+        };
+        const WITH_DEPS: EmbeddedMigrations = EmbeddedMigrations {
+            files: &[],
+            dir: "migrations",
+            children: &[("auth", &DEP_CHILD)],
+        };
+        let mut out = Vec::new();
+        EmbedSource::collect(&WITH_DEPS, "", &mut out).unwrap();
+        let b = out.iter().find(|m| m.id == "auth/0002_b").expect("auth/0002_b present");
+        assert_eq!(b.dependencies, vec!["auth/0001_a"], "dep rewritten with namespace");
+    }
+
+    /// Already-qualified deps (containing '/') are not double-prefixed.
+    #[test]
+    fn collect_does_not_double_prefix_qualified_deps() {
+        const CROSS_FILES: &[(&str, &str)] = &[(
+            "0001_a",
+            "id: 0001_a\ndependencies: [other/0001_x]\noperations: []\natomic: true\n",
+        )];
+        const CROSS_CHILD: EmbeddedMigrations = EmbeddedMigrations {
+            files: CROSS_FILES,
+            dir: "auth/migrations",
+            children: &[],
+        };
+        const CROSS_ROOT: EmbeddedMigrations = EmbeddedMigrations {
+            files: &[],
+            dir: "migrations",
+            children: &[("auth", &CROSS_CHILD)],
+        };
+        let mut out = Vec::new();
+        EmbedSource::collect(&CROSS_ROOT, "", &mut out).unwrap();
+        let m = out.iter().find(|m| m.id == "auth/0001_a").unwrap();
+        assert_eq!(m.dependencies, vec!["other/0001_x"], "fully qualified dep not re-prefixed");
+    }
+
+    /// EmbeddedMigrations is Copy — can be used in a const context.
+    #[test]
+    fn embedded_migrations_is_copy() {
+        let a = ROOT;
+        let b = a;
+        assert_eq!(a.dir, b.dir);
     }
 }

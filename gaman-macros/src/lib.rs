@@ -51,6 +51,7 @@ pub fn embedded_migrations(input: TokenStream) -> TokenStream {
         gaman::EmbeddedMigrations {
             files: &[#(#pairs),*],
             dir: #dir_lit,
+            children: &[],
         }
     }
     .into()

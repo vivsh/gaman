@@ -88,6 +88,34 @@ fn main() {
 
 `MigrationEngine` also exposes `check()`, `plan()`, `show_migrations()`, `verify()`, `inspect_db()`, `make_migration()`, and `handle_args()` for the full CLI surface. See [docs/embedding.md](docs/embedding.md) for the complete API reference.
 
+### Multi-crate migration composition
+
+Gaman supports composing migrations across crate boundaries at compile time.
+
+If your application is split into library crates — an `auth` crate, a `billing` crate, a core domain crate — each one can own and embed its own migrations. The app crate assembles them into a single static tree and hands it to `MigrationEngine`. No runtime file discovery, no separate config, no coordination between crates on naming.
+
+```rust
+// auth crate
+pub static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
+
+// billing crate
+pub static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
+
+// app crate — assembles the full tree
+static MIGRATIONS: EmbeddedMigrations = EmbeddedMigrations {
+    children: &[
+        ("auth",    &auth::MIGRATIONS),
+        ("billing", &billing::MIGRATIONS),
+    ],
+    ..embedded_migrations!("migrations")
+};
+
+// One call migrates everything.
+MigrationEngine::new(Config::default(), &MIGRATIONS).migrate()?;
+```
+
+Each child's migration IDs and dependencies are automatically namespaced (`auth/0001_init`, `billing/0001_plans`) so crates never collide. Children can themselves have children — the tree can be arbitrarily deep. Everything is resolved at compile time; the final binary contains the complete ordered graph with no file I/O at startup.
+
 ## Declaring Schema
 
 All schema inputs become the same internal `Schema`, so the format choice is mostly about how you want to author it.

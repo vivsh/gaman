@@ -360,7 +360,7 @@ fn test_schema_load_sql_file() {
         "CREATE TABLE items (id bigserial PRIMARY KEY, label text NOT NULL);"
     )
     .unwrap();
-    let schema = Schema::load(f.path()).unwrap();
+    let schema = Schema::from_file(f.path()).unwrap();
     assert!(schema.tables.contains_key("items"));
 }
 

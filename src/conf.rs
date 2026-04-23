@@ -2,6 +2,12 @@ use std::path::PathBuf;
 
 use crate::dialects::Dialect;
 
+#[derive(Clone, Copy, Default)]
+pub enum TlsMode {
+    #[default]
+    NoTls,
+}
+
 /// Runtime configuration for gaman.
 /// Loaded once at startup and passed through the call chain.
 #[derive(Clone)]
@@ -9,6 +15,7 @@ pub struct Config {
     pub database_url: Option<String>,
     pub migrations_dir: PathBuf,
     pub schema_file: PathBuf,
+    pub tls: TlsMode,
 }
 
 impl Config {
@@ -17,6 +24,7 @@ impl Config {
             database_url,
             migrations_dir,
             schema_file,
+            tls: TlsMode::NoTls,
         }
     }
 
@@ -42,6 +50,7 @@ impl Default for Config {
             schema_file: std::env::var("SCHEMA_FILE")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("schema.yaml")),
+            tls: TlsMode::NoTls,
         }
     }
 }

@@ -167,7 +167,7 @@ impl Schema {
         entries.sort();
         let mut merged = Self::default();
         for path in &entries {
-            let fragment = Self::load(path)?;
+            let fragment = Self::from_file(path)?;
             for (name, table) in fragment.tables {
                 if merged.tables.contains_key(&name) {
                     return Err(SchemaLoadError::Merge {
@@ -194,7 +194,7 @@ impl Schema {
         Ok(merged)
     }
 
-    pub fn load(path: &std::path::Path) -> Result<Self, SchemaLoadError> {
+    pub fn from_file(path: &std::path::Path) -> Result<Self, SchemaLoadError> {
         if path.is_dir() {
             Self::from_dir(path)
         } else if path.extension().and_then(|e| e.to_str()) == Some("sql") {
@@ -202,6 +202,22 @@ impl Schema {
         } else {
             Self::from_yaml_file(path)
         }
+    }
+
+    /// Merge `other` into `self`. Duplicate table names are an error; other objects (views,
+    /// functions, extensions, enums) use last-writer-wins.
+    pub fn merge(mut self, other: Schema) -> Result<Self, SchemaLoadError> {
+        for (name, table) in other.tables {
+            if self.tables.contains_key(&name) {
+                return Err(SchemaLoadError::DuplicateTable(name));
+            }
+            self.tables.insert(name, table);
+        }
+        self.views.extend(other.views);
+        self.functions.extend(other.functions);
+        self.extensions.extend(other.extensions);
+        self.enums.extend(other.enums);
+        Ok(self)
     }
 
     pub fn validate(&self) -> Result<(), String> {

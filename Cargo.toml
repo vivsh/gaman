@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "gaman"
-version = "0.3.13"
+version = "0.3.14"
 edition = "2024"
 description = "PostgreSQL-first, offline schema migration tool with Django-like ergonomics"
 license = "MIT"
@@ -18,7 +18,7 @@ exclude = [".env", "output.txt", "tests/", ".github/"]
 [dependencies]
 argh = "0.1.19"
 dotenvy = "0.15.7"
-gaman-macros = { version = "0.3.13", path = "gaman-macros" }
+gaman-macros = { version = "0.3.14", path = "gaman-macros" }
 postgres = "0.19"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"

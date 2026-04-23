@@ -20,8 +20,8 @@ pub(crate) mod states;
 
 // Everyday API.
 pub use gaman_macros::{IntoTable, embedded_migrations};
-pub use engine::{MigrationEngine, EngineError, TlsMode, EmbeddedMigrations};
-pub use conf::Config;
+pub use engine::{MigrationEngine, EngineError, EmbeddedMigrations};
+pub use conf::{Config, TlsMode};
 pub use migrations::Migration;
 
 /// Schema types and builders.
@@ -30,7 +30,7 @@ pub mod schema {
         Schema, Table, Column, FunctionDef, TriggerDef, ViewDef, ExtensionDef, EnumDef,
         Index, Constraint, ForeignKey, ColumnRef,
         Volatility, TriggerTiming, TriggerEvent, TriggerScope,
-        SchemaBuilder, TableBuilder, ColumnBuilder, IntoTable,
+        SchemaBuilder, TableBuilder, ColumnBuilder, IntoTable, IntoSchema,
         ReplayError, SchemaLoadError,
         is_volatile, schema_qualified_key,
     };

@@ -5,18 +5,17 @@
 ///   cargo run --example embedded_yaml -- migrate
 ///   cargo run --example embedded_yaml -- show_migrations
 use gaman::{Config, EmbeddedMigrations, MigrationEngine, embedded_migrations};
-use gaman::schema::Schema;
 
 static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
 
 fn main() {
     let _ = dotenvy::dotenv();
 
-    if let Err(e) = MigrationEngine::new(Config::default(), &MIGRATIONS)
-        .with_schema(|_| Schema::load(std::path::Path::new("schema.yaml"))
-            .expect("failed to load schema.yaml"))
-        .handle_args()
-    {
+    let result = MigrationEngine::new(Config::default(), &MIGRATIONS)
+        .with_schema(|s| s.load_file("schema.yaml"))
+        .and_then(|e| e.handle_args());
+
+    if let Err(e) = result {
         eprintln!("error: {e}");
         std::process::exit(1);
     }

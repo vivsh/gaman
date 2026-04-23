@@ -1,7 +1,7 @@
 use crate::dialects::Dialect;
 use super::{
     Column, ColumnRef, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index,
-    Schema, Table, ViewDef, schema_qualified_key,
+    Schema, Table, ViewDef, schema_qualified_key, SchemaLoadError,
 };
 
 /// Map a Rust type to a table definition.
@@ -267,5 +267,33 @@ impl SchemaBuilder {
 
     pub fn build(self) -> Schema {
         self.state
+    }
+
+    /// Load schema from a `.yaml`, `.sql`, or directory path.
+    pub fn load_file(self, path: impl AsRef<std::path::Path>) -> Result<Schema, SchemaLoadError> {
+        Schema::from_file(path.as_ref())
+    }
+
+    /// Load schema from a directory of `.yaml` or `.sql` files (merged in alphabetical order).
+    pub fn load_dir(self, path: impl AsRef<std::path::Path>) -> Result<Schema, SchemaLoadError> {
+        Schema::from_dir(path.as_ref())
+    }
+}
+
+/// Allows both `Schema` and `Result<Schema, E>` to be returned from the `with_schema` closure.
+/// `Schema` is treated as infallible; `Result<Schema, E>` propagates the error.
+pub trait IntoSchema {
+    fn into_schema(self) -> Result<Schema, SchemaLoadError>;
+}
+
+impl IntoSchema for Schema {
+    fn into_schema(self) -> Result<Schema, SchemaLoadError> {
+        Ok(self)
+    }
+}
+
+impl IntoSchema for Result<Schema, SchemaLoadError> {
+    fn into_schema(self) -> Result<Schema, SchemaLoadError> {
+        self
     }
 }

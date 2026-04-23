@@ -232,7 +232,7 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
             } else if cmd.check {
                 let current = match embedded_schema {
                     Some(s) => s,
-                    None => Schema::load(&migrator.config().schema_file)
+                    None => Schema::from_file(&migrator.config().schema_file)
                         .map_err(|e| CommandError::Config(e.to_string()))?,
                 };
                 let name = cmd.name.unwrap_or_else(|| "check".into());
@@ -244,7 +244,7 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
                 let name = cmd.name.ok_or_else(|| CommandError::Config("a migration name is required".into()))?;
                 let current = match embedded_schema {
                     Some(s) => s,
-                    None => Schema::load(&migrator.config().schema_file)
+                    None => Schema::from_file(&migrator.config().schema_file)
                         .map_err(|e| CommandError::Config(e.to_string()))?,
                 };
                 let engine = CliPromptEngine;

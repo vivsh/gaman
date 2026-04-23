@@ -34,10 +34,11 @@ struct Post {
 fn main() {
     let _ = dotenvy::dotenv();
 
-    if let Err(e) = MigrationEngine::new(Config::default(), &MIGRATIONS)
+    let result = MigrationEngine::new(Config::default(), &MIGRATIONS)
         .with_schema(|s| s.table::<User>().table::<Post>().build())
-        .handle_args()
-    {
+        .and_then(|e| e.handle_args());
+
+    if let Err(e) = result {
         eprintln!("error: {e}");
         std::process::exit(1);
     }

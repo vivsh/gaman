@@ -16,7 +16,7 @@ pub enum GraphError {
     UnknownDependency { migration: String, dep: String },
     #[error("no migrations in graph")]
     Empty,
-    #[error("invalid migration id '{0}': only lowercase letters, digits, and underscores are allowed")]
+    #[error("invalid migration id '{0}': only lowercase letters, digits, and underscores are allowed (namespaced ids like 'auth/0001_init' are set automatically by embedded children)")]
     InvalidId(String),
 }
 
@@ -79,6 +79,7 @@ impl MigrationGraph {
     pub fn next_number(&self) -> u32 {
         self.nodes
             .keys()
+            .filter(|id| !id.contains('/'))
             .filter_map(|id| id.split('_').next()?.parse::<u32>().ok())
             .max()
             .map(|n| n + 1)
@@ -458,5 +459,24 @@ mod tests {
         assert!(MigrationGraph::validate_id("has-dash").is_err());
         assert!(MigrationGraph::validate_id("0001_ok").is_ok());
         assert!(MigrationGraph::validate_id("abc123").is_ok());
+    }
+
+    /// next_number ignores namespaced ids (containing '/') and only counts primary ones.
+    #[test]
+    fn next_number_ignores_namespaced_ids() {
+        let mut g = MigrationGraph::new();
+        g.add(migration("0001_initial", &[])).unwrap();
+        g.add(migration("auth/0001_users", &[])).unwrap();
+        g.add(migration("auth/0002_sessions", &[])).unwrap();
+        // namespaced ids must not inflate the primary counter
+        assert_eq!(g.next_number(), 2);
+    }
+
+    /// next_number returns 1 when only namespaced ids are present.
+    #[test]
+    fn next_number_with_only_namespaced_ids() {
+        let mut g = MigrationGraph::new();
+        g.add(migration("auth/0005_something", &[])).unwrap();
+        assert_eq!(g.next_number(), 1);
     }
 }
