@@ -47,6 +47,7 @@ perl -i -pe "
 
 cargo build --quiet
 
+git add -u
 git add Cargo.toml gaman-macros/Cargo.toml Cargo.lock CHANGELOG.md
 git commit -m "chore: release $TAG"
 git tag "$TAG"
