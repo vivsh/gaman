@@ -14,7 +14,8 @@ fn print_header() {
     eprintln!();
 }
 
-fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     let raw_args: Vec<String> = std::env::args().collect();
     if raw_args.len() < 2 {
         print_header();
@@ -25,7 +26,7 @@ fn main() {
 
     let args: GamanArgs = argh::from_env();
 
-    if let Err(e) = handle_cmd(args) {
+    if let Err(e) = handle_cmd(args).await {
         eprintln!("error: {e}");
         let mut source = e.source();
         while let Some(s) = source {

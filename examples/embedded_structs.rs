@@ -31,15 +31,15 @@ struct Post {
     created_at: Option<String>,
 }
 
-fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     let _ = dotenvy::dotenv();
 
     let result = MigrationEngine::new(Config::default(), &MIGRATIONS)
         .with_schema(|s| s.table::<User>().table::<Post>().build())
-        .and_then(|e| e.handle_args());
-
-    if let Err(e) = result {
-        eprintln!("error: {e}");
-        std::process::exit(1);
+        .and_then(|e| Ok(e.handle_args()));
+    match result {
+        Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+        Ok(fut) => if let Err(e) = fut.await { eprintln!("error: {e}"); std::process::exit(1); }
     }
 }

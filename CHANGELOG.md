@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.17] - 2026-04-23
+
+### Added
+
+- Auto-generated migration names — `--name` is now optional for `make_migrations`. When omitted, the name is derived from the operations: single entity → entity name (e.g. `users`), two entities → `entity_a_entity_b`, three or more or no named entities → `auto_YYYYMMDD_HHMM` timestamp (same convention as Django)
+- `--name` remains required for `--empty` and `--merge`
+
 ## [0.3.16] - 2026-04-23
 
 ## [0.3.16] - 2026-04-23
@@ -190,7 +197,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `make_migration`, `migrate`, `fake_migrate`, `show_migrations`, `inspect_db` commands
 - DAG-based migration graph with dependency tracking
 
-[unreleased]: https://github.com/vivsh/gaman/compare/v0.3.16...HEAD
+[unreleased]: https://github.com/vivsh/gaman/compare/v0.3.17...HEAD
+[0.3.17]: https://github.com/vivsh/gaman/compare/v0.3.16...v0.3.17
 [0.3.16]: https://github.com/vivsh/gaman/compare/v0.3.15...v0.3.16
 [0.3.15]: https://github.com/vivsh/gaman/compare/v0.3.14...v0.3.15
 [0.3.14]: https://github.com/vivsh/gaman/compare/v0.3.13...v0.3.14

@@ -8,15 +8,15 @@ use gaman::{Config, EmbeddedMigrations, MigrationEngine, embedded_migrations};
 
 static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
 
-fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     let _ = dotenvy::dotenv();
 
     let result = MigrationEngine::new(Config::default(), &MIGRATIONS)
         .with_schema(|s| s.load_file("schema.yaml"))
-        .and_then(|e| e.handle_args());
-
-    if let Err(e) = result {
-        eprintln!("error: {e}");
-        std::process::exit(1);
+        .and_then(|e| Ok(e.handle_args()));
+    match result {
+        Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+        Ok(fut) => if let Err(e) = fut.await { eprintln!("error: {e}"); std::process::exit(1); }
     }
 }

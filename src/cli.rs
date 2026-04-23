@@ -1,15 +1,13 @@
 use std::sync::Arc;
 
 use argh::FromArgs;
-use postgres::{Client, NoTls};
-
 use crate::conf::Config;
 use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
 use crate::migrator::{Migrator, MigratorError};
 use crate::states::Schema;
 use crate::adapters::YamlAdapter;
 use crate::dialects::Dialect;
-use crate::executor::{Invoker, PostgresExecutor, SubprocessInvoker};
+use crate::executor::{BoxFuture, Invoker, PostgresExecutor, SubprocessInvoker};
 use crate::prompter::CliPromptEngine;
 use crate::disambiguator::{Decision, PromptEngine};
 
@@ -164,18 +162,23 @@ impl Environment for CommandEnvironment {
         &self.config
     }
 
-    fn executor(&self) -> Result<Box<dyn EnvironmentExecutor>, EnvironmentError> {
-        let url = self.config.database_url.as_deref()
-            .ok_or_else(|| EnvironmentError::Config(
-                "DATABASE_URL is not set — pass --database-url or set it in .env".into(),
-            ))?;
-        match self.dialect() {
-            Dialect::Postgres => {
-                let client = Client::connect(url, NoTls)
-                    .map_err(|e| EnvironmentError::Connect(e.to_string()))?;
-                Ok(Box::new(PostgresExecutor::new(client)))
+    fn executor<'a>(&'a self) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+        Box::pin(async move {
+            let url = self.config.database_url.as_deref()
+                .ok_or_else(|| EnvironmentError::Config(
+                    "DATABASE_URL is not set — pass --database-url or set it in .env".into(),
+                ))?;
+            match self.dialect() {
+                Dialect::Postgres => {
+                    use sqlx::ConnectOptions;
+                    let opts = url.parse::<sqlx::postgres::PgConnectOptions>()
+                        .map_err(|e| EnvironmentError::Connect(e.to_string()))?
+                        .ssl_mode(sqlx::postgres::PgSslMode::Disable);
+                    let conn = opts.connect().await.map_err(|e| EnvironmentError::Connect(e.to_string()))?;
+                    Ok(Box::new(PostgresExecutor::new(conn)) as Box<dyn EnvironmentExecutor>)
+                }
             }
-        }
+        })
     }
 
     fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
@@ -199,17 +202,17 @@ impl GamanArgs {
     }
 }
 
-pub fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
+pub async fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
     let mut config = Config::default();
     let cmd = args.apply_to(&mut config);
     let config = Arc::new(config);
     let source = Box::new(YamlAdapter { directory: config.migrations_dir.clone() });
     let environment = Box::new(CommandEnvironment::new(Arc::clone(&config)));
     let migrator = Migrator::new(source, environment)?;
-    dispatch(migrator, None, cmd)
+    dispatch(migrator, None, cmd).await
 }
 
-pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd: Command) -> Result<(), CommandError> {
+pub(crate) async fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd: Command) -> Result<(), CommandError> {
     match cmd {
         Command::Config(_) => {
             println!("  migrations_dir  {}", migrator.config().migrations_dir.display());
@@ -235,13 +238,12 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
                     None => Schema::from_file(&migrator.config().schema_file)
                         .map_err(|e| CommandError::Config(e.to_string()))?,
                 };
-                let name = cmd.name.unwrap_or_else(|| "check".into());
-                match migrator.make_migrations(name, current, true, &[])? {
+                let name = cmd.name.clone().unwrap_or_else(|| "check".into());
+                match migrator.make_migrations(Some(name), current, true, &[])? {
                     Some(_) => Err(CommandError::Config("schema has changes not yet in a migration".into())),
                     None => Ok(()),
                 }
             } else {
-                let name = cmd.name.ok_or_else(|| CommandError::Config("a migration name is required".into()))?;
                 let current = match embedded_schema {
                     Some(s) => s,
                     None => Schema::from_file(&migrator.config().schema_file)
@@ -250,7 +252,7 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
                 let engine = CliPromptEngine;
                 let mut decisions: Vec<Decision> = vec![];
                 loop {
-                    match migrator.make_migrations(name.clone(), current.clone(), cmd.dry_run, &decisions) {
+                    match migrator.make_migrations(cmd.name.clone(), current.clone(), cmd.dry_run, &decisions) {
                         Err(MigratorError::NeedsInput(clars)) => {
                             let new = engine.prompt(&clars).map_err(|e| CommandError::Config(e.to_string()))?;
                             decisions.extend(new);
@@ -264,7 +266,7 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
         }
         Command::Migrate(cmd) => {
             if cmd.plan {
-                match migrator.plan() {
+                match migrator.plan().await {
                     Ok(pending) if pending.is_empty() => {
                         println!("No pending migrations.");
                         Ok(())
@@ -278,19 +280,18 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
                     Err(e) => Err(CommandError::Migrator(e)),
                 }
             } else if cmd.check {
-                migrator.check().map_err(CommandError::from).and_then(|has_pending| {
-                    if has_pending {
-                        Err(CommandError::Config("pending migrations exist".into()))
-                    } else {
-                        Ok(())
-                    }
-                })
+                let has_pending = migrator.check().await.map_err(CommandError::from)?;
+                if has_pending {
+                    Err(CommandError::Config("pending migrations exist".into()))
+                } else {
+                    Ok(())
+                }
             } else {
-                migrator.migrate(cmd.target.as_deref(), cmd.fake).map(|_| ()).map_err(CommandError::from)
+                migrator.migrate(cmd.target.as_deref(), cmd.fake).await.map(|_| ()).map_err(CommandError::from)
             }
         }
         Command::ShowMigrations(_) => {
-            let rows = migrator.show_migrations()?;
+            let rows = migrator.show_migrations().await?;
             if rows.is_empty() {
                 println!("No migrations found.");
             } else {
@@ -350,7 +351,7 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
             } else {
                 cmd.schema.iter().map(|s| s.as_str()).collect()
             };
-            let mut state = migrator.inspect_db(&schemas).map_err(CommandError::from)?;
+            let mut state = migrator.inspect_db(&schemas).await.map_err(CommandError::from)?;
 
             if let Some(table) = &cmd.table {
                 state.tables.retain(|k, _| k == table);
@@ -367,7 +368,7 @@ pub(crate) fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd:
         }
         Command::VerifyDb(cmd) => {
             let schema = cmd.schema.as_deref().unwrap_or("public");
-            let drift = migrator.verify(schema).map_err(CommandError::from)?;
+            let drift = migrator.verify(schema).await.map_err(CommandError::from)?;
             if drift.is_empty() {
                 println!("No drift detected.");
                 Ok(())

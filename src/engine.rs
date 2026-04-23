@@ -5,12 +5,12 @@ use thiserror::Error;
 
 use crate::adapters::{AdapterError, MigrationSource, YamlAdapter};
 use crate::cli::{CommandError, GamanArgs, dispatch};
-use crate::conf::{Config, TlsMode};
+use crate::conf::Config;
 use crate::dialects::Dialect;
 use crate::disambiguator::{Decision, PromptEngine};
 use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
 use crate::executor::postgres::PostgresExecutor;
-use crate::executor::Invoker;
+use crate::executor::{BoxFuture, Invoker};
 use crate::migrator::{Migrator, MigratorError};
 use crate::migrations::Migration;
 use crate::operations::Operation;
@@ -127,16 +127,23 @@ impl Environment for EngineEnvironment {
         &self.config
     }
 
-    fn executor(&self) -> Result<Box<dyn EnvironmentExecutor>, EnvironmentError> {
-        let url = self.config.database_url.as_deref()
-            .ok_or_else(|| EnvironmentError::Config(
-                "database_url is not set — set DATABASE_URL or pass it in Config".into(),
-            ))?;
-        let client = match (self.dialect(), self.config.tls) {
-            (Dialect::Postgres, TlsMode::NoTls) => postgres::Client::connect(url, postgres::NoTls)
-                .map_err(|e| EnvironmentError::Connect(e.to_string()))?,
-        };
-        Ok(Box::new(PostgresExecutor::new(client)))
+    fn executor<'a>(&'a self) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+        Box::pin(async move {
+            let url = self.config.database_url.as_deref()
+                .ok_or_else(|| EnvironmentError::Config(
+                    "database_url is not set — set DATABASE_URL or pass it in Config".into(),
+                ))?;
+            let conn = match (self.dialect(), self.config.tls) {
+                (Dialect::Postgres, crate::conf::TlsMode::NoTls) => {
+                    use sqlx::ConnectOptions;
+                    let opts = url.parse::<sqlx::postgres::PgConnectOptions>()
+                        .map_err(|e| EnvironmentError::Connect(e.to_string()))?
+                        .ssl_mode(sqlx::postgres::PgSslMode::Disable);
+                    opts.connect().await.map_err(|e| EnvironmentError::Connect(e.to_string()))?
+                }
+            };
+            Ok(Box::new(PostgresExecutor::new(conn)) as Box<dyn EnvironmentExecutor>)
+        })
     }
 
     fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
@@ -175,45 +182,50 @@ impl MigrationEngine {
     }
 
     /// Apply all pending migrations. Returns the number applied. Safe to call on every startup.
-    pub fn migrate(self) -> Result<usize, EngineError> {
-        Ok(self.build_migrator()?.migrate(None, false)?)
+    pub async fn migrate(self) -> Result<usize, EngineError> {
+        Ok(self.build_migrator()?.migrate(None, false).await?)
+    }
+
+    /// Current configuraiton as seen by the migrator
+    pub fn config(&self)->Config{
+        self.config.clone()
     }
 
     /// Migrate forward or backward to `target` migration id.
-    pub fn migrate_to(self, target: &str) -> Result<usize, EngineError> {
-        Ok(self.build_migrator()?.migrate(Some(target), false)?)
+    pub async fn migrate_to(self, target: &str) -> Result<usize, EngineError> {
+        Ok(self.build_migrator()?.migrate(Some(target), false).await?)
     }
 
     /// Mark all pending migrations as applied without running any SQL.
     /// Useful for bootstrapping a database that was set up outside gaman.
-    pub fn fake_migrate(self) -> Result<usize, EngineError> {
-        Ok(self.build_migrator()?.migrate(None, true)?)
+    pub async fn fake_migrate(self) -> Result<usize, EngineError> {
+        Ok(self.build_migrator()?.migrate(None, true).await?)
     }
 
     /// Return true if there are unapplied migrations.
-    pub fn check(self) -> Result<bool, EngineError> {
-        Ok(self.build_migrator()?.check()?)
+    pub async fn check(self) -> Result<bool, EngineError> {
+        Ok(self.build_migrator()?.check().await?)
     }
 
     /// Return the ordered list of migration ids that would be applied.
-    pub fn plan(self) -> Result<Vec<String>, EngineError> {
-        Ok(self.build_migrator()?.plan()?)
+    pub async fn plan(self) -> Result<Vec<String>, EngineError> {
+        Ok(self.build_migrator()?.plan().await?)
     }
 
     /// Return all migration ids with their applied/pending status.
-    pub fn show_migrations(self) -> Result<Vec<(String, bool)>, EngineError> {
-        Ok(self.build_migrator()?.show_migrations()?)
+    pub async fn show_migrations(self) -> Result<Vec<(String, bool)>, EngineError> {
+        Ok(self.build_migrator()?.show_migrations().await?)
     }
 
     /// Compare the replayed schema against the live database and return any drift operations.
     /// An empty vec means the database is in sync with migrations.
-    pub fn verify(self, schema: &str) -> Result<Vec<Operation>, EngineError> {
-        Ok(self.build_migrator()?.verify(schema)?)
+    pub async fn verify(self, schema: &str) -> Result<Vec<Operation>, EngineError> {
+        Ok(self.build_migrator()?.verify(schema).await?)
     }
 
     /// Introspect the live database and return the schema.
-    pub fn inspect_db(self, schemas: &[&str]) -> Result<Schema, EngineError> {
-        Ok(self.build_migrator()?.inspect_db(schemas)?)
+    pub async fn inspect_db(self, schemas: &[&str]) -> Result<Schema, EngineError> {
+        Ok(self.build_migrator()?.inspect_db(schemas).await?)
     }
 
     /// Diff the stored schema against the replayed migration state and save a new migration if
@@ -236,7 +248,7 @@ impl MigrationEngine {
         let engine = CliPromptEngine;
         let mut decisions: Vec<Decision> = vec![];
         loop {
-            match migrator.make_migrations(name.to_string(), schema.clone(), false, &decisions) {
+            match migrator.make_migrations(Some(name.to_string()), schema.clone(), false, &decisions) {
                 Err(MigratorError::NeedsInput(clars)) => {
                     let new = engine.prompt(&clars).map_err(|e| EngineError::Config(e.to_string()))?;
                     decisions.extend(new);
@@ -264,7 +276,7 @@ impl MigrationEngine {
 
     /// Parse `std::env::args()` and dispatch the corresponding subcommand using    /// the embedded migration source and the optionally provided schema.
     /// Supports the full CLI interface: make_migration, migrate, verify_db, etc.
-    pub fn handle_args(self) -> Result<(), EngineError> {
+    pub async fn handle_args(self) -> Result<(), EngineError> {
         let _ = dotenvy::dotenv();
         let args: GamanArgs = argh::from_env();
         let mut config = self.config;
@@ -273,7 +285,7 @@ impl MigrationEngine {
         let source = Box::new(YamlAdapter { directory: config.migrations_dir.clone() });
         let environment = Box::new(EngineEnvironment::new(config));
         let migrator = Migrator::new(source, environment)?;
-        dispatch(migrator, self.schema, cmd)?;
+        dispatch(migrator, self.schema, cmd).await?;
         Ok(())
     }
 }

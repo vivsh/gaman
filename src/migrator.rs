@@ -8,7 +8,7 @@ use crate::dialects::{Dialect, DialectError};
 use crate::diff::{DiffEngine, DiffError};
 use crate::disambiguator::{Clarification, Decision, Disambiguator, DisambiguationResult, DisambiguatorError};
 use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
-use crate::executor::{Executor, ExecutorError, Invoker, InvokerError};
+use crate::executor::{BoxFuture, Executor, ExecutorError, Invoker, InvokerError};
 use crate::graphs::{GraphError, MigrationGraph};
 use crate::migrations::Migration;
 use crate::operations::Operation;
@@ -76,8 +76,8 @@ impl Migrator {
         self.environment.dialect()
     }
 
-    fn executor(&self) -> Result<Box<dyn EnvironmentExecutor>, MigratorError> {
-        self.environment.executor().map_err(MigratorError::from)
+    async fn executor(&self) -> Result<Box<dyn EnvironmentExecutor>, MigratorError> {
+        self.environment.executor().await.map_err(MigratorError::from)
     }
 
     fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, MigratorError> {
@@ -91,7 +91,7 @@ impl Migrator {
     /// Returns `Err(MigratorError::NeedsInput(clars))` when clarifications are still outstanding.
     pub fn make_migrations(
         &self,
-        name: String,
+        name: Option<String>,
         current: Schema,
         dry_run: bool,
         decisions: &[Decision],
@@ -109,6 +109,7 @@ impl Migrator {
             DisambiguationResult::Resolved(ops) => ops,
         };
         let ops = dialect.reorder(ops, &previous, &current);
+        let name = name.unwrap_or_else(|| name_from_ops(&ops));
         let id = format!("{:04}_{}", self.graph.next_number(), name);
         MigrationGraph::validate_id(&id).map_err(MigratorError::Graph)?;
         let dependencies = compute_deps(&ops, &last_per_ns, &entity_ns);
@@ -231,7 +232,8 @@ impl Migrator {
                 match op {
                     crate::operations::Operation::CreateTable { table } => {
                         for fk in &table.foreign_keys {
-                            if !state.tables.contains_key(&fk.to_table) {
+                            let is_self_ref = fk.to_table == table.qualified_name();
+                            if !is_self_ref && !state.tables.contains_key(&fk.to_table) {
                                 return Err(MigratorError::Config(format!(
                                     "migration '{}' (operation {}): foreign key '{}' references unknown table '{}'",
                                     m.id, i + 1, fk.name, fk.to_table
@@ -298,14 +300,14 @@ impl Migrator {
 
     /// Create the migration tracking table if it does not already exist.
     /// Safe to call repeatedly — uses CREATE TABLE IF NOT EXISTS internally.
-    pub fn install(&self, executor: &mut dyn Executor) -> Result<(), MigratorError> {
+    pub async fn install(&self, executor: &mut dyn Executor) -> Result<(), MigratorError> {
         for sql in self.dialect().create_tracking_table_sql() {
-            executor.execute(&sql)?;
+            executor.execute(&sql).await?;
         }
         Ok(())
     }
 
-    fn run_ops(
+    async fn run_ops(
         &self,
         ops: &[Operation],
         executor: &mut dyn Executor,
@@ -319,38 +321,38 @@ impl Migrator {
                 ));
             } else {
                 for sql in dialect.operation_to_sql(op)? {
-                    executor.execute(&sql)?;
+                    executor.execute(&sql).await?;
                 }
             }
         }
         Ok(())
     }
 
-    fn applied_set(&self, executor: &mut dyn Executor) -> Result<HashSet<String>, MigratorError> {
-        Ok(executor.fetch_strings(self.dialect().applied_migrations_sql())?.into_iter().collect())
+    async fn applied_set(&self, executor: &mut dyn Executor) -> Result<HashSet<String>, MigratorError> {
+        Ok(executor.fetch_strings(self.dialect().applied_migrations_sql()).await?.into_iter().collect())
     }
 
-    fn apply_one(
+    async fn apply_one(
         &self,
         migration: &Migration,
         executor: &mut dyn Executor,
         invoker: Option<&dyn Invoker>,
         fake: bool,
     ) -> Result<(), MigratorError> {
-        if migration.atomic { executor.begin()?; }
+        if migration.atomic { executor.begin().await?; }
         if !fake {
-            if let Err(e) = self.run_ops(&migration.operations, executor, invoker) {
-                if migration.atomic { let _ = executor.rollback(); }
+            if let Err(e) = self.run_ops(&migration.operations, executor, invoker).await {
+                if migration.atomic { let _ = executor.rollback().await; }
                 return Err(e);
             }
         }
-        if let Err(e) = executor.execute(&self.dialect().record_sql(&migration.id)) {
-            if migration.atomic { let _ = executor.rollback(); }
+        if let Err(e) = executor.execute(&self.dialect().record_sql(&migration.id)).await {
+            if migration.atomic { let _ = executor.rollback().await; }
             return Err(e.into());
         }
         if migration.atomic {
-            if let Err(e) = executor.commit() {
-                let _ = executor.rollback();
+            if let Err(e) = executor.commit().await {
+                let _ = executor.rollback().await;
                 return Err(e.into());
             }
         }
@@ -364,13 +366,13 @@ impl Migrator {
     /// Calls `install` internally so the tracking table is always present.
     /// Each migration runs in its own transaction; a failure rolls back only that migration.
     /// Returns the number of migrations applied (forward direction only).
-    pub fn migrate(&self, target: Option<&str>, fake: bool) -> Result<usize, MigratorError> {
-        let mut executor = self.executor()?;
+    pub async fn migrate(&self, target: Option<&str>, fake: bool) -> Result<usize, MigratorError> {
+        let mut executor = self.executor().await?;
         let invoker = self.invoker()?;
-        self.migrate_with(executor.as_mut(), invoker.as_deref(), target, fake)
+        self.migrate_with(executor.as_mut(), invoker.as_deref(), target, fake).await
     }
 
-    fn migrate_with(
+    pub async fn migrate_with(
         &self,
         executor: &mut dyn Executor,
         invoker: Option<&dyn Invoker>,
@@ -387,8 +389,8 @@ impl Migrator {
             .collect();
         self.validate_plan(&all_migrations, true)?;
 
-        self.install(executor)?;
-        executor.acquire_lock()?;
+        self.install(executor).await?;
+        executor.acquire_lock().await?;
 
         if let Some(target_id) = target {
             if self.graph.get(target_id).is_none() {
@@ -396,7 +398,7 @@ impl Migrator {
             }
 
             let order = all_ordered;
-            let applied: HashSet<String> = self.applied_set(executor)?;
+            let applied: HashSet<String> = self.applied_set(executor).await?;
 
             let target_pos = order.iter().position(|id| *id == target_id)
                 .expect("target exists in graph so must be in topo order");
@@ -410,14 +412,14 @@ impl Migrator {
 
             for id in to_revert {
                 let migration = self.graph.get(id).expect("applied id must exist in graph");
-                if migration.atomic { executor.begin()?; }
+                if migration.atomic { executor.begin().await?; }
                 if !fake {
                     let mut inv_ops = Vec::with_capacity(migration.operations.len());
                     for op in &migration.operations {
                         match op.inverse() {
                             Some(inv) => inv_ops.push(inv),
                             None => {
-                                if migration.atomic { let _ = executor.rollback(); }
+                                if migration.atomic { let _ = executor.rollback().await; }
                                 return Err(MigratorError::Config(format!(
                                     "migration '{id}' is not reversible: operation '{}' has no inverse",
                                     op.type_name()
@@ -426,18 +428,18 @@ impl Migrator {
                         }
                     }
                     inv_ops.reverse();
-                    if let Err(e) = self.run_ops(&inv_ops, executor, invoker) {
-                        if migration.atomic { let _ = executor.rollback(); }
+                    if let Err(e) = self.run_ops(&inv_ops, executor, invoker).await {
+                        if migration.atomic { let _ = executor.rollback().await; }
                         return Err(e);
                     }
                 }
-                if let Err(e) = executor.execute(&self.dialect().unrecord_sql(id)) {
-                    if migration.atomic { let _ = executor.rollback(); }
+                if let Err(e) = executor.execute(&self.dialect().unrecord_sql(id)).await {
+                    if migration.atomic { let _ = executor.rollback().await; }
                     return Err(e.into());
                 }
                 if migration.atomic {
-                    if let Err(e) = executor.commit() {
-                        let _ = executor.rollback();
+                    if let Err(e) = executor.commit().await {
+                        let _ = executor.rollback().await;
                         return Err(e.into());
                     }
                 }
@@ -451,39 +453,39 @@ impl Migrator {
             let applied_count = pending.len();
             for id in pending {
                 let migration = self.graph.get(id).expect("pending id must exist in graph");
-                self.apply_one(migration, executor, invoker, fake)?;
+                self.apply_one(migration, executor, invoker, fake).await?;
             }
 
-            executor.release_lock()?;
+            executor.release_lock().await?;
             return Ok(applied_count);
         }
 
-        let applied: HashSet<String> = self.applied_set(executor)?;
+        let applied: HashSet<String> = self.applied_set(executor).await?;
         let pending: Vec<String> = all_ordered.iter()
             .filter(|id| !applied.contains(**id))
             .map(|id| id.to_string())
             .collect();
         for id in &pending {
             let migration = self.graph.get(id).expect("pending id must exist in graph");
-            self.apply_one(migration, executor, invoker, fake)?;
+            self.apply_one(migration, executor, invoker, fake).await?;
         }
-        executor.release_lock()?;
+        executor.release_lock().await?;
         Ok(pending.len())
     }
 
     /// Return the ordered list of migration ids that would be applied.
     /// Refuses on conflict — the graph must have a single head to produce a linear plan.
     /// Calls `install` internally so the tracking table is always present.
-    pub fn plan(&self) -> Result<Vec<String>, MigratorError> {
-        let mut executor = self.executor()?;
-        self.plan_with(executor.as_mut())
+    pub async fn plan(&self) -> Result<Vec<String>, MigratorError> {
+        let mut executor = self.executor().await?;
+        self.plan_with(executor.as_mut()).await
     }
 
-    fn plan_with(&self, executor: &mut dyn Executor) -> Result<Vec<String>, MigratorError> {
+    pub async fn plan_with(&self, executor: &mut dyn Executor) -> Result<Vec<String>, MigratorError> {
         self.graph.detect_conflict()?;
-        self.install(executor)?;
+        self.install(executor).await?;
         let order = self.graph.topological_order()?;
-        let applied: HashSet<String> = self.applied_set(executor)?;
+        let applied: HashSet<String> = self.applied_set(executor).await?;
         let pending = order.iter()
             .filter(|id| !applied.contains(**id))
             .map(|id| id.to_string())
@@ -492,32 +494,32 @@ impl Migrator {
     }
 
     /// Return true if there are unapplied migrations, false otherwise.
-    pub fn check(&self) -> Result<bool, MigratorError> {
-        let mut executor = self.executor()?;
-        self.check_with(executor.as_mut())
+    pub async fn check(&self) -> Result<bool, MigratorError> {
+        let mut executor = self.executor().await?;
+        self.check_with(executor.as_mut()).await
     }
 
-    fn check_with(&self, executor: &mut dyn Executor) -> Result<bool, MigratorError> {
-        self.plan_with(executor).map(|pending| !pending.is_empty())
+    pub async fn check_with(&self, executor: &mut dyn Executor) -> Result<bool, MigratorError> {
+        self.plan_with(executor).await.map(|pending| !pending.is_empty())
     }
 
     /// Return all migration ids in topological order paired with whether each has been applied.
-    pub fn show_migrations(&self) -> Result<Vec<(String, bool)>, MigratorError> {
-        let mut executor = self.executor()?;
-        self.show_migrations_with(executor.as_mut())
+    pub async fn show_migrations(&self) -> Result<Vec<(String, bool)>, MigratorError> {
+        let mut executor = self.executor().await?;
+        self.show_migrations_with(executor.as_mut()).await
     }
 
-    fn show_migrations_with(&self, executor: &mut dyn Executor) -> Result<Vec<(String, bool)>, MigratorError> {
+    pub async fn show_migrations_with(&self, executor: &mut dyn Executor) -> Result<Vec<(String, bool)>, MigratorError> {
         self.graph.detect_conflict()?;
-        self.install(executor)?;
+        self.install(executor).await?;
         let order = self.graph.topological_order()?;
-        let applied: HashSet<String> = self.applied_set(executor)?;
+        let applied: HashSet<String> = self.applied_set(executor).await?;
         Ok(order.iter().map(|id| (id.to_string(), applied.contains(*id))).collect())
     }
 
-    pub fn inspect_db(&self, schemas: &[&str]) -> Result<Schema, MigratorError> {
-        let mut executor = self.executor()?;
-        executor.inspect_db(schemas).map_err(MigratorError::Executor)
+    pub async fn inspect_db(&self, schemas: &[&str]) -> Result<Schema, MigratorError> {
+        let mut executor = self.executor().await?;
+        executor.inspect_db(schemas).await.map_err(MigratorError::Executor)
     }
 
     /// Compare the replayed schema state against the live database and return any differences.
@@ -525,12 +527,12 @@ impl Migrator {
     /// Scoped to tables/columns/indexes/FKs/constraints only; views, functions,
     /// extensions, and enums are excluded because their canonical representation
     /// differs too much between replayed YAML and pg_catalog.
-    pub fn verify(&self, schema: &str) -> Result<Vec<Operation>, MigratorError> {
-        let mut executor = self.executor()?;
-        self.verify_with(executor.as_mut(), schema)
+    pub async fn verify(&self, schema: &str) -> Result<Vec<Operation>, MigratorError> {
+        let mut executor = self.executor().await?;
+        self.verify_with(executor.as_mut(), schema).await
     }
 
-    fn verify_with(&self, executor: &mut dyn EnvironmentExecutor, schema: &str) -> Result<Vec<Operation>, MigratorError> {
+    pub async fn verify_with(&self, executor: &mut dyn EnvironmentExecutor, schema: &str) -> Result<Vec<Operation>, MigratorError> {
         let dialect = self.dialect();
         let mut replay = self.replay()?;
         replay.normalize();
@@ -538,7 +540,7 @@ impl Migrator {
         normalize_state_types(&mut replay, &dialect);
 
         let mut live = executor
-            .inspect_db(&[schema])
+            .inspect_db(&[schema]).await
             .map_err(MigratorError::Executor)?;
         live.normalize();
         scope_tables_for_verify(&mut live, schema);
@@ -563,6 +565,76 @@ fn namespace_of(id: &str) -> &str {
         Some(pos) => &id[..pos],
         None => "",
     }
+}
+
+fn op_entity_label(op: &Operation) -> Option<&str> {
+    match op {
+        Operation::CreateTable { table } | Operation::DropTable { table } => Some(&table.name),
+        Operation::RenameTable { new_name, .. } => Some(new_name),
+        Operation::AddColumn { table_name, .. }
+        | Operation::DropColumn { table_name, .. }
+        | Operation::RenameColumn { table_name, .. }
+        | Operation::AlterColumn { table_name, .. }
+        | Operation::AddForeignKey { table_name, .. }
+        | Operation::DropForeignKey { table_name, .. }
+        | Operation::AddIndex { table_name, .. }
+        | Operation::DropIndex { table_name, .. }
+        | Operation::AddConstraint { table_name, .. }
+        | Operation::DropConstraint { table_name, .. }
+        | Operation::CreateTrigger { table_name, .. }
+        | Operation::AlterTrigger { table_name, .. }
+        | Operation::DropTrigger { table_name, .. } => Some(table_name),
+        Operation::CreateFunction { function } | Operation::DropFunction { function } => Some(&function.name),
+        Operation::AlterFunction { new, .. } => Some(&new.name),
+        Operation::CreateView { view } | Operation::DropView { view } => Some(&view.name),
+        Operation::ReplaceView { new, .. } => Some(&new.name),
+        Operation::CreateExtension { extension } | Operation::DropExtension { extension } => Some(&extension.name),
+        Operation::CreateEnum { enum_def } | Operation::DropEnum { enum_def } => Some(&enum_def.name),
+        Operation::AlterEnum { new, .. } => Some(&new.name),
+        Operation::Statement { .. } | Operation::Invoke { .. } => None,
+    }
+}
+
+fn name_from_ops(ops: &[Operation]) -> String {
+    let mut unique: Vec<&str> = Vec::new();
+    for op in ops {
+        if let Some(label) = op_entity_label(op) {
+            if !unique.contains(&label) {
+                unique.push(label);
+            }
+        }
+    }
+    match unique.as_slice() {
+        [] | [_, _, _, ..] => auto_timestamp(),
+        [a] => a.to_string(),
+        [a, b] => format!("{a}_{b}"),
+    }
+}
+
+fn auto_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let mins = secs / 60;
+    let hhmm = (mins % (24 * 60)) as u32;
+    let days = secs / 86400;
+    // days since epoch → approximate YYYYMMDD (good enough for a unique suffix)
+    let (y, m, d) = days_to_ymd(days);
+    format!("auto_{y:04}{m:02}{d:02}_{hhmm:04}")
+}
+
+fn days_to_ymd(days: u64) -> (u32, u32, u32) {
+    // Rata Die algorithm (days since 1970-01-01)
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z % 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as u32, m as u32, d as u32)
 }
 
 fn compute_deps(
@@ -676,7 +748,7 @@ mod tests {
     use crate::adapters::AdapterError;
     use crate::dialects::Dialect;
     use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
-    use crate::executor::Introspectable;
+    use crate::executor::{BoxFuture, Introspectable};
     use crate::operations::Operation;
     use crate::states::{Column, Schema, Table};
 
@@ -715,8 +787,8 @@ mod tests {
             &self.config
         }
 
-        fn executor(&self) -> Result<Box<dyn EnvironmentExecutor>, EnvironmentError> {
-            Err(EnvironmentError::Config("executor is not available in the test environment".into()))
+        fn executor<'a>(&'a self) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+            Box::pin(async { Err(EnvironmentError::Config("executor is not available in the test environment".into())) })
         }
 
         fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
@@ -776,17 +848,24 @@ mod tests {
     }
 
     impl Executor for NullExecutor {
-        fn execute(&mut self, _sql: &str) -> Result<(), ExecutorError> {
-            Ok(())
+        fn execute<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
         }
-        fn fetch_strings(&mut self, _sql: &str) -> Result<Vec<String>, ExecutorError> {
-            Ok(self.applied.clone())
+        fn fetch_strings<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> {
+            let applied = self.applied.clone();
+            Box::pin(async move { Ok(applied) })
         }
-        fn begin(&mut self) -> Result<(), ExecutorError> { Ok(()) }
-        fn commit(&mut self) -> Result<(), ExecutorError> { Ok(()) }
-        fn rollback(&mut self) -> Result<(), ExecutorError> { Ok(()) }
-        fn acquire_lock(&mut self) -> Result<(), ExecutorError> { self.lock_count += 1; Ok(()) }
-        fn release_lock(&mut self) -> Result<(), ExecutorError> { self.lock_count -= 1; Ok(()) }
+        fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> { Box::pin(async { Ok(()) }) }
+        fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> { Box::pin(async { Ok(()) }) }
+        fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> { Box::pin(async { Ok(()) }) }
+        fn acquire_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            self.lock_count += 1;
+            Box::pin(async { Ok(()) })
+        }
+        fn release_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            self.lock_count -= 1;
+            Box::pin(async { Ok(()) })
+        }
     }
 
     struct InspectingExecutor {
@@ -794,43 +873,41 @@ mod tests {
     }
 
     impl Executor for InspectingExecutor {
-        fn execute(&mut self, _sql: &str) -> Result<(), ExecutorError> { Ok(()) }
-        fn fetch_strings(&mut self, _sql: &str) -> Result<Vec<String>, ExecutorError> { Ok(vec![]) }
-        fn begin(&mut self) -> Result<(), ExecutorError> { Ok(()) }
-        fn commit(&mut self) -> Result<(), ExecutorError> { Ok(()) }
-        fn rollback(&mut self) -> Result<(), ExecutorError> { Ok(()) }
+        fn execute<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> { Box::pin(async { Ok(()) }) }
+        fn fetch_strings<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> { Box::pin(async { Ok(vec![]) }) }
+        fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> { Box::pin(async { Ok(()) }) }
+        fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> { Box::pin(async { Ok(()) }) }
+        fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> { Box::pin(async { Ok(()) }) }
     }
 
     impl Introspectable for InspectingExecutor {
-        fn inspect_db(&mut self, _schemas: &[&str]) -> Result<Schema, ExecutorError> {
-            Ok(self.live.clone())
+        fn inspect_db<'a>(&'a mut self, _schemas: &'a [&'a str]) -> BoxFuture<'a, Result<Schema, ExecutorError>> {
+            let live = self.live.clone();
+            Box::pin(async move { Ok(live) })
         }
     }
 
     /// Regression test: migrate() on a multi-migration chain must not fail at validate_plan.
-    /// Before the fix, validate_plan called self.replay() to build the full state, then tried
-    /// to apply all migrations again — every CreateTable hit a duplicate and returned an error.
-    #[test]
-    fn migrate_succeeds_on_multi_migration_chain() {
+    #[tokio::test]
+    async fn migrate_succeeds_on_multi_migration_chain() {
         let users = simple_table("users", &["id"]);
         let posts = simple_table("posts", &["id"]);
         let m = migrator_from(vec![
             migration_with_ops("0001_create_users", &[], vec![Operation::CreateTable { table: users }]),
             migration_with_ops("0002_create_posts", &["0001_create_users"], vec![Operation::CreateTable { table: posts }]),
         ]);
-        m.migrate_with(&mut NullExecutor::empty(), None, None, false)
+        m.migrate_with(&mut NullExecutor::empty(), None, None, false).await
             .expect("migrate must succeed on a valid multi-migration chain");
     }
 
-    /// Verifies that migrate() acquires and then releases the advisory lock exactly once,
-    /// leaving lock_count at zero after a successful run.
-    #[test]
-    fn migrate_acquires_and_releases_lock() {
+    /// Verifies that migrate() acquires and then releases the advisory lock exactly once.
+    #[tokio::test]
+    async fn migrate_acquires_and_releases_lock() {
         let m = migrator_from(vec![
             migration_with_ops("0001_init", &[], vec![Operation::CreateTable { table: simple_table("t", &["id"]) }]),
         ]);
         let mut ex = NullExecutor::empty();
-        m.migrate_with(&mut ex, None, None, false).expect("migrate should succeed");
+        m.migrate_with(&mut ex, None, None, false).await.expect("migrate should succeed");
         assert_eq!(ex.lock_count, 0, "lock must be released after migrate completes");
     }
     // we build the Migrator manually to keep a reference to the inner saved vec.
@@ -867,14 +944,34 @@ mod tests {
     #[test]
     fn no_changes_returns_none() {
         let m = migrator_from(vec![]);
-        assert!(m.make_migrations("x".into(), Schema::default(), false, &[]).unwrap().is_none());
+        assert!(m.make_migrations(Some("x".into()), Schema::default(), false, &[]).unwrap().is_none());
+    }
+
+    #[test]
+    fn auto_name_single_create_table() {
+        let m = migrator_from(vec![]);
+        let current = state_with_tables(&[simple_table("users", &["id"])]);
+        let mig = m.make_migrations(None, current, true, &[]).unwrap().unwrap();
+        assert!(mig.id.ends_with("_users"), "expected id ending in '_users', got '{}'", mig.id);
+    }
+
+    #[test]
+    fn auto_name_two_tables() {
+        let m = migrator_from(vec![]);
+        let current = state_with_tables(&[simple_table("users", &["id"]), simple_table("posts", &["id"])]);
+        let mig = m.make_migrations(None, current, true, &[]).unwrap().unwrap();
+        assert!(
+            mig.id.contains("users_posts") || mig.id.contains("posts_users"),
+            "expected 'users_posts' or 'posts_users' in id, got '{}'",
+            mig.id
+        );
     }
 
     #[test]
     fn new_table_creates_migration() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let result = m.make_migrations("initial".into(), current, false, &[]).unwrap();
+        let result = m.make_migrations(Some("initial".into()), current, false, &[]).unwrap();
         let mig = result.unwrap();
         assert_eq!(mig.operations.len(), 1);
         assert!(matches!(&mig.operations[0], Operation::CreateTable { table } if table.name == "users"));
@@ -887,7 +984,7 @@ mod tests {
             "0001_initial", &[],
             vec![Operation::CreateTable { table: users }],
         )]);
-        let result = m.make_migrations("drop_users".into(), Schema::default(), false, &[]).unwrap();
+        let result = m.make_migrations(Some("drop_users".into()), Schema::default(), false, &[]).unwrap();
         let mig = result.unwrap();
         assert_eq!(mig.operations.len(), 1);
         assert!(matches!(&mig.operations[0], Operation::DropTable { table } if table.name == "users"));
@@ -901,7 +998,7 @@ mod tests {
             vec![Operation::CreateTable { table: users_v1 }],
         )]);
         let current = state_with_tables(&[simple_table("users", &["id", "email"])]);
-        let mig = m.make_migrations("add_email".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("add_email".into()), current, false, &[]).unwrap().unwrap();
         assert!(mig.operations.iter().any(|op| matches!(op, Operation::AddColumn { column, .. } if column.name == "email")));
     }
 
@@ -913,7 +1010,7 @@ mod tests {
             vec![Operation::CreateTable { table: users_v1 }],
         )]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations("drop_email".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("drop_email".into()), current, false, &[]).unwrap().unwrap();
         assert!(mig.operations.iter().any(|op| matches!(op, Operation::DropColumn { column, .. } if column.name == "email")));
     }
 
@@ -924,7 +1021,7 @@ mod tests {
             simple_table("users", &["id"]),
             simple_table("posts", &["id"]),
         ]);
-        let mig = m.make_migrations("multi".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("multi".into()), current, false, &[]).unwrap().unwrap();
         assert_eq!(mig.operations.len(), 2);
     }
 
@@ -932,7 +1029,7 @@ mod tests {
     fn migration_number_increments() {
         let m = migrator_from(vec![migration_with_ops("0001_initial", &[], vec![])]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations("add_users".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("add_users".into()), current, false, &[]).unwrap().unwrap();
         assert!(mig.id.starts_with("0002_"));
     }
 
@@ -940,7 +1037,7 @@ mod tests {
     fn migration_number_empty_graph() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations("initial".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("initial".into()), current, false, &[]).unwrap().unwrap();
         assert!(mig.id.starts_with("0001_"));
     }
 
@@ -948,7 +1045,7 @@ mod tests {
     fn migration_dependencies_set_to_head() {
         let m = migrator_from(vec![migration_with_ops("0001_initial", &[], vec![])]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations("add_users".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("add_users".into()), current, false, &[]).unwrap().unwrap();
         assert_eq!(mig.dependencies, vec!["0001_initial"]);
     }
 
@@ -956,7 +1053,7 @@ mod tests {
     fn migration_dependencies_empty_graph() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations("initial".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("initial".into()), current, false, &[]).unwrap().unwrap();
         assert!(mig.dependencies.is_empty());
     }
 
@@ -964,7 +1061,7 @@ mod tests {
     fn dry_run_does_not_save() {
         let (m, shared) = migrator_with_source(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        m.make_migrations("initial".into(), current, true, &[]).unwrap().unwrap();
+        m.make_migrations(Some("initial".into()), current, true, &[]).unwrap().unwrap();
         assert!(shared.saved.borrow().is_empty());
     }
 
@@ -972,7 +1069,7 @@ mod tests {
     fn dry_run_still_returns_migration() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let result = m.make_migrations("initial".into(), current, true, &[]).unwrap();
+        let result = m.make_migrations(Some("initial".into()), current, true, &[]).unwrap();
         assert!(result.is_some());
     }
 
@@ -983,7 +1080,7 @@ mod tests {
             migration_with_ops("0001_a", &[], vec![]),
             migration_with_ops("0001_b", &[], vec![]),
         ]);
-        let err = m.make_migrations("x".into(), Schema::default(), false, &[]).unwrap_err();
+        let err = m.make_migrations(Some("x".into()), Schema::default(), false, &[]).unwrap_err();
         assert!(matches!(err, MigratorError::Graph(GraphError::Conflict)));
     }
 
@@ -995,7 +1092,7 @@ mod tests {
             vec![Operation::DropTable { table: simple_table("ghost", &["id"]) }],
         );
         let m = migrator_from(vec![bad]);
-        let err = m.make_migrations("x".into(), Schema::default(), false, &[]).unwrap_err();
+        let err = m.make_migrations(Some("x".into()), Schema::default(), false, &[]).unwrap_err();
         assert!(matches!(err, MigratorError::Replay(_)));
     }
 
@@ -1003,7 +1100,7 @@ mod tests {
     fn make_migrations_name_used_in_id() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations("my_migration".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("my_migration".into()), current, false, &[]).unwrap().unwrap();
         assert!(mig.id.contains("my_migration"));
     }
 
@@ -1020,14 +1117,15 @@ mod tests {
             simple_table("posts", &["id"]),
             simple_table("comments", &["id"]),
         ]);
-        let mig = m.make_migrations("add_comments".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("add_comments".into()), current, false, &[]).unwrap().unwrap();
         assert_eq!(mig.dependencies, vec!["0002_create_posts"]);
         assert_eq!(mig.operations.len(), 1);
         assert!(matches!(&mig.operations[0], Operation::CreateTable { table } if table.name == "comments"));
     }
 
-    #[test]
-    fn verify_treats_requested_schema_as_default_namespace() {
+    /// Verifies verify_with() handles schema scoping correctly for non-public schemas.
+    #[tokio::test]
+    async fn verify_treats_requested_schema_as_default_namespace() {
         let migrator = migrator_from(vec![migration_with_ops(
             "0001_create_users",
             &[],
@@ -1040,7 +1138,7 @@ mod tests {
         let mut executor = InspectingExecutor { live };
 
         let drift = migrator
-            .verify_with(&mut executor, "isolated")
+            .verify_with(&mut executor, "isolated").await
             .expect("verify should succeed");
 
         assert!(drift.is_empty(), "expected no drift, got: {drift:?}");
@@ -1064,7 +1162,7 @@ mod tests {
         };
         let mut current = Schema::default();
         current.tables.insert("users".to_string(), table);
-        let err = m.make_migrations("bad".into(), current, false, &[]).unwrap_err();
+        let err = m.make_migrations(Some("bad".into()), current, false, &[]).unwrap_err();
         assert!(matches!(err, MigratorError::Config(_)));
     }
 
@@ -1073,7 +1171,7 @@ mod tests {
     fn save_called_when_not_dry_run() {
         let (m, shared) = migrator_with_source(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        m.make_migrations("initial".into(), current, false, &[]).unwrap().unwrap();
+        m.make_migrations(Some("initial".into()), current, false, &[]).unwrap().unwrap();
         assert_eq!(shared.saved.borrow().len(), 1);
     }
 
@@ -1232,35 +1330,35 @@ mod tests {
         assert!(err.contains("duplicate column"));
     }
 
-    #[test]
-    fn invoke_op_is_not_supported() {
+#[tokio::test]
+    async fn invoke_op_is_not_supported() {
         let m = migrator_from(vec![migration_with_ops(
             "0001_seed", &[],
             vec![Operation::Invoke { up: "echo hello".into(), down: None }],
         )]);
-        let err = m.migrate_with(&mut NullExecutor::empty(), None, None, false).unwrap_err();
+        let err = m.migrate_with(&mut NullExecutor::empty(), None, None, false).await.unwrap_err();
         assert!(err.to_string().contains("not yet supported"), "unexpected error: {err}");
     }
 
-    #[test]
-    fn show_migrations_marks_applied_and_pending() {
+#[tokio::test]
+    async fn show_migrations_marks_applied_and_pending() {
         let users = simple_table("users", &["id"]);
         let m = migrator_from(vec![
             migration_with_ops("0001_create_users", &[], vec![Operation::CreateTable { table: users }]),
             migration_with_ops("0002_add_email", &["0001_create_users"], vec![]),
         ]);
         let mut exec = NullExecutor { applied: vec!["0001_create_users".to_string()], lock_count: 0 };
-        let rows = m.show_migrations_with(&mut exec).unwrap();
+        let rows = m.show_migrations_with(&mut exec).await.unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0], ("0001_create_users".to_string(), true));
         assert_eq!(rows[1], ("0002_add_email".to_string(), false));
     }
 
-    #[test]
-    fn show_migrations_empty_graph() {
+#[tokio::test]
+    async fn show_migrations_empty_graph() {
         let m = migrator_from(vec![]);
         let mut exec = NullExecutor::empty();
-        let rows = m.show_migrations_with(&mut exec).unwrap();
+        let rows = m.show_migrations_with(&mut exec).await.unwrap();
         assert!(rows.is_empty());
     }
 
@@ -1287,7 +1385,7 @@ mod tests {
     fn deps_empty_graph_yields_no_deps() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations("initial".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("initial".into()), current, false, &[]).unwrap().unwrap();
         assert!(mig.dependencies.is_empty(), "no migrations exist, so no deps expected");
     }
 
@@ -1303,7 +1401,7 @@ mod tests {
             simple_table("users", &["id"]),
             simple_table("posts", &["id"]),
         ]);
-        let mig = m.make_migrations("add_posts".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("add_posts".into()), current, false, &[]).unwrap().unwrap();
         assert_eq!(mig.dependencies, vec!["0001_create_users"]);
     }
 
@@ -1318,7 +1416,7 @@ mod tests {
         )]);
         let posts = table_with_fk("posts", "users");
         let current = state_with_tables(&[simple_table("users", &["id"]), posts]);
-        let mig = m.make_migrations("add_posts".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("add_posts".into()), current, false, &[]).unwrap().unwrap();
         assert_eq!(mig.dependencies, vec!["0001_create_users"]);
     }
 
@@ -1345,7 +1443,7 @@ mod tests {
             simple_table("auth_users", &["id"]),
             posts,
         ]);
-        let mig = m.make_migrations("add_posts".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("add_posts".into()), current, false, &[]).unwrap().unwrap();
         assert!(mig.dependencies.contains(&"0001_root_init".to_string()), "must include last root migration");
         assert!(mig.dependencies.contains(&"auth/0001_create_users".to_string()), "must include last auth migration");
     }
@@ -1392,7 +1490,7 @@ mod tests {
             simple_table("billing_plans", &["id"]),
             t,
         ]);
-        let mig = m.make_migrations("add_subscriptions".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("add_subscriptions".into()), current, false, &[]).unwrap().unwrap();
         assert!(mig.dependencies.contains(&"0001_root".to_string()));
         assert!(mig.dependencies.contains(&"auth/0001_users".to_string()));
         assert!(mig.dependencies.contains(&"billing/0001_plans".to_string()));
@@ -1411,7 +1509,7 @@ mod tests {
             simple_table("auth_users", &["id"]),
             simple_table("settings", &["id"]),
         ]);
-        let mig = m.make_migrations("add_settings".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("add_settings".into()), current, false, &[]).unwrap().unwrap();
         assert!(!mig.dependencies.contains(&"auth/0001_create_users".to_string()),
             "new root migration should not dep on unrelated auth namespace");
         assert!(mig.dependencies.is_empty(), "no root ns migration exists, so deps must be empty");
@@ -1432,7 +1530,7 @@ mod tests {
             simple_table("users", &["id", "email"]),
             simple_table("posts", &["id"]),
         ]);
-        let mig = m.make_migrations("add_posts".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("add_posts".into()), current, false, &[]).unwrap().unwrap();
         assert_eq!(mig.dependencies, vec!["0002_add_email"], "must dep on last migration, not first");
     }
 
@@ -1472,7 +1570,7 @@ mod tests {
             ]),
         ]);
         let current = state_with_tables(&[simple_table("users", &["id", "email", "name"])]);
-        let mig = m.make_migrations("add_name".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("add_name".into()), current, false, &[]).unwrap().unwrap();
         assert_eq!(mig.dependencies, vec!["0002_add_email"]);
     }
 
@@ -1498,7 +1596,7 @@ mod tests {
             simple_table("auth_groups", &["id"]),
             posts,
         ]);
-        let mig = m.make_migrations("add_posts".into(), current, false, &[]).unwrap().unwrap();
+        let mig = m.make_migrations(Some("add_posts".into()), current, false, &[]).unwrap().unwrap();
         assert!(mig.dependencies.contains(&"auth/0002_groups".to_string()),
             "must use last auth migration, not auth/0001_users");
         assert!(!mig.dependencies.contains(&"auth/0001_users".to_string()),

@@ -68,7 +68,7 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
             expect_error,
         } => {
             let migrator = build_migrator(name, case.dialect, migrations)?;
-            let result = migrator.make_migrations(migration_name.clone(), current.clone(), true, decisions);
+            let result = migrator.make_migrations(Some(migration_name.clone()), current.clone(), true, decisions);
             if let Some(expected) = expect_error {
                 return assert_error_contains(name, result.map(|_| ()), expected);
             }

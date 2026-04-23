@@ -1,4 +1,8 @@
+use std::future::Future;
+use std::pin::Pin;
 use thiserror::Error;
+
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 #[derive(Debug, Error)]
 pub enum ExecutorError {
@@ -19,13 +23,17 @@ pub enum InvokerError {
 }
 
 pub trait Executor {
-    fn execute(&mut self, sql: &str) -> Result<(), ExecutorError>;
-    fn fetch_strings(&mut self, sql: &str) -> Result<Vec<String>, ExecutorError>;
-    fn begin(&mut self) -> Result<(), ExecutorError>;
-    fn commit(&mut self) -> Result<(), ExecutorError>;
-    fn rollback(&mut self) -> Result<(), ExecutorError>;
-    fn acquire_lock(&mut self) -> Result<(), ExecutorError> { Ok(()) }
-    fn release_lock(&mut self) -> Result<(), ExecutorError> { Ok(()) }
+    fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>>;
+    fn fetch_strings<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>>;
+    fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>>;
+    fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>>;
+    fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>>;
+    fn acquire_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn release_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 pub trait Invoker {
@@ -33,7 +41,7 @@ pub trait Invoker {
 }
 
 pub trait Introspectable {
-    fn inspect_db(&mut self, schemas: &[&str]) -> Result<crate::states::Schema, ExecutorError>;
+    fn inspect_db<'a>(&'a mut self, schemas: &'a [&'a str]) -> BoxFuture<'a, Result<crate::states::Schema, ExecutorError>>;
 }
 
 pub mod postgres;

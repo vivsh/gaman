@@ -7,9 +7,9 @@ use support::{
 };
 
 /// Runs PostgreSQL-backed cases for migrate, verify, and inspect.
-#[test]
+#[tokio::test]
 #[ignore = "set TEST_DATABASE_URL and pass -- --include-ignored to run"]
-fn postgres_cases() {
+async fn postgres_cases() {
     let files = discover_cases(&postgres_cases_root()).expect("failed to discover postgres cases");
     let mut failures = Vec::new();
 
@@ -22,12 +22,12 @@ fn postgres_cases() {
             }
         };
 
-        let result = (|| -> Result<String, TestSupportError> {
+        let result = (|| async {
             let case: PostgresCase = read_case_file(&file)?;
             let label = case_label(&name, case.description.as_deref());
-            run_postgres_case(&name, &case)?;
-            Ok(label)
-        })();
+            run_postgres_case(&name, &case).await?;
+            Ok::<String, TestSupportError>(label)
+        })().await;
 
         match result {
             Ok(label) => println!("  ok: {label}"),
@@ -40,9 +40,9 @@ fn postgres_cases() {
     }
 }
 
-fn run_postgres_case(name: &str, case: &PostgresCase) -> Result<(), TestSupportError> {
-    let mut harness = PgHarness::new()?;
-    harness.reset()?;
+async fn run_postgres_case(name: &str, case: &PostgresCase) -> Result<(), TestSupportError> {
+    let mut harness = PgHarness::new().await?;
+    harness.reset().await?;
 
     match &case.spec {
         PostgresSpec::Migrate {
@@ -54,10 +54,10 @@ fn run_postgres_case(name: &str, case: &PostgresCase) -> Result<(), TestSupportE
             expect_error,
         } => {
             if let Some(sql) = setup_sql {
-                harness.batch_execute(sql)?;
+                harness.batch_execute(sql).await?;
             }
             let migrator = build_postgres_migrator(name, &harness, migrations)?;
-            let result = migrator.migrate(target.as_deref(), *fake);
+            let result = migrator.migrate(target.as_deref(), *fake).await;
             if let Some(expected) = expect_error {
                 return assert_error_contains(name, result.map(|_| ()), expected);
             }
@@ -65,7 +65,7 @@ fn run_postgres_case(name: &str, case: &PostgresCase) -> Result<(), TestSupportE
                 TestSupportError::message(format!("{name}: migrate failed unexpectedly: {error}"))
             })?;
             if let Some(expected) = expect_schema.clone() {
-                let mut actual = harness.inspect_schema()?;
+                let mut actual = harness.inspect_schema().await?;
                 scope_schema_for_compare(&mut actual, harness.schema_name());
                 assert_schema_matches(name, "inspected schema", actual, expected)?;
             }
@@ -79,18 +79,18 @@ fn run_postgres_case(name: &str, case: &PostgresCase) -> Result<(), TestSupportE
             expect_error,
         } => {
             if let Some(sql) = setup_sql {
-                harness.batch_execute(sql)?;
+                harness.batch_execute(sql).await?;
             }
             let migrator = build_postgres_migrator(name, &harness, migrations)?;
             if !migrations.is_empty() {
-                migrator.migrate(None, false).map_err(|error| {
+                migrator.migrate(None, false).await.map_err(|error| {
                     TestSupportError::message(format!("{name}: setup migrate failed unexpectedly: {error}"))
                 })?;
             }
             if let Some(sql) = mutate_sql {
-                harness.batch_execute(sql)?;
+                harness.batch_execute(sql).await?;
             }
-            let result = harness.verify(&migrator);
+            let result = harness.verify(&migrator).await;
             if let Some(expected) = expect_error {
                 return assert_error_contains(name, result.map(|_| ()), expected);
             }
@@ -102,9 +102,9 @@ fn run_postgres_case(name: &str, case: &PostgresCase) -> Result<(), TestSupportE
         }
         PostgresSpec::Inspect { setup_sql, expect_schema, expect_error } => {
             if let Some(sql) = setup_sql {
-                harness.batch_execute(sql)?;
+                harness.batch_execute(sql).await?;
             }
-            let result = harness.inspect_schema();
+            let result = harness.inspect_schema().await;
             if let Some(expected) = expect_error {
                 return assert_error_contains(name, result.map(|_| ()), expected);
             }

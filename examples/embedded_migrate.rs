@@ -6,11 +6,12 @@ use gaman::{Config, EmbeddedMigrations, MigrationEngine, embedded_migrations};
 
 static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
 
-fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     let _ = dotenvy::dotenv();
 
     MigrationEngine::new(Config::default(), &MIGRATIONS)
-        .migrate()
+        .migrate().await
         .expect("migrations failed");
 
     // start server, run jobs, etc.

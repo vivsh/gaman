@@ -8,9 +8,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use gaman::Config;
 use gaman::Migration;
-use gaman::core::{Decision, Dialect, Environment, EnvironmentError, EnvironmentExecutor, Executor, ExecutorError, Invoker, Introspectable, Migrator, PostgresExecutor, VecAdapter};
+use gaman::core::{Decision, Dialect, Environment, EnvironmentError, EnvironmentExecutor, Executor, ExecutorError, Invoker, Introspectable, Migrator, PostgresExecutor, VecAdapter, BoxFuture};
 use gaman::schema::{Operation, Schema};
-use postgres::{Client, NoTls};
+use sqlx::postgres::{PgConnectOptions, PgSslMode};
+use sqlx::{ConnectOptions, Row};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use thiserror::Error;
@@ -59,8 +60,8 @@ impl Environment for FixtureEnvironment {
         &self.config
     }
 
-    fn executor(&self) -> Result<Box<dyn EnvironmentExecutor>, EnvironmentError> {
-        Err(EnvironmentError::Config("executor is not available in the fixture environment".into()))
+    fn executor<'a>(&'a self) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+        Box::pin(async { Err(EnvironmentError::Config("executor is not available in the fixture environment".into())) })
     }
 
     fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
@@ -93,16 +94,23 @@ impl Environment for PostgresHarnessEnvironment {
         &self.config
     }
 
-    fn executor(&self) -> Result<Box<dyn EnvironmentExecutor>, EnvironmentError> {
-        let url = self.config.database_url.as_deref().ok_or_else(|| {
-            EnvironmentError::Config("TEST_DATABASE_URL is not configured for the harness environment".into())
-        })?;
-        let mut client = Client::connect(url, NoTls)
-            .map_err(|error| EnvironmentError::Connect(error.to_string()))?;
-        client
-            .batch_execute(&format!("SET search_path TO \"{}\";", self.schema))
-            .map_err(|error| EnvironmentError::Connect(format!("failed to set search_path: {error}")))?;
-        Ok(Box::new(PostgresExecutor::new(client)))
+    fn executor<'a>(&'a self) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+        let url = self.config.database_url.clone();
+        let schema = self.schema.clone();
+        Box::pin(async move {
+            let url = url.ok_or_else(|| {
+                EnvironmentError::Config("TEST_DATABASE_URL is not configured for the harness environment".into())
+            })?;
+            let opts = url.parse::<PgConnectOptions>()
+                .map_err(|e| EnvironmentError::Connect(e.to_string()))?
+                .ssl_mode(PgSslMode::Disable);
+            let mut conn = opts.connect().await
+                .map_err(|e| EnvironmentError::Connect(e.to_string()))?;
+            sqlx::query(&format!("SET search_path TO \"{schema}\""))
+                .execute(&mut conn).await
+                .map_err(|e| EnvironmentError::Connect(format!("failed to set search_path: {e}")))?;
+            Ok(Box::new(PostgresExecutor::new(conn)) as Box<dyn EnvironmentExecutor>)
+        })
     }
 
     fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
@@ -491,104 +499,104 @@ fn to_migrations(migrations: &[InlineMigration]) -> Vec<Migration> {
 }
 
 pub struct PgHarness {
-    client: Client,
+    conn: sqlx::PgConnection,
     schema: String,
     url: String,
 }
 
 impl PgHarness {
-    pub fn new() -> Result<Self, TestSupportError> {
+    pub async fn new() -> Result<Self, TestSupportError> {
         let url = test_database_url()?;
-        let client = Client::connect(&url, NoTls)
-            .map_err(|error| TestSupportError::message(format!("failed to connect to test database: {error}")))?;
+        let opts = url.parse::<PgConnectOptions>()
+            .map_err(|e| TestSupportError::message(format!("failed to parse test database URL: {e}")))?
+            .ssl_mode(PgSslMode::Disable);
+        let conn = opts.connect().await
+            .map_err(|e| TestSupportError::message(format!("failed to connect to test database: {e}")))?;
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let schema = format!("gaman_test_{n}");
-        Ok(Self { client, schema, url })
+        Ok(Self { conn, schema, url })
     }
 
-    pub fn reset(&mut self) -> Result<(), TestSupportError> {
+    pub async fn reset(&mut self) -> Result<(), TestSupportError> {
         let schema = self.schema.clone();
-        self.client
-            .batch_execute(&format!(
-                "DROP SCHEMA IF EXISTS \"{schema}\" CASCADE; CREATE SCHEMA \"{schema}\"; SET search_path TO \"{schema}\";"
-            ))
-            .map_err(|error| TestSupportError::message(format!("failed to reset schema '{schema}': {error}")))
+        let sql = format!(
+            "DROP SCHEMA IF EXISTS \"{schema}\" CASCADE; CREATE SCHEMA \"{schema}\"; SET search_path TO \"{schema}\";"
+        );
+        sqlx::raw_sql(&sql).execute(&mut self.conn).await
+            .map_err(|e| TestSupportError::message(format!("failed to reset schema '{schema}': {e}")))?;
+        Ok(())
     }
 
     pub fn schema_name(&self) -> &str {
         &self.schema
     }
 
-    pub fn batch_execute(&mut self, sql: &str) -> Result<(), TestSupportError> {
-        self.client
-            .batch_execute(sql)
-            .map_err(|error| TestSupportError::message(format!("execute failed: {error}\n  SQL: {sql}")))
+    pub async fn batch_execute(&mut self, sql: &str) -> Result<(), TestSupportError> {
+        sqlx::raw_sql(sql).execute(&mut self.conn).await
+            .map_err(|e| TestSupportError::message(format!("execute failed: {e}\n  SQL: {sql}")))?;
+        Ok(())
     }
 
-    pub fn inspect_schema(&mut self) -> Result<Schema, TestSupportError> {
-        let client = Client::connect(&self.url, NoTls)
-            .map_err(|error| TestSupportError::message(format!("failed to connect for inspect: {error}")))?;
-        let mut executor = PostgresExecutor::new(client);
+    pub async fn inspect_schema(&mut self) -> Result<Schema, TestSupportError> {
+        let opts = self.url.parse::<PgConnectOptions>()
+            .map_err(|e| TestSupportError::message(format!("failed to parse URL for inspect: {e}")))?
+            .ssl_mode(PgSslMode::Disable);
+        let conn = opts.connect().await
+            .map_err(|e| TestSupportError::message(format!("failed to connect for inspect: {e}")))?;
+        let mut executor = PostgresExecutor::new(conn);
         executor
-            .inspect_db(&[self.schema.as_str()])
-            .map_err(|error| TestSupportError::message(format!("inspect_db failed: {error}")))
+            .inspect_db(&[self.schema.as_str()]).await
+            .map_err(|e| TestSupportError::message(format!("inspect_db failed: {e}")))
     }
 
-    pub fn verify(&mut self, migrator: &Migrator) -> Result<Vec<Operation>, TestSupportError> {
+    pub async fn verify(&mut self, migrator: &Migrator) -> Result<Vec<Operation>, TestSupportError> {
         migrator
-            .verify(self.schema.as_str())
-            .map_err(|error| TestSupportError::message(format!("verify failed: {error}")))
-    }
-
-    fn drop_schema(&mut self) {
-        let _ = self.client.execute(
-            &format!("DROP SCHEMA IF EXISTS \"{}\" CASCADE", self.schema),
-            &[],
-        );
-    }
-}
-
-impl Drop for PgHarness {
-    fn drop(&mut self) {
-        self.drop_schema();
+            .verify(self.schema.as_str()).await
+            .map_err(|e| TestSupportError::message(format!("verify failed: {e}")))
     }
 }
 
 impl Executor for PgHarness {
-    fn execute(&mut self, sql: &str) -> Result<(), ExecutorError> {
-        self.client
-            .execute(sql, &[])
-            .map(|_| ())
-            .map_err(|error| ExecutorError::Execute(format!("{error}\n  SQL: {sql}")))
+    fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async move {
+            sqlx::query(sql)
+                .execute(&mut self.conn).await
+                .map(|_| ())
+                .map_err(|e| ExecutorError::Execute(format!("{e}\n  SQL: {sql}")))
+        })
     }
 
-    fn fetch_strings(&mut self, sql: &str) -> Result<Vec<String>, ExecutorError> {
-        let rows = self
-            .client
-            .query(sql, &[])
-            .map_err(|error| ExecutorError::Fetch(error.to_string()))?;
-        Ok(rows.into_iter().map(|row| row.get::<_, String>(0)).collect())
+    fn fetch_strings<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> {
+        Box::pin(async move {
+            let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(sql)
+                .fetch_all(&mut self.conn).await
+                .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+            rows.iter().map(|row| row.try_get::<String, _>(0).map_err(|e| ExecutorError::Fetch(e.to_string()))).collect()
+        })
     }
 
-    fn begin(&mut self) -> Result<(), ExecutorError> {
-        self.client
-            .execute("BEGIN", &[])
-            .map(|_| ())
-            .map_err(|error| ExecutorError::Transaction(error.to_string()))
+    fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async move {
+            sqlx::query("BEGIN").execute(&mut self.conn).await
+                .map(|_| ())
+                .map_err(|e| ExecutorError::Transaction(e.to_string()))
+        })
     }
 
-    fn commit(&mut self) -> Result<(), ExecutorError> {
-        self.client
-            .execute("COMMIT", &[])
-            .map(|_| ())
-            .map_err(|error| ExecutorError::Transaction(error.to_string()))
+    fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async move {
+            sqlx::query("COMMIT").execute(&mut self.conn).await
+                .map(|_| ())
+                .map_err(|e| ExecutorError::Transaction(e.to_string()))
+        })
     }
 
-    fn rollback(&mut self) -> Result<(), ExecutorError> {
-        self.client
-            .execute("ROLLBACK", &[])
-            .map(|_| ())
-            .map_err(|error| ExecutorError::Transaction(error.to_string()))
+    fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async move {
+            sqlx::query("ROLLBACK").execute(&mut self.conn).await
+                .map(|_| ())
+                .map_err(|e| ExecutorError::Transaction(e.to_string()))
+        })
     }
 }
 

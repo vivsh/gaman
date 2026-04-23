@@ -1,87 +1,103 @@
-use postgres::Client;
+use sqlx::PgConnection;
+use sqlx::Row;
 
 use crate::states::{
     Column, Constraint, ForeignKey, FunctionDef, Index, Schema, Table, TriggerDef,
     TriggerEvent, TriggerScope, TriggerTiming, ViewDef, Volatility, schema_qualified_key,
 };
-use super::{Executor, ExecutorError, Introspectable};
+use super::{BoxFuture, Executor, ExecutorError, Introspectable};
 
-// Stable advisory lock key for all gaman instances. Session-scoped — released automatically
-// when the connection closes, so a crashed process can never leave a stale lock.
 const GAMAN_LOCK_KEY: i64 = 7242068691819328000;
 
-/// Wraps a live Postgres client and manages transaction boundaries explicitly.
+/// Wraps a live Postgres connection and manages transaction boundaries explicitly.
 /// Call `begin()` before a migration and `commit()` or `rollback()` after.
 pub struct PostgresExecutor {
-    client: Client,
+    conn: PgConnection,
 }
 
 impl PostgresExecutor {
-    pub fn new(client: Client) -> Self {
-        Self { client }
-    }
-}
-
-fn pg_error_message(e: &postgres::Error) -> String {
-    if let Some(db) = e.as_db_error() {
-        let mut msg = db.message().to_string();
-        if let Some(detail) = db.detail() {
-            msg.push_str(&format!("\n  DETAIL: {detail}"));
-        }
-        if let Some(hint) = db.hint() {
-            msg.push_str(&format!("\n  HINT: {hint}"));
-        }
-        msg
-    } else {
-        e.to_string()
+    pub fn new(conn: PgConnection) -> Self {
+        Self { conn }
     }
 }
 
 impl Executor for PostgresExecutor {
-    fn execute(&mut self, sql: &str) -> Result<(), ExecutorError> {
-        self.client
-            .execute(sql, &[])
-            .map_err(|e| ExecutorError::Execute(format!("{}\n  SQL: {sql}", pg_error_message(&e))))?;
-        Ok(())
+    fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async move {
+            sqlx::query(sql)
+                .execute(&mut self.conn)
+                .await
+                .map(|_| ())
+                .map_err(|e| ExecutorError::Execute(format!("{e}\n  SQL: {sql}")))
+        })
     }
 
-    fn fetch_strings(&mut self, sql: &str) -> Result<Vec<String>, ExecutorError> {
-        let rows = self.client
-            .query(sql, &[])
-            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-        Ok(rows.into_iter().map(|r| r.get::<_, String>(0)).collect())
+    fn fetch_strings<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> {
+        Box::pin(async move {
+            let rows = sqlx::query(sql)
+                .fetch_all(&mut self.conn)
+                .await
+                .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+            rows.into_iter()
+                .map(|r| r.try_get::<String, _>(0).map_err(|e| ExecutorError::Fetch(e.to_string())))
+                .collect()
+        })
     }
 
-    fn begin(&mut self) -> Result<(), ExecutorError> {
-        self.client.execute("BEGIN", &[]).map_err(|e| ExecutorError::Transaction(e.to_string()))?;
-        Ok(())
+    fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async move {
+            sqlx::query("BEGIN")
+                .execute(&mut self.conn)
+                .await
+                .map(|_| ())
+                .map_err(|e| ExecutorError::Transaction(e.to_string()))
+        })
     }
 
-    fn commit(&mut self) -> Result<(), ExecutorError> {
-        self.client.execute("COMMIT", &[]).map_err(|e| ExecutorError::Transaction(e.to_string()))?;
-        Ok(())
+    fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async move {
+            sqlx::query("COMMIT")
+                .execute(&mut self.conn)
+                .await
+                .map(|_| ())
+                .map_err(|e| ExecutorError::Transaction(e.to_string()))
+        })
     }
 
-    fn rollback(&mut self) -> Result<(), ExecutorError> {
-        self.client.execute("ROLLBACK", &[]).map_err(|e| ExecutorError::Transaction(e.to_string()))?;
-        Ok(())
+    fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async move {
+            sqlx::query("ROLLBACK")
+                .execute(&mut self.conn)
+                .await
+                .map(|_| ())
+                .map_err(|e| ExecutorError::Transaction(e.to_string()))
+        })
     }
 
-    fn acquire_lock(&mut self) -> Result<(), ExecutorError> {
-        self.client
-            .execute("SET lock_timeout = '30s'", &[])
-            .map_err(|e| ExecutorError::Execute(e.to_string()))?;
-        self.client
-            .execute(&format!("SELECT pg_advisory_lock({GAMAN_LOCK_KEY})"), &[])
-            .map_err(|e| ExecutorError::Execute(format!("could not acquire migration lock: {e}")))?;
-        Ok(())
+    fn acquire_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async move {
+            sqlx::query("SET lock_timeout = '30s'")
+                .execute(&mut self.conn)
+                .await
+                .map_err(|e| ExecutorError::Execute(e.to_string()))?;
+            sqlx::query("SELECT pg_advisory_lock($1)")
+                .bind(GAMAN_LOCK_KEY)
+                .execute(&mut self.conn)
+                .await
+                .map(|_| ())
+                .map_err(|e| ExecutorError::Execute(format!("could not acquire migration lock: {e}")))
+        })
     }
 
-    fn release_lock(&mut self) -> Result<(), ExecutorError> {
-        self.client
-            .execute(&format!("SELECT pg_advisory_unlock({GAMAN_LOCK_KEY})"), &[])
-            .map_err(|e| ExecutorError::Execute(format!("could not release migration lock: {e}")))?;
-        Ok(())
+    fn release_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async move {
+            sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(GAMAN_LOCK_KEY)
+                .execute(&mut self.conn)
+                .await
+                .map(|_| ())
+                .map_err(|e| ExecutorError::Execute(format!("could not release migration lock: {e}")))
+        })
     }
 }
 
@@ -147,38 +163,36 @@ fn decode_tgtype(tgtype: i16) -> (TriggerTiming, Vec<TriggerEvent>, TriggerScope
 }
 
 impl Introspectable for PostgresExecutor {
-    fn inspect_db(&mut self, schemas: &[&str]) -> Result<Schema, ExecutorError> {
-        let mut state = Schema::default();
+    fn inspect_db<'a>(&'a mut self, schemas: &'a [&'a str]) -> BoxFuture<'a, Result<Schema, ExecutorError>> {
+        Box::pin(async move {
+            let mut state = Schema::default();
 
-        for &schema in schemas {
-            // Tables
-            let table_rows = self.client
-                .query(
+            for &schema in schemas {
+                let table_rows = sqlx::query(
                     "SELECT table_name FROM information_schema.tables \
                      WHERE table_schema = $1 AND table_type = 'BASE TABLE' \
                      AND table_name != 'gaman_migrations' ORDER BY table_name",
-                    &[&schema],
                 )
+                .bind(schema)
+                .fetch_all(&mut self.conn)
+                .await
                 .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
-            for row in &table_rows {
-                let table_name: String = row.get(0);
-                let key = table_name.clone();
+                for row in &table_rows {
+                    let table_name: String = row.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                    let key = table_name.clone();
 
-                let mut table = Table {
-                    name: table_name.clone(),
-                    schema: if schema == "public" { None } else { Some(schema.to_string()) },
-                    columns: vec![],
-                    foreign_keys: vec![],
-                    indexes: vec![],
-                    constraints: vec![],
-                    triggers: vec![],
-                };
+                    let mut table = Table {
+                        name: table_name.clone(),
+                        schema: if schema == "public" { None } else { Some(schema.to_string()) },
+                        columns: vec![],
+                        foreign_keys: vec![],
+                        indexes: vec![],
+                        constraints: vec![],
+                        triggers: vec![],
+                    };
 
-                // Columns — join pg_attribute to pick up identity column metadata
-                // that information_schema.columns does not expose.
-                let col_rows = self.client
-                    .query(
+                    let col_rows = sqlx::query(
                         "SELECT c.column_name, c.data_type, c.character_maximum_length, \
                          c.numeric_precision, c.numeric_scale, c.is_nullable, c.column_default, \
                          a.attidentity \
@@ -188,13 +202,14 @@ impl Introspectable for PostgresExecutor {
                          JOIN pg_attribute a ON a.attrelid = cl.oid AND a.attname = c.column_name \
                          WHERE c.table_schema = $1 AND c.table_name = $2 \
                          ORDER BY c.ordinal_position",
-                        &[&schema, &table_name],
                     )
+                    .bind(schema)
+                    .bind(&table_name)
+                    .fetch_all(&mut self.conn)
+                    .await
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
-                // Collect PK columns first so we can mark primary_key on the Column struct.
-                let pk_rows = self.client
-                    .query(
+                    let pk_rows = sqlx::query(
                         "SELECT kcu.column_name \
                          FROM information_schema.table_constraints tc \
                          JOIN information_schema.key_column_usage kcu \
@@ -204,62 +219,66 @@ impl Introspectable for PostgresExecutor {
                          WHERE tc.table_schema = $1 AND tc.table_name = $2 \
                          AND tc.constraint_type = 'PRIMARY KEY' \
                          ORDER BY kcu.ordinal_position",
-                        &[&schema, &table_name],
                     )
+                    .bind(schema)
+                    .bind(&table_name)
+                    .fetch_all(&mut self.conn)
+                    .await
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let pk_cols: Vec<String> = pk_rows.iter().map(|r| r.get::<_, String>(0)).collect();
+                    let pk_cols: Vec<String> = pk_rows
+                        .iter()
+                        .map(|r| r.try_get::<String, _>(0).map_err(|e| ExecutorError::Fetch(e.to_string())))
+                        .collect::<Result<_, _>>()?;
 
-                for cr in &col_rows {
-                    let col_name: String = cr.get(0);
-                    let data_type: String = cr.get(1);
-                    let char_max: Option<i32> = cr.get(2);
-                    let num_prec: Option<i32> = cr.get(3);
-                    let num_scale: Option<i32> = cr.get(4);
-                    let is_nullable: String = cr.get(5);
-                    let col_default: Option<String> = cr.get(6);
-                    // attidentity is pg "char" (i8): b'a' = ALWAYS, b'd' = BY DEFAULT, 0 = not identity
-                    let attidentity: i8 = cr.get(7);
+                    for cr in &col_rows {
+                        let col_name: String = cr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let data_type: String = cr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let char_max: Option<i32> = cr.try_get(2).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let num_prec: Option<i32> = cr.try_get(3).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let num_scale: Option<i32> = cr.try_get(4).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let is_nullable: String = cr.try_get(5).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let col_default: Option<String> = cr.try_get(6).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        // attidentity is pg "char" (i8): b'a' = ALWAYS, b'd' = BY DEFAULT, 0 = not identity
+                        let attidentity: i8 = cr.try_get(7).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
-                    let default = match attidentity as u8 {
-                        b'a' => Some("GENERATED ALWAYS AS IDENTITY".to_string()),
-                        b'd' => Some("GENERATED BY DEFAULT AS IDENTITY".to_string()),
-                        _ => col_default,
-                    };
+                        let default = match attidentity as u8 {
+                            b'a' => Some("GENERATED ALWAYS AS IDENTITY".to_string()),
+                            b'd' => Some("GENERATED BY DEFAULT AS IDENTITY".to_string()),
+                            _ => col_default,
+                        };
 
-                    let col_type = if data_type == "character varying" {
-                        match char_max {
-                            Some(n) => format!("varchar({})", n),
-                            None => "text".to_string(),
-                        }
-                    } else if data_type == "character" {
-                        match char_max {
-                            Some(n) => format!("char({})", n),
-                            None => "char".to_string(),
-                        }
-                    } else if data_type == "numeric" || data_type == "decimal" {
-                        match (num_prec, num_scale) {
-                            (Some(p), Some(s)) => format!("numeric({p}, {s})"),
-                            _ => "numeric".to_string(),
-                        }
-                    } else {
-                        data_type.clone()
-                    };
+                        let col_type = if data_type == "character varying" {
+                            match char_max {
+                                Some(n) => format!("varchar({})", n),
+                                None => "text".to_string(),
+                            }
+                        } else if data_type == "character" {
+                            match char_max {
+                                Some(n) => format!("char({})", n),
+                                None => "char".to_string(),
+                            }
+                        } else if data_type == "numeric" || data_type == "decimal" {
+                            match (num_prec, num_scale) {
+                                (Some(p), Some(s)) => format!("numeric({p}, {s})"),
+                                _ => "numeric".to_string(),
+                            }
+                        } else {
+                            data_type.clone()
+                        };
 
-                    let is_pk = pk_cols.contains(&col_name);
-                    table.columns.push(Column {
-                        name: col_name,
-                        col_type,
-                        nullable: is_nullable == "YES",
-                        default,
-                        primary_key: is_pk,
-                        references: None,
-                        check: None,
-                    });
-                }
+                        let is_pk = pk_cols.contains(&col_name);
+                        table.columns.push(Column {
+                            name: col_name,
+                            col_type,
+                            nullable: is_nullable == "YES",
+                            default,
+                            primary_key: is_pk,
+                            references: None,
+                            check: None,
+                        });
+                    }
 
-                // Foreign keys
-                let fk_rows = self.client
-                    .query(
+                    let fk_rows = sqlx::query(
                         "SELECT c.conname, \
                          a.attname AS from_col, \
                          fn.nspname AS ref_schema, \
@@ -274,28 +293,28 @@ impl Introspectable for PostgresExecutor {
                          JOIN pg_attribute fa ON fa.attrelid = fc.oid AND fa.attnum = ANY(c.confkey) \
                          WHERE c.contype = 'f' AND tn.nspname = $1 AND t.relname = $2 \
                          ORDER BY c.conname, array_position(c.conkey, a.attnum)",
-                        &[&schema, &table_name],
                     )
+                    .bind(schema)
+                    .bind(&table_name)
+                    .fetch_all(&mut self.conn)
+                    .await
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
-                for fkr in &fk_rows {
-                    let fk_name: String = fkr.get(0);
-                    let from_col: String = fkr.get(1);
-                    let _ref_schema: String = fkr.get(2);
-                    let ref_table: String = fkr.get(3);
-                    let ref_col: String = fkr.get(4);
-                    let to_table = ref_table.clone();
-                    table.foreign_keys.push(ForeignKey {
-                        name: fk_name,
-                        from_column: from_col,
-                        to_table,
-                        to_column: ref_col,
-                    });
-                }
+                    for fkr in &fk_rows {
+                        let fk_name: String = fkr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let from_col: String = fkr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let _ref_schema: String = fkr.try_get(2).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let ref_table: String = fkr.try_get(3).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let ref_col: String = fkr.try_get(4).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        table.foreign_keys.push(ForeignKey {
+                            name: fk_name,
+                            from_column: from_col,
+                            to_table: ref_table,
+                            to_column: ref_col,
+                        });
+                    }
 
-                // Unique constraints — one row per column, accumulated in Rust
-                let uq_rows = self.client
-                    .query(
+                    let uq_rows = sqlx::query(
                         "SELECT tc.constraint_name, kcu.column_name \
                          FROM information_schema.table_constraints tc \
                          JOIN information_schema.key_column_usage kcu \
@@ -304,23 +323,24 @@ impl Introspectable for PostgresExecutor {
                          WHERE tc.table_schema = $1 AND tc.table_name = $2 \
                          AND tc.constraint_type = 'UNIQUE' \
                          ORDER BY tc.constraint_name, kcu.ordinal_position",
-                        &[&schema, &table_name],
                     )
+                    .bind(schema)
+                    .bind(&table_name)
+                    .fetch_all(&mut self.conn)
+                    .await
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
-                let mut uq_map: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
-                for uqr in &uq_rows {
-                    let cname: String = uqr.get(0);
-                    let col: String = uqr.get(1);
-                    uq_map.entry(cname).or_default().push(col);
-                }
-                for (name, columns) in uq_map {
-                    table.constraints.push(Constraint::Unique { name, columns });
-                }
+                    let mut uq_map: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+                    for uqr in &uq_rows {
+                        let cname: String = uqr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let col: String = uqr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        uq_map.entry(cname).or_default().push(col);
+                    }
+                    for (name, columns) in uq_map {
+                        table.constraints.push(Constraint::Unique { name, columns });
+                    }
 
-                // Check constraints (skip _not_null auto-generated ones)
-                let ck_rows = self.client
-                    .query(
+                    let ck_rows = sqlx::query(
                         "SELECT tc.constraint_name, cc.check_clause \
                          FROM information_schema.table_constraints tc \
                          JOIN information_schema.check_constraints cc \
@@ -330,19 +350,20 @@ impl Introspectable for PostgresExecutor {
                          AND tc.constraint_type = 'CHECK' \
                          AND cc.check_clause NOT LIKE '%IS NOT NULL' \
                          ORDER BY tc.constraint_name",
-                        &[&schema, &table_name],
                     )
+                    .bind(schema)
+                    .bind(&table_name)
+                    .fetch_all(&mut self.conn)
+                    .await
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
-                for ckr in &ck_rows {
-                    let cname: String = ckr.get(0);
-                    let expr: String = ckr.get(1);
-                    table.constraints.push(Constraint::Check { name: cname, expression: expr });
-                }
+                    for ckr in &ck_rows {
+                        let cname: String = ckr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let expr: String = ckr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        table.constraints.push(Constraint::Check { name: cname, expression: expr });
+                    }
 
-                // Indexes — skip those backing constraints and the PK
-                let idx_rows = self.client
-                    .query(
+                    let idx_rows = sqlx::query(
                         "SELECT i.relname, ix2.indexdef \
                          FROM pg_class t \
                          JOIN pg_index ix ON t.oid = ix.indrelid \
@@ -357,20 +378,21 @@ impl Introspectable for PostgresExecutor {
                            AND c.constraint_name = i.relname \
                          ) \
                          ORDER BY i.relname",
-                        &[&schema, &table_name],
                     )
+                    .bind(schema)
+                    .bind(&table_name)
+                    .fetch_all(&mut self.conn)
+                    .await
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
-                for idr in &idx_rows {
-                    let idx_name: String = idr.get(0);
-                    let idx_def: String = idr.get(1);
-                    let (cols, unique, predicate) = parse_index_def(&idx_def);
-                    table.indexes.push(Index { name: idx_name, columns: cols, unique, predicate });
-                }
+                    for idr in &idx_rows {
+                        let idx_name: String = idr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let idx_def: String = idr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let (cols, unique, predicate) = parse_index_def(&idx_def);
+                        table.indexes.push(Index { name: idx_name, columns: cols, unique, predicate });
+                    }
 
-                // Triggers
-                let tg_rows = self.client
-                    .query(
+                    let tg_rows = sqlx::query(
                         "SELECT t.tgname, t.tgtype, p.proname, n2.nspname \
                          FROM pg_trigger t \
                          JOIN pg_class c ON c.oid = t.tgrelid \
@@ -380,56 +402,58 @@ impl Introspectable for PostgresExecutor {
                          WHERE n.nspname = $1 AND c.relname = $2 \
                          AND NOT t.tgisinternal \
                          ORDER BY t.tgname",
-                        &[&schema, &table_name],
                     )
+                    .bind(schema)
+                    .bind(&table_name)
+                    .fetch_all(&mut self.conn)
+                    .await
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
-                for tgr in &tg_rows {
-                    let tg_name: String = tgr.get(0);
-                    let tgtype: i16 = tgr.get(1);
-                    let fn_name: String = tgr.get(2);
-                    let fn_schema: String = tgr.get(3);
-                    let (timing, events, scope) = decode_tgtype(tgtype);
-                    let fn_key = schema_qualified_key(&fn_name, Some(&fn_schema));
-                    table.triggers.push(TriggerDef {
-                        name: Some(tg_name),
-                        timing,
-                        events,
-                        scope,
-                        function_name: Some(fn_key),
-                        when: None,
-                        body: None,
-                        language: None,
-                    });
+                    for tgr in &tg_rows {
+                        let tg_name: String = tgr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let tgtype: i16 = tgr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let fn_name: String = tgr.try_get(2).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let fn_schema: String = tgr.try_get(3).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let (timing, events, scope) = decode_tgtype(tgtype);
+                        let fn_key = schema_qualified_key(&fn_name, Some(&fn_schema));
+                        table.triggers.push(TriggerDef {
+                            name: Some(tg_name),
+                            timing,
+                            events,
+                            scope,
+                            function_name: Some(fn_key),
+                            when: None,
+                            body: None,
+                            language: None,
+                        });
+                    }
+
+                    state.tables.insert(key, table);
                 }
 
-                state.tables.insert(key, table);
-            }
-
-            // Views
-            let view_rows = self.client
-                .query(
+                let view_rows = sqlx::query(
                     "SELECT table_name, view_definition FROM information_schema.views \
                      WHERE table_schema = $1 ORDER BY table_name",
-                    &[&schema],
                 )
+                .bind(schema)
+                .fetch_all(&mut self.conn)
+                .await
                 .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
-            for vr in &view_rows {
-                let view_name: String = vr.get(0);
-                let definition: String = vr.get(1);
-                let key = schema_qualified_key(&view_name, Some(schema));
-                state.views.insert(key, ViewDef {
-                    name: view_name,
-                    schema: if schema == "public" { None } else { Some(schema.to_string()) },
-                    definition,
-                });
+                for vr in &view_rows {
+                    let view_name: String = vr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                    let definition: String = vr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                    let key = schema_qualified_key(&view_name, Some(schema));
+                    state.views.insert(key, ViewDef {
+                        name: view_name,
+                        schema: if schema == "public" { None } else { Some(schema.to_string()) },
+                        definition,
+                    });
+                }
             }
-        }
 
-        // Functions — one query covering all requested schemas
-        let fn_rows = self.client
-            .query(
+            let schema_list: Vec<String> = schemas.iter().map(|s| s.to_string()).collect();
+            let fn_rows = sqlx::query(
                 "SELECT p.proname, n.nspname, \
                  pg_get_function_identity_arguments(p.oid) AS args, \
                  p.prosrc AS body, \
@@ -444,46 +468,49 @@ impl Introspectable for PostgresExecutor {
                  AND l.lanname NOT IN ('internal', 'c') \
                  AND n.nspname = ANY($1) \
                  ORDER BY n.nspname, p.proname",
-                &[&schemas.to_vec()],
             )
+            .bind(&schema_list[..])
+            .fetch_all(&mut self.conn)
+            .await
             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
-        for fnr in &fn_rows {
-            let fn_name: String = fnr.get(0);
-            let fn_schema: String = fnr.get(1);
-            let args: String = fnr.get(2);
-            let body: String = fnr.get(3);
-            let language: String = fnr.get(4);
-            let provolatile: i8 = fnr.get(5);
-            let security_definer: bool = fnr.get(6);
-            let returns: String = fnr.get(7);
+            for fnr in &fn_rows {
+                let fn_name: String = fnr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let fn_schema: String = fnr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let args: String = fnr.try_get(2).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let body: String = fnr.try_get(3).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let language: String = fnr.try_get(4).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let provolatile: i8 = fnr.try_get(5).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let security_definer: bool = fnr.try_get(6).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let returns: String = fnr.try_get(7).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
-            let volatility = match provolatile as u8 {
-                b'i' => Volatility::Immutable,
-                b's' => Volatility::Stable,
-                _ => Volatility::Volatile,
-            };
+                let volatility = match provolatile as u8 {
+                    b'i' => Volatility::Immutable,
+                    b's' => Volatility::Stable,
+                    _ => Volatility::Volatile,
+                };
 
-            let key = schema_qualified_key(&fn_name, Some(&fn_schema));
-            let final_key = if args.is_empty() {
-                key
-            } else {
-                format!("{}({})", key, args)
-            };
+                let key = schema_qualified_key(&fn_name, Some(&fn_schema));
+                let final_key = if args.is_empty() {
+                    key
+                } else {
+                    format!("{}({})", key, args)
+                };
 
-            state.functions.insert(final_key, FunctionDef {
-                name: fn_name,
-                schema: if fn_schema == "public" { None } else { Some(fn_schema) },
-                arguments: args,
-                returns,
-                language,
-                body,
-                volatility,
-                security_definer,
-            });
-        }
+                state.functions.insert(final_key, FunctionDef {
+                    name: fn_name,
+                    schema: if fn_schema == "public" { None } else { Some(fn_schema) },
+                    arguments: args,
+                    returns,
+                    language,
+                    body,
+                    volatility,
+                    security_definer,
+                });
+            }
 
-        Ok(state)
+            Ok(state)
+        })
     }
 }
 

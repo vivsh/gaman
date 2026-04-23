@@ -427,9 +427,17 @@ fn decompose(ops: Vec<Operation>) -> Vec<Operation> {
 // After sorting, folds decomposed sub-entity ops back into their parent
 // CreateTable when the dialect supports inline definitions (e.g. Postgres
 // can inline FKs, indexes, constraints). This produces cleaner migrations.
-// FKs are only merged when the referenced table already exists or was created
-// earlier in the sorted sequence — otherwise merging would introduce a forward
-// reference that breaks execution order.
+// FKs are only inlined when the reference is self-referential or points to a
+// table that already existed before this migration — cross-table FKs within
+// the same migration stay as standalone ops (already sorted after all creates).
+fn fk_can_be_inlined(
+    to_table: &str,
+    owner_table: &str,
+    tables_being_created: &HashSet<String>,
+) -> bool {
+    to_table == owner_table || !tables_being_created.contains(to_table)
+}
+
 fn merge_operations(ops: Vec<Operation>, dialect: &Dialect) -> Vec<Operation> {
     let tables_being_created: HashSet<String> = ops.iter()
         .filter_map(|op| match op {
@@ -445,9 +453,7 @@ fn merge_operations(ops: Vec<Operation>, dialect: &Dialect) -> Vec<Operation> {
             Operation::AddForeignKey { table_name, foreign_key }
                 if created_tables.contains_key(table_name)
                     && dialect.should_merge(table_name, &op)
-                    && (!tables_being_created.contains(&foreign_key.to_table)
-                        || created_tables.contains_key(&foreign_key.to_table)
-                        || foreign_key.to_table == *table_name) =>
+                    && fk_can_be_inlined(&foreign_key.to_table, table_name, &tables_being_created) =>
             {
                 let idx = created_tables[table_name];
                 if let Operation::CreateTable { ref mut table } = result[idx] {

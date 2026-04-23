@@ -43,7 +43,7 @@ pub mod schema {
 pub mod core {
     pub use crate::migrator::{Migrator, MigratorError};
     pub use crate::executor::{
-        Executor, ExecutorError, Invoker, InvokerError, Introspectable,
+        Executor, ExecutorError, BoxFuture, Invoker, InvokerError, Introspectable,
         PostgresExecutor, SubprocessInvoker,
     };
     pub use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
