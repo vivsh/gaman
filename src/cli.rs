@@ -7,7 +7,7 @@ use crate::migrator::{Migrator, MigratorError};
 use crate::states::Schema;
 use crate::adapters::YamlAdapter;
 use crate::dialects::Dialect;
-use crate::executor::{BoxFuture, Invoker, PostgresExecutor, SubprocessInvoker};
+use crate::executor::{BoxFuture, Invoker, SubprocessInvoker, connect_environment_executor};
 use crate::prompter::CliPromptEngine;
 use crate::disambiguator::{Decision, PromptEngine};
 
@@ -25,6 +25,10 @@ pub struct GamanArgs {
     /// database connection string (overrides DATABASE_URL env var)
     #[argh(option, short = 'd')]
     pub database_url: Option<String>,
+
+    /// database dialect to use when it cannot be inferred from DATABASE_URL
+    #[argh(option)]
+    pub dialect: Option<String>,
 
     #[argh(subcommand)]
     pub command: Command,
@@ -149,11 +153,12 @@ pub enum CommandError {
 
 struct CommandEnvironment {
     config: Arc<Config>,
+    dialect: Option<Dialect>,
 }
 
 impl CommandEnvironment {
-    fn new(config: Arc<Config>) -> Self {
-        Self { config }
+    fn new(config: Arc<Config>, dialect: Option<Dialect>) -> Self {
+        Self { config, dialect }
     }
 }
 
@@ -168,27 +173,26 @@ impl Environment for CommandEnvironment {
                 .ok_or_else(|| EnvironmentError::Config(
                     "DATABASE_URL is not set — pass --database-url or set it in .env".into(),
                 ))?;
-            match self.dialect() {
-                Dialect::Postgres => {
-                    use sqlx::ConnectOptions;
-                    let opts = url.parse::<sqlx::postgres::PgConnectOptions>()
-                        .map_err(|e| EnvironmentError::Connect(e.to_string()))?
-                        .ssl_mode(sqlx::postgres::PgSslMode::Disable);
-                    let conn = opts.connect().await.map_err(|e| EnvironmentError::Connect(e.to_string()))?;
-                    Ok(Box::new(PostgresExecutor::new(conn)) as Box<dyn EnvironmentExecutor>)
-                }
-            }
+            connect_environment_executor(self.dialect(), url, self.config.tls)
+                .await
+                .map_err(EnvironmentError::from)
         })
     }
 
     fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
         Ok(Some(Box::new(SubprocessInvoker)))
     }
+
+    fn dialect(&self) -> Dialect {
+        self.dialect
+            .or_else(|| self.config.dialect())
+            .unwrap_or(Dialect::Postgres)
+    }
 }
 
 impl GamanArgs {
     /// Apply CLI overrides onto `config` and return the selected subcommand.
-    pub(crate) fn apply_to(self, config: &mut Config) -> Command {
+    pub(crate) fn apply_to(self, config: &mut Config) -> (Command, Option<String>) {
         if let Some(dir) = self.migrations_dir {
             config.migrations_dir = std::path::PathBuf::from(dir);
         }
@@ -198,16 +202,26 @@ impl GamanArgs {
         if let Some(url) = self.database_url {
             config.database_url = Some(url);
         }
-        self.command
+        (self.command, self.dialect)
+    }
+}
+
+pub(crate) fn parse_dialect(value: Option<String>) -> Result<Option<Dialect>, CommandError> {
+    match value {
+        Some(value) => Dialect::parse(&value)
+            .map(Some)
+            .ok_or_else(|| CommandError::Config(format!("unsupported dialect '{value}'"))),
+        None => Ok(None),
     }
 }
 
 pub async fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
     let mut config = Config::default();
-    let cmd = args.apply_to(&mut config);
+    let (cmd, dialect) = args.apply_to(&mut config);
+    let dialect = parse_dialect(dialect)?;
     let config = Arc::new(config);
     let source = Box::new(YamlAdapter { directory: config.migrations_dir.clone() });
-    let environment = Box::new(CommandEnvironment::new(Arc::clone(&config)));
+    let environment = Box::new(CommandEnvironment::new(Arc::clone(&config), dialect));
     let migrator = Migrator::new(source, environment)?;
     dispatch(migrator, None, cmd).await
 }

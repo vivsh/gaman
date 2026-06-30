@@ -24,7 +24,7 @@ struct User {
 Use table attributes when the default mapping from struct name to table name is not enough.
 
 - `#[table(name = "...")]` overrides the default snake_case table name.
-- `#[table(schema = "...")]` sets a non-public PostgreSQL schema.
+- `#[table(schema = "...")]` sets a non-public schema for dialects that support schemas. SQLite rejects schema-qualified objects.
 
 ## Column attributes
 
@@ -41,11 +41,15 @@ Column attributes fall into a few groups.
 - `#[column(nullable)]` forces the column to be nullable.
 - `#[column(nullable = false)]` forces the column to be non-nullable.
 
-If you do not specify `type = "..."`, Gaman uses the `ColumnType` trait for the Rust field type. `Option<T>` becomes nullable through that path.
+If you do not specify `type = "..."`, Gaman uses the `ColumnType` trait for the Rust field type and the active dialect. `Option<T>` becomes nullable through that path. Built-in mappings use PostgreSQL types by default and SQLite-native types when the `sqlite` feature and `Dialect::Sqlite` are active.
 
 ### Constraints and defaults
 
 - `#[column(primary_key)]` marks the column as the primary key.
+- `#[column(index)]` adds a single-column index named `{table}_{column}_idx`.
+- `#[column(index_name = "idx_name")]` adds a single-column index with an explicit name.
+- `#[column(unique)]` adds a single-column unique constraint named `{table}_{column}_key`.
+- `#[column(unique_name = "constraint_name")]` adds a single-column unique constraint with an explicit name.
 - `#[column(default = "expr")]` sets a SQL default expression.
 - `#[column(references = "table.column")]` adds an inline foreign key.
 - `#[column(references_name = "fk_name")]` names that foreign key explicitly.

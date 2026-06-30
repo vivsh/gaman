@@ -15,7 +15,14 @@ fn basic_table(name: &str) -> Table {
 }
 
 fn text_col(name: &str) -> Column {
-    Column { name: name.to_string(), col_type: "text".to_string(), nullable: false, default: None, primary_key: false, ..Default::default() }
+    Column {
+        name: name.to_string(),
+        col_type: "text".to_string(),
+        nullable: false,
+        default: None,
+        primary_key: false,
+        ..Default::default()
+    }
 }
 
 fn apply_ok(state: &mut Schema, op: Operation) {
@@ -26,7 +33,12 @@ fn apply_ok(state: &mut Schema, op: Operation) {
 #[test]
 fn create_table() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
     assert!(s.tables.contains_key("users"));
 }
 
@@ -34,8 +46,17 @@ fn create_table() {
 #[test]
 fn create_table_duplicate() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    let err = s.apply(&Operation::CreateTable { table: basic_table("users") }).unwrap_err();
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    let err = s
+        .apply(&Operation::CreateTable {
+            table: basic_table("users"),
+        })
+        .unwrap_err();
     assert_eq!(err, ReplayError::TableAlreadyExists("users".to_string()));
 }
 
@@ -43,8 +64,18 @@ fn create_table_duplicate() {
 #[test]
 fn drop_table() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::DropTable { table: basic_table("users") });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::DropTable {
+            table: basic_table("users"),
+        },
+    );
     assert!(!s.tables.contains_key("users"));
 }
 
@@ -52,7 +83,11 @@ fn drop_table() {
 #[test]
 fn drop_table_not_found() {
     let mut s = Schema::default();
-    let err = s.apply(&Operation::DropTable { table: basic_table("ghost") }).unwrap_err();
+    let err = s
+        .apply(&Operation::DropTable {
+            table: basic_table("ghost"),
+        })
+        .unwrap_err();
     assert_eq!(err, ReplayError::TableNotFound("ghost".to_string()));
 }
 
@@ -60,8 +95,19 @@ fn drop_table_not_found() {
 #[test]
 fn rename_table() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::RenameTable { old_name: "users".to_string(), new_name: "accounts".to_string() });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::RenameTable {
+            old_name: "users".to_string(),
+            new_name: "accounts".to_string(),
+        },
+    );
     assert!(!s.tables.contains_key("users"));
     assert_eq!(s.tables["accounts"].name, "accounts");
 }
@@ -70,12 +116,24 @@ fn rename_table() {
 #[test]
 fn rename_table_target_exists() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("accounts") });
-    let err = s.apply(&Operation::RenameTable {
-        old_name: "users".to_string(),
-        new_name: "accounts".to_string(),
-    }).unwrap_err();
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("accounts"),
+        },
+    );
+    let err = s
+        .apply(&Operation::RenameTable {
+            old_name: "users".to_string(),
+            new_name: "accounts".to_string(),
+        })
+        .unwrap_err();
     assert!(matches!(err, ReplayError::RenameTargetExists { .. }));
 }
 
@@ -83,8 +141,19 @@ fn rename_table_target_exists() {
 #[test]
 fn add_column() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("email"),
+        },
+    );
     assert_eq!(s.tables["users"].columns[0].name, "email");
 }
 
@@ -92,9 +161,25 @@ fn add_column() {
 #[test]
 fn add_column_duplicate() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") });
-    let err = s.apply(&Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") }).unwrap_err();
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("email"),
+        },
+    );
+    let err = s
+        .apply(&Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("email"),
+        })
+        .unwrap_err();
     assert!(matches!(err, ReplayError::ColumnAlreadyExists { .. }));
 }
 
@@ -102,9 +187,27 @@ fn add_column_duplicate() {
 #[test]
 fn drop_column() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") });
-    apply_ok(&mut s, Operation::DropColumn { table_name: "users".to_string(), column: text_col("email"), cascade: false });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("email"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::DropColumn {
+            table_name: "users".to_string(),
+            column: text_col("email"),
+            cascade: false,
+        },
+    );
     assert!(s.tables["users"].columns.is_empty());
 }
 
@@ -112,8 +215,19 @@ fn drop_column() {
 #[test]
 fn drop_column_not_found() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    let err = s.apply(&Operation::DropColumn { table_name: "users".to_string(), column: text_col("ghost"), cascade: false }).unwrap_err();
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    let err = s
+        .apply(&Operation::DropColumn {
+            table_name: "users".to_string(),
+            column: text_col("ghost"),
+            cascade: false,
+        })
+        .unwrap_err();
     assert!(matches!(err, ReplayError::ColumnNotFound { .. }));
 }
 
@@ -121,13 +235,27 @@ fn drop_column_not_found() {
 #[test]
 fn rename_column() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") });
-    apply_ok(&mut s, Operation::RenameColumn {
-        table_name: "users".to_string(),
-        old_name: "email".to_string(),
-        new_name: "email_address".to_string(),
-    });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("email"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::RenameColumn {
+            table_name: "users".to_string(),
+            old_name: "email".to_string(),
+            new_name: "email_address".to_string(),
+        },
+    );
     assert_eq!(s.tables["users"].columns[0].name, "email_address");
 }
 
@@ -135,15 +263,36 @@ fn rename_column() {
 #[test]
 fn alter_column() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("bio") });
-    let new_col = Column { name: "bio".to_string(), col_type: "varchar(500)".to_string(), nullable: true, default: None, primary_key: false, ..Default::default() };
-    apply_ok(&mut s, Operation::AlterColumn {
-        table_name: "users".to_string(),
-        old: text_col("bio"),
-        new: new_col,
-        cast_expr: None,
-    });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("bio"),
+        },
+    );
+    let new_col = Column {
+        name: "bio".to_string(),
+        col_type: "varchar(500)".to_string(),
+        nullable: true,
+        default: None,
+        primary_key: false,
+        ..Default::default()
+    };
+    apply_ok(
+        &mut s,
+        Operation::AlterColumn {
+            table_name: "users".to_string(),
+            old: text_col("bio"),
+            new: new_col,
+            cast_expr: None,
+        },
+    );
     assert_eq!(s.tables["users"].columns[0].col_type, "varchar(500)");
     assert!(s.tables["users"].columns[0].nullable);
 }
@@ -152,9 +301,25 @@ fn alter_column() {
 #[test]
 fn add_foreign_key() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("posts") });
-    let fk = ForeignKey { name: "fk_user".to_string(), from_column: "user_id".to_string(), to_table: "users".to_string(), to_column: "id".to_string() };
-    apply_ok(&mut s, Operation::AddForeignKey { table_name: "posts".to_string(), foreign_key: fk });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("posts"),
+        },
+    );
+    let fk = ForeignKey {
+        name: "fk_user".to_string(),
+        from_column: "user_id".to_string(),
+        to_table: "users".to_string(),
+        to_column: "id".to_string(),
+    };
+    apply_ok(
+        &mut s,
+        Operation::AddForeignKey {
+            table_name: "posts".to_string(),
+            foreign_key: fk,
+        },
+    );
     assert_eq!(s.tables["posts"].foreign_keys[0].name, "fk_user");
 }
 
@@ -162,10 +327,31 @@ fn add_foreign_key() {
 #[test]
 fn add_foreign_key_duplicate() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("posts") });
-    let fk = ForeignKey { name: "fk_user".to_string(), from_column: "user_id".to_string(), to_table: "users".to_string(), to_column: "id".to_string() };
-    apply_ok(&mut s, Operation::AddForeignKey { table_name: "posts".to_string(), foreign_key: fk.clone() });
-    let err = s.apply(&Operation::AddForeignKey { table_name: "posts".to_string(), foreign_key: fk }).unwrap_err();
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("posts"),
+        },
+    );
+    let fk = ForeignKey {
+        name: "fk_user".to_string(),
+        from_column: "user_id".to_string(),
+        to_table: "users".to_string(),
+        to_column: "id".to_string(),
+    };
+    apply_ok(
+        &mut s,
+        Operation::AddForeignKey {
+            table_name: "posts".to_string(),
+            foreign_key: fk.clone(),
+        },
+    );
+    let err = s
+        .apply(&Operation::AddForeignKey {
+            table_name: "posts".to_string(),
+            foreign_key: fk,
+        })
+        .unwrap_err();
     assert!(matches!(err, ReplayError::ForeignKeyAlreadyExists { .. }));
 }
 
@@ -173,10 +359,38 @@ fn add_foreign_key_duplicate() {
 #[test]
 fn drop_foreign_key() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("posts") });
-    let fk = ForeignKey { name: "fk_user".to_string(), from_column: "user_id".to_string(), to_table: "users".to_string(), to_column: "id".to_string() };
-    apply_ok(&mut s, Operation::AddForeignKey { table_name: "posts".to_string(), foreign_key: fk });
-    apply_ok(&mut s, Operation::DropForeignKey { table_name: "posts".to_string(), foreign_key: ForeignKey { name: "fk_user".to_string(), from_column: "user_id".to_string(), to_table: "users".to_string(), to_column: "id".to_string() }, cascade: false });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("posts"),
+        },
+    );
+    let fk = ForeignKey {
+        name: "fk_user".to_string(),
+        from_column: "user_id".to_string(),
+        to_table: "users".to_string(),
+        to_column: "id".to_string(),
+    };
+    apply_ok(
+        &mut s,
+        Operation::AddForeignKey {
+            table_name: "posts".to_string(),
+            foreign_key: fk,
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::DropForeignKey {
+            table_name: "posts".to_string(),
+            foreign_key: ForeignKey {
+                name: "fk_user".to_string(),
+                from_column: "user_id".to_string(),
+                to_table: "users".to_string(),
+                to_column: "id".to_string(),
+            },
+            cascade: false,
+        },
+    );
     assert!(s.tables["posts"].foreign_keys.is_empty());
 }
 
@@ -184,9 +398,26 @@ fn drop_foreign_key() {
 #[test]
 fn add_index() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    let idx = Index { name: "idx_email".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None };
-    apply_ok(&mut s, Operation::AddIndex { table_name: "users".to_string(), index: idx, concurrent: false });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    let idx = Index {
+        name: "idx_email".to_string(),
+        columns: vec!["email".to_string()],
+        unique: true,
+        predicate: None,
+    };
+    apply_ok(
+        &mut s,
+        Operation::AddIndex {
+            table_name: "users".to_string(),
+            index: idx,
+            concurrent: false,
+        },
+    );
     assert_eq!(s.tables["users"].indexes[0].name, "idx_email");
 }
 
@@ -194,10 +425,33 @@ fn add_index() {
 #[test]
 fn add_index_duplicate() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    let idx = Index { name: "idx_email".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None };
-    apply_ok(&mut s, Operation::AddIndex { table_name: "users".to_string(), index: idx.clone(), concurrent: false });
-    let err = s.apply(&Operation::AddIndex { table_name: "users".to_string(), index: idx, concurrent: false }).unwrap_err();
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    let idx = Index {
+        name: "idx_email".to_string(),
+        columns: vec!["email".to_string()],
+        unique: true,
+        predicate: None,
+    };
+    apply_ok(
+        &mut s,
+        Operation::AddIndex {
+            table_name: "users".to_string(),
+            index: idx.clone(),
+            concurrent: false,
+        },
+    );
+    let err = s
+        .apply(&Operation::AddIndex {
+            table_name: "users".to_string(),
+            index: idx,
+            concurrent: false,
+        })
+        .unwrap_err();
     assert!(matches!(err, ReplayError::IndexAlreadyExists { .. }));
 }
 
@@ -205,10 +459,39 @@ fn add_index_duplicate() {
 #[test]
 fn drop_index() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    let idx = Index { name: "idx_email".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None };
-    apply_ok(&mut s, Operation::AddIndex { table_name: "users".to_string(), index: idx, concurrent: false });
-    apply_ok(&mut s, Operation::DropIndex { table_name: "users".to_string(), index: Index { name: "idx_email".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None }, concurrent: false });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    let idx = Index {
+        name: "idx_email".to_string(),
+        columns: vec!["email".to_string()],
+        unique: true,
+        predicate: None,
+    };
+    apply_ok(
+        &mut s,
+        Operation::AddIndex {
+            table_name: "users".to_string(),
+            index: idx,
+            concurrent: false,
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::DropIndex {
+            table_name: "users".to_string(),
+            index: Index {
+                name: "idx_email".to_string(),
+                columns: vec!["email".to_string()],
+                unique: true,
+                predicate: None,
+            },
+            concurrent: false,
+        },
+    );
     assert!(s.tables["users"].indexes.is_empty());
 }
 
@@ -216,9 +499,23 @@ fn drop_index() {
 #[test]
 fn add_constraint() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    let c = Constraint::Check { name: "chk_age".to_string(), expression: "age > 0".to_string() };
-    apply_ok(&mut s, Operation::AddConstraint { table_name: "users".to_string(), constraint: c });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    let c = Constraint::Check {
+        name: "chk_age".to_string(),
+        expression: "age > 0".to_string(),
+    };
+    apply_ok(
+        &mut s,
+        Operation::AddConstraint {
+            table_name: "users".to_string(),
+            constraint: c,
+        },
+    );
     assert_eq!(s.tables["users"].constraints[0].name(), "chk_age");
 }
 
@@ -226,10 +523,29 @@ fn add_constraint() {
 #[test]
 fn add_constraint_duplicate() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    let c = Constraint::Unique { name: "uq_email".to_string(), columns: vec!["email".to_string()] };
-    apply_ok(&mut s, Operation::AddConstraint { table_name: "users".to_string(), constraint: c.clone() });
-    let err = s.apply(&Operation::AddConstraint { table_name: "users".to_string(), constraint: c }).unwrap_err();
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    let c = Constraint::Unique {
+        name: "uq_email".to_string(),
+        columns: vec!["email".to_string()],
+    };
+    apply_ok(
+        &mut s,
+        Operation::AddConstraint {
+            table_name: "users".to_string(),
+            constraint: c.clone(),
+        },
+    );
+    let err = s
+        .apply(&Operation::AddConstraint {
+            table_name: "users".to_string(),
+            constraint: c,
+        })
+        .unwrap_err();
     assert!(matches!(err, ReplayError::ConstraintAlreadyExists { .. }));
 }
 
@@ -237,10 +553,33 @@ fn add_constraint_duplicate() {
 #[test]
 fn drop_constraint() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    let c = Constraint::Unique { name: "uq_email".to_string(), columns: vec!["email".to_string()] };
-    apply_ok(&mut s, Operation::AddConstraint { table_name: "users".to_string(), constraint: c });
-    apply_ok(&mut s, Operation::DropConstraint { table_name: "users".to_string(), constraint: Constraint::Unique { name: "uq_email".to_string(), columns: vec!["email".to_string()] } });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    let c = Constraint::Unique {
+        name: "uq_email".to_string(),
+        columns: vec!["email".to_string()],
+    };
+    apply_ok(
+        &mut s,
+        Operation::AddConstraint {
+            table_name: "users".to_string(),
+            constraint: c,
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::DropConstraint {
+            table_name: "users".to_string(),
+            constraint: Constraint::Unique {
+                name: "uq_email".to_string(),
+                columns: vec!["email".to_string()],
+            },
+        },
+    );
     assert!(s.tables["users"].constraints.is_empty());
 }
 
@@ -248,8 +587,20 @@ fn drop_constraint() {
 #[test]
 fn statement_and_invoke_are_noops() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::Statement { up: "SELECT 1".to_string(), down: None });
-    apply_ok(&mut s, Operation::Invoke { up: "seed_data".to_string(), down: None });
+    apply_ok(
+        &mut s,
+        Operation::Statement {
+            up: "SELECT 1".to_string(),
+            down: None,
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::Invoke {
+            up: "seed_data".to_string(),
+            down: None,
+        },
+    );
     assert!(s.tables.is_empty());
 }
 
@@ -257,13 +608,55 @@ fn statement_and_invoke_are_noops() {
 #[test]
 fn end_to_end_replay() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("bio") });
-    apply_ok(&mut s, Operation::DropColumn { table_name: "users".to_string(), column: text_col("bio"), cascade: false });
-    apply_ok(&mut s, Operation::RenameColumn { table_name: "users".to_string(), old_name: "email".to_string(), new_name: "email_address".to_string() });
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("posts") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "posts".to_string(), column: text_col("title") });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("email"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("bio"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::DropColumn {
+            table_name: "users".to_string(),
+            column: text_col("bio"),
+            cascade: false,
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::RenameColumn {
+            table_name: "users".to_string(),
+            old_name: "email".to_string(),
+            new_name: "email_address".to_string(),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("posts"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "posts".to_string(),
+            column: text_col("title"),
+        },
+    );
 
     assert_eq!(s.tables.len(), 2);
     assert_eq!(s.tables["users"].columns.len(), 1);
@@ -275,7 +668,12 @@ fn end_to_end_replay() {
 #[test]
 fn table_not_found_propagates() {
     let mut s = Schema::default();
-    let err = s.apply(&Operation::AddColumn { table_name: "ghost".to_string(), column: text_col("x") }).unwrap_err();
+    let err = s
+        .apply(&Operation::AddColumn {
+            table_name: "ghost".to_string(),
+            column: text_col("x"),
+        })
+        .unwrap_err();
     assert_eq!(err, ReplayError::TableNotFound("ghost".to_string()));
 }
 
@@ -287,8 +685,22 @@ fn create_table_with_multiple_pk_returns_error() {
         name: "users".to_string(),
         schema: None,
         columns: vec![
-            Column { name: "id".to_string(), col_type: "bigint".to_string(), nullable: false, default: None, primary_key: true, ..Default::default() },
-            Column { name: "alt_id".to_string(), col_type: "bigint".to_string(), nullable: false, default: None, primary_key: true, ..Default::default() },
+            Column {
+                name: "id".to_string(),
+                col_type: "bigint".to_string(),
+                nullable: false,
+                default: None,
+                primary_key: true,
+                ..Default::default()
+            },
+            Column {
+                name: "alt_id".to_string(),
+                col_type: "bigint".to_string(),
+                nullable: false,
+                default: None,
+                primary_key: true,
+                ..Default::default()
+            },
         ],
         foreign_keys: vec![],
         indexes: vec![],
@@ -303,11 +715,38 @@ fn create_table_with_multiple_pk_returns_error() {
 #[test]
 fn add_pk_column_when_pk_exists_returns_error() {
     let mut s = Schema::default();
-    let pk_col = Column { name: "id".to_string(), col_type: "bigint".to_string(), nullable: false, default: None, primary_key: true, ..Default::default() };
-    let table = Table { name: "users".to_string(), schema: None, columns: vec![pk_col], foreign_keys: vec![], indexes: vec![], constraints: vec![], triggers: vec![] };
+    let pk_col = Column {
+        name: "id".to_string(),
+        col_type: "bigint".to_string(),
+        nullable: false,
+        default: None,
+        primary_key: true,
+        ..Default::default()
+    };
+    let table = Table {
+        name: "users".to_string(),
+        schema: None,
+        columns: vec![pk_col],
+        foreign_keys: vec![],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![],
+    };
     s.apply(&Operation::CreateTable { table }).unwrap();
-    let second_pk = Column { name: "alt_id".to_string(), col_type: "bigint".to_string(), nullable: false, default: None, primary_key: true, ..Default::default() };
-    let err = s.apply(&Operation::AddColumn { table_name: "users".to_string(), column: second_pk }).unwrap_err();
+    let second_pk = Column {
+        name: "alt_id".to_string(),
+        col_type: "bigint".to_string(),
+        nullable: false,
+        default: None,
+        primary_key: true,
+        ..Default::default()
+    };
+    let err = s
+        .apply(&Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: second_pk,
+        })
+        .unwrap_err();
     assert_eq!(err, ReplayError::MultiplePrimaryKeys("users".to_string()));
 }
 
@@ -315,17 +754,48 @@ fn add_pk_column_when_pk_exists_returns_error() {
 #[test]
 fn alter_column_to_pk_when_pk_exists_returns_error() {
     let mut s = Schema::default();
-    let pk_col = Column { name: "id".to_string(), col_type: "bigint".to_string(), nullable: false, default: None, primary_key: true, ..Default::default() };
-    let other_col = Column { name: "other".to_string(), col_type: "bigint".to_string(), nullable: false, default: None, primary_key: false, ..Default::default() };
-    let table = Table { name: "users".to_string(), schema: None, columns: vec![pk_col, other_col.clone()], foreign_keys: vec![], indexes: vec![], constraints: vec![], triggers: vec![] };
+    let pk_col = Column {
+        name: "id".to_string(),
+        col_type: "bigint".to_string(),
+        nullable: false,
+        default: None,
+        primary_key: true,
+        ..Default::default()
+    };
+    let other_col = Column {
+        name: "other".to_string(),
+        col_type: "bigint".to_string(),
+        nullable: false,
+        default: None,
+        primary_key: false,
+        ..Default::default()
+    };
+    let table = Table {
+        name: "users".to_string(),
+        schema: None,
+        columns: vec![pk_col, other_col.clone()],
+        foreign_keys: vec![],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![],
+    };
     s.apply(&Operation::CreateTable { table }).unwrap();
-    let promoted = Column { name: "other".to_string(), col_type: "bigint".to_string(), nullable: false, default: None, primary_key: true, ..Default::default() };
-    let err = s.apply(&Operation::AlterColumn {
-        table_name: "users".to_string(),
-        old: other_col,
-        new: promoted,
-        cast_expr: None,
-    }).unwrap_err();
+    let promoted = Column {
+        name: "other".to_string(),
+        col_type: "bigint".to_string(),
+        nullable: false,
+        default: None,
+        primary_key: true,
+        ..Default::default()
+    };
+    let err = s
+        .apply(&Operation::AlterColumn {
+            table_name: "users".to_string(),
+            old: other_col,
+            new: promoted,
+            cast_expr: None,
+        })
+        .unwrap_err();
     assert_eq!(err, ReplayError::MultiplePrimaryKeys("users".to_string()));
 }
 
@@ -333,8 +803,23 @@ fn alter_column_to_pk_when_pk_exists_returns_error() {
 #[test]
 fn validate_single_pk_ok() {
     let mut s = Schema::default();
-    let pk_col = Column { name: "id".to_string(), col_type: "bigint".to_string(), nullable: false, default: None, primary_key: true, ..Default::default() };
-    let table = Table { name: "users".to_string(), schema: None, columns: vec![pk_col], foreign_keys: vec![], indexes: vec![], constraints: vec![], triggers: vec![] };
+    let pk_col = Column {
+        name: "id".to_string(),
+        col_type: "bigint".to_string(),
+        nullable: false,
+        default: None,
+        primary_key: true,
+        ..Default::default()
+    };
+    let table = Table {
+        name: "users".to_string(),
+        schema: None,
+        columns: vec![pk_col],
+        foreign_keys: vec![],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![],
+    };
     s.tables.insert("users".to_string(), table);
     assert!(s.validate().is_ok());
 }
@@ -347,8 +832,22 @@ fn validate_multiple_pk_returns_err() {
         name: "users".to_string(),
         schema: None,
         columns: vec![
-            Column { name: "id".to_string(), col_type: "bigint".to_string(), nullable: false, default: None, primary_key: true, ..Default::default() },
-            Column { name: "alt".to_string(), col_type: "bigint".to_string(), nullable: false, default: None, primary_key: true, ..Default::default() },
+            Column {
+                name: "id".to_string(),
+                col_type: "bigint".to_string(),
+                nullable: false,
+                default: None,
+                primary_key: true,
+                ..Default::default()
+            },
+            Column {
+                name: "alt".to_string(),
+                col_type: "bigint".to_string(),
+                nullable: false,
+                default: None,
+                primary_key: true,
+                ..Default::default()
+            },
         ],
         foreign_keys: vec![],
         indexes: vec![],
@@ -369,10 +868,23 @@ fn normalize_moves_inline_fk_to_foreign_keys() {
         nullable: false,
         default: None,
         primary_key: false,
-        references: Some(ColumnRef { table: "users".to_string(), column: "id".to_string(), name: None }),
+        references: Some(ColumnRef {
+            table: "users".to_string(),
+            column: "id".to_string(),
+            name: None,
+        }),
         check: None,
+        generated: None,
     };
-    let table = Table { name: "posts".to_string(), schema: None, columns: vec![col], foreign_keys: vec![], indexes: vec![], constraints: vec![], triggers: vec![] };
+    let table = Table {
+        name: "posts".to_string(),
+        schema: None,
+        columns: vec![col],
+        foreign_keys: vec![],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![],
+    };
     let mut s = Schema::default();
     s.tables.insert("posts".to_string(), table);
     s.normalize();
@@ -394,10 +906,23 @@ fn normalize_inline_fk_uses_explicit_name_when_provided() {
         nullable: false,
         default: None,
         primary_key: false,
-        references: Some(ColumnRef { table: "users".to_string(), column: "id".to_string(), name: Some("fk_posts_user".to_string()) }),
+        references: Some(ColumnRef {
+            table: "users".to_string(),
+            column: "id".to_string(),
+            name: Some("fk_posts_user".to_string()),
+        }),
         check: None,
+        generated: None,
     };
-    let table = Table { name: "posts".to_string(), schema: None, columns: vec![col], foreign_keys: vec![], indexes: vec![], constraints: vec![], triggers: vec![] };
+    let table = Table {
+        name: "posts".to_string(),
+        schema: None,
+        columns: vec![col],
+        foreign_keys: vec![],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![],
+    };
     let mut s = Schema::default();
     s.tables.insert("posts".to_string(), table);
     s.normalize();
@@ -416,14 +941,25 @@ fn normalize_moves_inline_check_to_constraints() {
         primary_key: false,
         references: None,
         check: Some("score >= 0".to_string()),
+        generated: None,
     };
-    let table = Table { name: "results".to_string(), schema: None, columns: vec![col], foreign_keys: vec![], indexes: vec![], constraints: vec![], triggers: vec![] };
+    let table = Table {
+        name: "results".to_string(),
+        schema: None,
+        columns: vec![col],
+        foreign_keys: vec![],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![],
+    };
     let mut s = Schema::default();
     s.tables.insert("results".to_string(), table);
     s.normalize();
     let t = &s.tables["results"];
     assert_eq!(t.constraints.len(), 1);
-    assert!(matches!(&t.constraints[0], Constraint::Check { name, expression } if name == "results_score_check" && expression == "score >= 0"));
+    assert!(
+        matches!(&t.constraints[0], Constraint::Check { name, expression } if name == "results_score_check" && expression == "score >= 0")
+    );
     assert!(t.columns[0].check.is_none());
 }
 
@@ -436,10 +972,23 @@ fn normalize_is_idempotent() {
         nullable: false,
         default: None,
         primary_key: false,
-        references: Some(ColumnRef { table: "users".to_string(), column: "id".to_string(), name: None }),
+        references: Some(ColumnRef {
+            table: "users".to_string(),
+            column: "id".to_string(),
+            name: None,
+        }),
         check: None,
+        generated: None,
     };
-    let table = Table { name: "posts".to_string(), schema: None, columns: vec![col], foreign_keys: vec![], indexes: vec![], constraints: vec![], triggers: vec![] };
+    let table = Table {
+        name: "posts".to_string(),
+        schema: None,
+        columns: vec![col],
+        foreign_keys: vec![],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![],
+    };
     let mut s = Schema::default();
     s.tables.insert("posts".to_string(), table);
     s.normalize();
@@ -458,10 +1007,17 @@ fn col_type_serializes_as_type_in_yaml() {
         primary_key: true,
         references: None,
         check: None,
+        generated: None,
     };
     let yaml = serde_yaml::to_string(&col).expect("serialize");
-    assert!(yaml.contains("type: bigint"), "expected 'type: bigint' in: {yaml}");
-    assert!(!yaml.contains("col_type"), "col_type should not appear in: {yaml}");
+    assert!(
+        yaml.contains("type: bigint"),
+        "expected 'type: bigint' in: {yaml}"
+    );
+    assert!(
+        !yaml.contains("col_type"),
+        "col_type should not appear in: {yaml}"
+    );
     let back: Column = serde_yaml::from_str(&yaml).expect("deserialize");
     assert_eq!(back.col_type, "bigint");
 }
@@ -496,7 +1052,12 @@ fn basic_trigger(name: &str) -> TriggerDef {
 #[test]
 fn create_function() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateFunction { function: basic_function("notify") });
+    apply_ok(
+        &mut s,
+        Operation::CreateFunction {
+            function: basic_function("notify"),
+        },
+    );
     assert!(s.functions.contains_key("notify"));
 }
 
@@ -504,17 +1065,39 @@ fn create_function() {
 #[test]
 fn create_function_duplicate() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateFunction { function: basic_function("notify") });
-    let err = s.apply(&Operation::CreateFunction { function: basic_function("notify") }).unwrap_err();
-    assert_eq!(err, ReplayError::FunctionAlreadyExists("notify".to_string()));
+    apply_ok(
+        &mut s,
+        Operation::CreateFunction {
+            function: basic_function("notify"),
+        },
+    );
+    let err = s
+        .apply(&Operation::CreateFunction {
+            function: basic_function("notify"),
+        })
+        .unwrap_err();
+    assert_eq!(
+        err,
+        ReplayError::FunctionAlreadyExists("notify".to_string())
+    );
 }
 
 /// DropFunction removes the function from state.
 #[test]
 fn drop_function() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateFunction { function: basic_function("notify") });
-    apply_ok(&mut s, Operation::DropFunction { function: basic_function("notify") });
+    apply_ok(
+        &mut s,
+        Operation::CreateFunction {
+            function: basic_function("notify"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::DropFunction {
+            function: basic_function("notify"),
+        },
+    );
     assert!(!s.functions.contains_key("notify"));
 }
 
@@ -522,7 +1105,11 @@ fn drop_function() {
 #[test]
 fn drop_function_not_found() {
     let mut s = Schema::default();
-    let err = s.apply(&Operation::DropFunction { function: basic_function("ghost") }).unwrap_err();
+    let err = s
+        .apply(&Operation::DropFunction {
+            function: basic_function("ghost"),
+        })
+        .unwrap_err();
     assert_eq!(err, ReplayError::FunctionNotFound("ghost".to_string()));
 }
 
@@ -530,10 +1117,21 @@ fn drop_function_not_found() {
 #[test]
 fn alter_function() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateFunction { function: basic_function("notify") });
+    apply_ok(
+        &mut s,
+        Operation::CreateFunction {
+            function: basic_function("notify"),
+        },
+    );
     let mut updated = basic_function("notify");
     updated.body = "SELECT 2".to_string();
-    apply_ok(&mut s, Operation::AlterFunction { old: basic_function("notify"), new: updated.clone() });
+    apply_ok(
+        &mut s,
+        Operation::AlterFunction {
+            old: basic_function("notify"),
+            new: updated.clone(),
+        },
+    );
     assert_eq!(s.functions["notify"].body, "SELECT 2");
 }
 
@@ -541,11 +1139,19 @@ fn alter_function() {
 #[test]
 fn create_trigger() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::CreateTrigger {
-        table_name: "users".to_string(),
-        trigger: basic_trigger("audit_trg"),
-    });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::CreateTrigger {
+            table_name: "users".to_string(),
+            trigger: basic_trigger("audit_trg"),
+        },
+    );
     assert_eq!(s.tables["users"].triggers.len(), 1);
 }
 
@@ -553,31 +1159,58 @@ fn create_trigger() {
 #[test]
 fn create_trigger_duplicate() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::CreateTrigger {
-        table_name: "users".to_string(),
-        trigger: basic_trigger("audit_trg"),
-    });
-    let err = s.apply(&Operation::CreateTrigger {
-        table_name: "users".to_string(),
-        trigger: basic_trigger("audit_trg"),
-    }).unwrap_err();
-    assert_eq!(err, ReplayError::TriggerAlreadyExists { table: "users".to_string(), trigger: "audit_trg".to_string() });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::CreateTrigger {
+            table_name: "users".to_string(),
+            trigger: basic_trigger("audit_trg"),
+        },
+    );
+    let err = s
+        .apply(&Operation::CreateTrigger {
+            table_name: "users".to_string(),
+            trigger: basic_trigger("audit_trg"),
+        })
+        .unwrap_err();
+    assert_eq!(
+        err,
+        ReplayError::TriggerAlreadyExists {
+            table: "users".to_string(),
+            trigger: "audit_trg".to_string()
+        }
+    );
 }
 
 /// DropTrigger removes the trigger from the table.
 #[test]
 fn drop_trigger() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::CreateTrigger {
-        table_name: "users".to_string(),
-        trigger: basic_trigger("audit_trg"),
-    });
-    apply_ok(&mut s, Operation::DropTrigger {
-        table_name: "users".to_string(),
-        trigger: basic_trigger("audit_trg"),
-    });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::CreateTrigger {
+            table_name: "users".to_string(),
+            trigger: basic_trigger("audit_trg"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::DropTrigger {
+            table_name: "users".to_string(),
+            trigger: basic_trigger("audit_trg"),
+        },
+    );
     assert!(s.tables["users"].triggers.is_empty());
 }
 
@@ -585,12 +1218,25 @@ fn drop_trigger() {
 #[test]
 fn drop_trigger_not_found() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    let err = s.apply(&Operation::DropTrigger {
-        table_name: "users".to_string(),
-        trigger: basic_trigger("ghost_trg"),
-    }).unwrap_err();
-    assert_eq!(err, ReplayError::TriggerNotFound { table: "users".to_string(), trigger: "ghost_trg".to_string() });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    let err = s
+        .apply(&Operation::DropTrigger {
+            table_name: "users".to_string(),
+            trigger: basic_trigger("ghost_trg"),
+        })
+        .unwrap_err();
+    assert_eq!(
+        err,
+        ReplayError::TriggerNotFound {
+            table: "users".to_string(),
+            trigger: "ghost_trg".to_string()
+        }
+    );
 }
 
 /// normalize() auto-generates a trigger name from table + events + timing.
@@ -612,7 +1258,10 @@ tables:
 "#;
     let state = Schema::from_yaml_str(yaml).expect("parse");
     let trigger = &state.tables["users"].triggers[0];
-    assert_eq!(trigger.name.as_deref(), Some("users_insert_update_after_trg"));
+    assert_eq!(
+        trigger.name.as_deref(),
+        Some("users_insert_update_after_trg")
+    );
 }
 
 /// normalize() converts an inline trigger body into a FunctionDef and sets function_name.
@@ -635,9 +1284,18 @@ tables:
 "#;
     let state = Schema::from_yaml_str(yaml).expect("parse");
     let trigger = &state.tables["orders"].triggers[0];
-    assert_eq!(trigger.function_name.as_deref(), Some("orders_insert_after_trg_fn"));
-    assert!(trigger.body.is_none(), "body should be cleared after normalize");
-    let func = state.functions.get("orders_insert_after_trg_fn").expect("function should exist");
+    assert_eq!(
+        trigger.function_name.as_deref(),
+        Some("orders_insert_after_trg_fn")
+    );
+    assert!(
+        trigger.body.is_none(),
+        "body should be cleared after normalize"
+    );
+    let func = state
+        .functions
+        .get("orders_insert_after_trg_fn")
+        .expect("function should exist");
     assert_eq!(func.returns, "trigger");
     assert_eq!(func.language, "plpgsql");
     assert_eq!(func.body, "BEGIN RETURN NEW; END;");
@@ -700,7 +1358,12 @@ fn validate_trigger_no_function_name() {
 fn tables_always_in_alphabetical_order() {
     let mut s = Schema::default();
     for name in &["zebra", "alpha", "mango", "bravo"] {
-        apply_ok(&mut s, Operation::CreateTable { table: basic_table(name) });
+        apply_ok(
+            &mut s,
+            Operation::CreateTable {
+                table: basic_table(name),
+            },
+        );
     }
     let keys: Vec<&str> = s.tables.keys().map(String::as_str).collect();
     assert_eq!(keys, vec!["alpha", "bravo", "mango", "zebra"]);
@@ -710,11 +1373,26 @@ fn tables_always_in_alphabetical_order() {
 #[test]
 fn columns_preserve_insertion_order() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
     for name in &["c", "a", "b"] {
-        apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col(name) });
+        apply_ok(
+            &mut s,
+            Operation::AddColumn {
+                table_name: "users".to_string(),
+                column: text_col(name),
+            },
+        );
     }
-    let names: Vec<&str> = s.tables["users"].columns.iter().map(|c| c.name.as_str()).collect();
+    let names: Vec<&str> = s.tables["users"]
+        .columns
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
     assert_eq!(names, vec!["c", "a", "b"]);
 }
 
@@ -722,12 +1400,34 @@ fn columns_preserve_insertion_order() {
 #[test]
 fn drop_middle_column_preserves_order() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
     for name in &["first", "middle", "last"] {
-        apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col(name) });
+        apply_ok(
+            &mut s,
+            Operation::AddColumn {
+                table_name: "users".to_string(),
+                column: text_col(name),
+            },
+        );
     }
-    apply_ok(&mut s, Operation::DropColumn { table_name: "users".to_string(), column: text_col("middle"), cascade: false });
-    let names: Vec<&str> = s.tables["users"].columns.iter().map(|c| c.name.as_str()).collect();
+    apply_ok(
+        &mut s,
+        Operation::DropColumn {
+            table_name: "users".to_string(),
+            column: text_col("middle"),
+            cascade: false,
+        },
+    );
+    let names: Vec<&str> = s.tables["users"]
+        .columns
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
     assert_eq!(names, vec!["first", "last"]);
 }
 
@@ -736,14 +1436,36 @@ fn drop_middle_column_preserves_order() {
 fn create_table_inline_vs_incremental_are_equal() {
     let cols = vec![text_col("name"), text_col("email"), text_col("bio")];
     let mut s1 = Schema::default();
-    apply_ok(&mut s1, Operation::CreateTable {
-        table: Table { name: "users".to_string(), schema: None, columns: cols.clone(), foreign_keys: vec![], indexes: vec![], constraints: vec![], triggers: vec![] },
-    });
+    apply_ok(
+        &mut s1,
+        Operation::CreateTable {
+            table: Table {
+                name: "users".to_string(),
+                schema: None,
+                columns: cols.clone(),
+                foreign_keys: vec![],
+                indexes: vec![],
+                constraints: vec![],
+                triggers: vec![],
+            },
+        },
+    );
 
     let mut s2 = Schema::default();
-    apply_ok(&mut s2, Operation::CreateTable { table: basic_table("users") });
+    apply_ok(
+        &mut s2,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
     for col in cols {
-        apply_ok(&mut s2, Operation::AddColumn { table_name: "users".to_string(), column: col });
+        apply_ok(
+            &mut s2,
+            Operation::AddColumn {
+                table_name: "users".to_string(),
+                column: col,
+            },
+        );
     }
 
     assert_eq!(s1, s2);
@@ -752,44 +1474,138 @@ fn create_table_inline_vs_incremental_are_equal() {
 /// Applying inverse(op) immediately after op restores the original state for all invertible ops.
 #[test]
 fn inverse_restores_state_for_all_invertible_ops() {
-    let fk = ForeignKey { name: "fk_x".to_string(), from_column: "col".to_string(), to_table: "other".to_string(), to_column: "id".to_string() };
-    let idx = Index { name: "idx_col".to_string(), columns: vec!["col".to_string()], unique: true, predicate: None };
-    let chk = Constraint::Check { name: "chk_col".to_string(), expression: "col != ''".to_string() };
+    let fk = ForeignKey {
+        name: "fk_x".to_string(),
+        from_column: "col".to_string(),
+        to_table: "other".to_string(),
+        to_column: "id".to_string(),
+    };
+    let idx = Index {
+        name: "idx_col".to_string(),
+        columns: vec!["col".to_string()],
+        unique: true,
+        predicate: None,
+    };
+    let chk = Constraint::Check {
+        name: "chk_col".to_string(),
+        expression: "col != ''".to_string(),
+    };
 
     let verify = |mut s: Schema, op: Operation| {
         let before = s.clone();
         s.apply(&op).expect("op should apply");
-        s.apply(&op.inverse().expect("should be invertible")).expect("inverse should apply");
-        assert_eq!(s, before, "inverse of '{}' did not restore state", op.type_name());
+        s.apply(&op.inverse().expect("should be invertible"))
+            .expect("inverse should apply");
+        assert_eq!(
+            s,
+            before,
+            "inverse of '{}' did not restore state",
+            op.type_name()
+        );
     };
 
-    verify(Schema::default(), Operation::CreateTable { table: basic_table("users") });
+    verify(
+        Schema::default(),
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
 
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    verify(s.clone(), Operation::AddColumn { table_name: "users".to_string(), column: text_col("col") });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    verify(
+        s.clone(),
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("col"),
+        },
+    );
 
-    apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("col") });
-    verify(s.clone(), Operation::AddForeignKey { table_name: "users".to_string(), foreign_key: fk });
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("col"),
+        },
+    );
+    verify(
+        s.clone(),
+        Operation::AddForeignKey {
+            table_name: "users".to_string(),
+            foreign_key: fk,
+        },
+    );
 
-    verify(s.clone(), Operation::AddIndex { table_name: "users".to_string(), index: idx, concurrent: false });
+    verify(
+        s.clone(),
+        Operation::AddIndex {
+            table_name: "users".to_string(),
+            index: idx,
+            concurrent: false,
+        },
+    );
 
-    verify(s.clone(), Operation::AddConstraint { table_name: "users".to_string(), constraint: chk });
+    verify(
+        s.clone(),
+        Operation::AddConstraint {
+            table_name: "users".to_string(),
+            constraint: chk,
+        },
+    );
 
-    verify(s.clone(), Operation::RenameTable { old_name: "users".to_string(), new_name: "accounts".to_string() });
+    verify(
+        s.clone(),
+        Operation::RenameTable {
+            old_name: "users".to_string(),
+            new_name: "accounts".to_string(),
+        },
+    );
 
-    verify(s.clone(), Operation::AlterColumn { table_name: "users".to_string(), old: text_col("col"), new: Column { name: "col".to_string(), col_type: "varchar(100)".to_string(), nullable: true, ..Default::default() }, cast_expr: None });
+    verify(
+        s.clone(),
+        Operation::AlterColumn {
+            table_name: "users".to_string(),
+            old: text_col("col"),
+            new: Column {
+                name: "col".to_string(),
+                col_type: "varchar(100)".to_string(),
+                nullable: true,
+                ..Default::default()
+            },
+            cast_expr: None,
+        },
+    );
 
-    verify(s.clone(), Operation::RenameColumn { table_name: "users".to_string(), old_name: "col".to_string(), new_name: "alias".to_string() });
+    verify(
+        s.clone(),
+        Operation::RenameColumn {
+            table_name: "users".to_string(),
+            old_name: "col".to_string(),
+            new_name: "alias".to_string(),
+        },
+    );
 }
 
 /// RenameTable followed by its inverse restores original state.
 #[test]
 fn rename_table_inverse_restores_state() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
     let before = s.clone();
-    let op = Operation::RenameTable { old_name: "users".to_string(), new_name: "accounts".to_string() };
+    let op = Operation::RenameTable {
+        old_name: "users".to_string(),
+        new_name: "accounts".to_string(),
+    };
     apply_ok(&mut s, op.clone());
     apply_ok(&mut s, op.inverse().unwrap());
     assert_eq!(s, before);
@@ -799,10 +1615,25 @@ fn rename_table_inverse_restores_state() {
 #[test]
 fn rename_column_inverse_restores_state() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("email"),
+        },
+    );
     let before = s.clone();
-    let op = Operation::RenameColumn { table_name: "users".to_string(), old_name: "email".to_string(), new_name: "email_address".to_string() };
+    let op = Operation::RenameColumn {
+        table_name: "users".to_string(),
+        old_name: "email".to_string(),
+        new_name: "email_address".to_string(),
+    };
     apply_ok(&mut s, op.clone());
     apply_ok(&mut s, op.inverse().unwrap());
     assert_eq!(s, before);
@@ -812,11 +1643,32 @@ fn rename_column_inverse_restores_state() {
 #[test]
 fn alter_column_inverse_restores_state() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("bio") });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("bio"),
+        },
+    );
     let before = s.clone();
-    let new_col = Column { name: "bio".to_string(), col_type: "varchar(500)".to_string(), nullable: true, ..Default::default() };
-    let op = Operation::AlterColumn { table_name: "users".to_string(), old: text_col("bio"), new: new_col, cast_expr: None };
+    let new_col = Column {
+        name: "bio".to_string(),
+        col_type: "varchar(500)".to_string(),
+        nullable: true,
+        ..Default::default()
+    };
+    let op = Operation::AlterColumn {
+        table_name: "users".to_string(),
+        old: text_col("bio"),
+        new: new_col,
+        cast_expr: None,
+    };
     apply_ok(&mut s, op.clone());
     apply_ok(&mut s, op.inverse().unwrap());
     assert_eq!(s, before);
@@ -826,11 +1678,29 @@ fn alter_column_inverse_restores_state() {
 #[test]
 fn replay_is_idempotent() {
     let ops = vec![
-        Operation::CreateTable { table: basic_table("users") },
-        Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") },
-        Operation::CreateTable { table: basic_table("posts") },
-        Operation::AddColumn { table_name: "posts".to_string(), column: text_col("title") },
-        Operation::AddForeignKey { table_name: "posts".to_string(), foreign_key: ForeignKey { name: "fk_posts_user".to_string(), from_column: "user_id".to_string(), to_table: "users".to_string(), to_column: "id".to_string() } },
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("email"),
+        },
+        Operation::CreateTable {
+            table: basic_table("posts"),
+        },
+        Operation::AddColumn {
+            table_name: "posts".to_string(),
+            column: text_col("title"),
+        },
+        Operation::AddForeignKey {
+            table_name: "posts".to_string(),
+            foreign_key: ForeignKey {
+                name: "fk_posts_user".to_string(),
+                from_column: "user_id".to_string(),
+                to_table: "users".to_string(),
+                to_column: "id".to_string(),
+            },
+        },
     ];
     let mut s1 = Schema::default();
     let mut s2 = Schema::default();
@@ -845,22 +1715,89 @@ fn replay_is_idempotent() {
 #[test]
 fn full_replay_produces_exact_state() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: Column { name: "age".to_string(), col_type: "integer".to_string(), nullable: true, ..Default::default() } });
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("posts") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "posts".to_string(), column: text_col("title") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "posts".to_string(), column: text_col("user_id") });
-    apply_ok(&mut s, Operation::AddForeignKey {
-        table_name: "posts".to_string(),
-        foreign_key: ForeignKey { name: "fk_posts_user_id".to_string(), from_column: "user_id".to_string(), to_table: "users".to_string(), to_column: "id".to_string() },
-    });
-    apply_ok(&mut s, Operation::AddIndex {
-        table_name: "users".to_string(),
-        index: Index { name: "users_email_idx".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None },
-        concurrent: false,
-    });
-    apply_ok(&mut s, Operation::DropColumn { table_name: "users".to_string(), column: Column { name: "age".to_string(), col_type: "integer".to_string(), nullable: true, ..Default::default() }, cascade: false });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("email"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: Column {
+                name: "age".to_string(),
+                col_type: "integer".to_string(),
+                nullable: true,
+                ..Default::default()
+            },
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("posts"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "posts".to_string(),
+            column: text_col("title"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "posts".to_string(),
+            column: text_col("user_id"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddForeignKey {
+            table_name: "posts".to_string(),
+            foreign_key: ForeignKey {
+                name: "fk_posts_user_id".to_string(),
+                from_column: "user_id".to_string(),
+                to_table: "users".to_string(),
+                to_column: "id".to_string(),
+            },
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddIndex {
+            table_name: "users".to_string(),
+            index: Index {
+                name: "users_email_idx".to_string(),
+                columns: vec!["email".to_string()],
+                unique: true,
+                predicate: None,
+            },
+            concurrent: false,
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::DropColumn {
+            table_name: "users".to_string(),
+            column: Column {
+                name: "age".to_string(),
+                col_type: "integer".to_string(),
+                nullable: true,
+                ..Default::default()
+            },
+            cascade: false,
+        },
+    );
 
     assert_eq!(s.tables.len(), 2);
     let users = &s.tables["users"];
@@ -869,7 +1806,14 @@ fn full_replay_produces_exact_state() {
     assert_eq!(users.indexes.len(), 1);
 
     let posts = &s.tables["posts"];
-    assert_eq!(posts.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["title", "user_id"]);
+    assert_eq!(
+        posts
+            .columns
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["title", "user_id"]
+    );
     assert_eq!(posts.foreign_keys[0].name, "fk_posts_user_id");
 }
 
@@ -877,12 +1821,35 @@ fn full_replay_produces_exact_state() {
 #[test]
 fn statement_and_invoke_are_transparent_to_existing_state() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateTable { table: basic_table("users") });
-    apply_ok(&mut s, Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") });
+    apply_ok(
+        &mut s,
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("email"),
+        },
+    );
     let before = s.clone();
 
-    apply_ok(&mut s, Operation::Statement { up: "UPDATE users SET email = 'x'".to_string(), down: None });
-    apply_ok(&mut s, Operation::Invoke { up: "./seed.sh".to_string(), down: None });
+    apply_ok(
+        &mut s,
+        Operation::Statement {
+            up: "UPDATE users SET email = 'x'".to_string(),
+            down: None,
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::Invoke {
+            up: "./seed.sh".to_string(),
+            down: None,
+        },
+    );
 
     assert_eq!(s, before);
 }
@@ -898,40 +1865,88 @@ fn schema_qualified_key_public_and_none_are_bare() {
 #[test]
 fn schema_qualified_key_non_public_is_qualified() {
     assert_eq!(schema_qualified_key("users", Some("myapp")), "myapp.users");
-    assert_eq!(schema_qualified_key("orders", Some("billing")), "billing.orders");
+    assert_eq!(
+        schema_qualified_key("orders", Some("billing")),
+        "billing.orders"
+    );
 }
 
 /// CreateView and DropView use schema_qualified_key for their map key.
 #[test]
 fn create_view_key_respects_schema() {
     let mut s = Schema::default();
-    apply_ok(&mut s, Operation::CreateView { view: ViewDef { name: "active_users".to_string(), schema: None, definition: "SELECT 1".to_string() } });
-    apply_ok(&mut s, Operation::CreateView { view: ViewDef { name: "summary".to_string(), schema: Some("reporting".to_string()), definition: "SELECT 2".to_string() } });
-    assert!(s.views.contains_key("active_users"), "public view uses bare key");
-    assert!(s.views.contains_key("reporting.summary"), "non-public view uses qualified key");
+    apply_ok(
+        &mut s,
+        Operation::CreateView {
+            view: ViewDef {
+                name: "active_users".to_string(),
+                schema: None,
+                definition: "SELECT 1".to_string(),
+            },
+        },
+    );
+    apply_ok(
+        &mut s,
+        Operation::CreateView {
+            view: ViewDef {
+                name: "summary".to_string(),
+                schema: Some("reporting".to_string()),
+                definition: "SELECT 2".to_string(),
+            },
+        },
+    );
+    assert!(
+        s.views.contains_key("active_users"),
+        "public view uses bare key"
+    );
+    assert!(
+        s.views.contains_key("reporting.summary"),
+        "non-public view uses qualified key"
+    );
 }
 
 /// Applying all operations in order then replaying the chain produces an identical state.
 #[test]
 fn sequential_replay_matches_single_pass() {
     let ops = vec![
-        Operation::CreateTable { table: basic_table("users") },
-        Operation::AddColumn { table_name: "users".to_string(), column: text_col("email") },
-        Operation::AddConstraint { table_name: "users".to_string(), constraint: Constraint::Unique { name: "uq_email".to_string(), columns: vec!["email".to_string()] } },
-        Operation::CreateTable { table: basic_table("orders") },
-        Operation::RenameTable { old_name: "orders".to_string(), new_name: "purchases".to_string() },
+        Operation::CreateTable {
+            table: basic_table("users"),
+        },
+        Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: text_col("email"),
+        },
+        Operation::AddConstraint {
+            table_name: "users".to_string(),
+            constraint: Constraint::Unique {
+                name: "uq_email".to_string(),
+                columns: vec!["email".to_string()],
+            },
+        },
+        Operation::CreateTable {
+            table: basic_table("orders"),
+        },
+        Operation::RenameTable {
+            old_name: "orders".to_string(),
+            new_name: "purchases".to_string(),
+        },
     ];
 
     let apply_all = |ops: &Vec<Operation>| {
         let mut s = Schema::default();
-        for op in ops { s.apply(op).unwrap(); }
+        for op in ops {
+            s.apply(op).unwrap();
+        }
         s
     };
 
     let s1 = apply_all(&ops);
     let s2 = apply_all(&ops);
     assert_eq!(s1, s2);
-    assert!(!s1.tables.contains_key("orders"), "renamed table should not exist under old name");
+    assert!(
+        !s1.tables.contains_key("orders"),
+        "renamed table should not exist under old name"
+    );
     assert!(s1.tables.contains_key("purchases"));
     assert_eq!(s1.tables["users"].constraints[0].name(), "uq_email");
 }
@@ -959,7 +1974,9 @@ fn builder_table_via_into_table() {
 /// builder().extension() registers an extension without a version.
 #[test]
 fn builder_extension() {
-    let state = Schema::builder(Dialect::Postgres).extension("pgcrypto").build();
+    let state = Schema::builder(Dialect::Postgres)
+        .extension("pgcrypto")
+        .build();
     assert!(state.extensions.contains_key("pgcrypto"));
     assert!(state.extensions["pgcrypto"].version.is_none());
 }
@@ -967,7 +1984,9 @@ fn builder_extension() {
 /// builder().enum_type() registers a named enum with the given values.
 #[test]
 fn builder_enum_type() {
-    let state = Schema::builder(Dialect::Postgres).enum_type("status", &["active", "inactive"]).build();
+    let state = Schema::builder(Dialect::Postgres)
+        .enum_type("status", &["active", "inactive"])
+        .build();
     assert!(state.enums.contains_key("status"));
     assert_eq!(state.enums["status"].values, vec!["active", "inactive"]);
 }
@@ -982,14 +2001,20 @@ fn qualified_name_no_schema() {
 /// qualified_name() returns plain name when schema is "public".
 #[test]
 fn qualified_name_public_schema() {
-    let t = Table { schema: Some("public".to_string()), ..basic_table("users") };
+    let t = Table {
+        schema: Some("public".to_string()),
+        ..basic_table("users")
+    };
     assert_eq!(t.qualified_name(), "users");
 }
 
 /// qualified_name() returns schema.name for non-public schemas.
 #[test]
 fn qualified_name_custom_schema() {
-    let t = Table { schema: Some("analytics".to_string()), ..basic_table("events") };
+    let t = Table {
+        schema: Some("analytics".to_string()),
+        ..basic_table("events")
+    };
     assert_eq!(t.qualified_name(), "analytics.events");
 }
 
@@ -1008,13 +2033,25 @@ fn qualified_name_all_entities() {
     };
     assert_eq!(f.qualified_name(), "utils.my_fn");
 
-    let v = ViewDef { name: "v1".to_string(), schema: None, definition: "SELECT 1".to_string() };
+    let v = ViewDef {
+        name: "v1".to_string(),
+        schema: None,
+        definition: "SELECT 1".to_string(),
+    };
     assert_eq!(v.qualified_name(), "v1");
 
-    let e = ExtensionDef { name: "pgcrypto".to_string(), schema: Some("public".to_string()), version: None };
+    let e = ExtensionDef {
+        name: "pgcrypto".to_string(),
+        schema: Some("public".to_string()),
+        version: None,
+    };
     assert_eq!(e.qualified_name(), "pgcrypto");
 
-    let en = EnumDef { name: "status".to_string(), schema: Some("core".to_string()), values: vec![] };
+    let en = EnumDef {
+        name: "status".to_string(),
+        schema: Some("core".to_string()),
+        values: vec![],
+    };
     assert_eq!(en.qualified_name(), "core.status");
 }
 
@@ -1022,10 +2059,13 @@ fn qualified_name_all_entities() {
 #[test]
 fn canonicalize_public_schema_to_none() {
     let mut s = Schema::default();
-    s.tables.insert("users".to_string(), Table {
-        schema: Some("public".to_string()),
-        ..basic_table("users")
-    });
+    s.tables.insert(
+        "users".to_string(),
+        Table {
+            schema: Some("public".to_string()),
+            ..basic_table("users")
+        },
+    );
     s.canonicalize(&Dialect::Postgres);
     assert_eq!(s.tables["users"].schema, None);
 }
@@ -1034,11 +2074,14 @@ fn canonicalize_public_schema_to_none() {
 #[test]
 fn canonicalize_pg_catalog_extension() {
     let mut s = Schema::default();
-    s.extensions.insert("plpgsql".to_string(), ExtensionDef {
-        name: "plpgsql".to_string(),
-        schema: Some("pg_catalog".to_string()),
-        version: None,
-    });
+    s.extensions.insert(
+        "plpgsql".to_string(),
+        ExtensionDef {
+            name: "plpgsql".to_string(),
+            schema: Some("pg_catalog".to_string()),
+            version: None,
+        },
+    );
     s.canonicalize(&Dialect::Postgres);
     assert_eq!(s.extensions["plpgsql"].schema, None);
 }
@@ -1047,24 +2090,33 @@ fn canonicalize_pg_catalog_extension() {
 #[test]
 fn canonicalize_pg_catalog_not_for_tables() {
     let mut s = Schema::default();
-    s.tables.insert("pg_catalog.sometable".to_string(), Table {
-        name: "sometable".to_string(),
-        schema: Some("pg_catalog".to_string()),
-        ..basic_table("sometable")
-    });
+    s.tables.insert(
+        "pg_catalog.sometable".to_string(),
+        Table {
+            name: "sometable".to_string(),
+            schema: Some("pg_catalog".to_string()),
+            ..basic_table("sometable")
+        },
+    );
     s.canonicalize(&Dialect::Postgres);
-    assert_eq!(s.tables["pg_catalog.sometable"].schema, Some("pg_catalog".to_string()));
+    assert_eq!(
+        s.tables["pg_catalog.sometable"].schema,
+        Some("pg_catalog".to_string())
+    );
 }
 
 /// canonicalize re-keys BTreeMaps when schema normalization changes the qualified name.
 #[test]
 fn canonicalize_rekeys_btreemap() {
     let mut s = Schema::default();
-    s.enums.insert("public.status".to_string(), EnumDef {
-        name: "status".to_string(),
-        schema: Some("public".to_string()),
-        values: vec!["active".to_string()],
-    });
+    s.enums.insert(
+        "public.status".to_string(),
+        EnumDef {
+            name: "status".to_string(),
+            schema: Some("public".to_string()),
+            values: vec!["active".to_string()],
+        },
+    );
     s.canonicalize(&Dialect::Postgres);
     assert!(!s.enums.contains_key("public.status"));
     assert!(s.enums.contains_key("status"));

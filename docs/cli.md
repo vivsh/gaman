@@ -7,6 +7,7 @@ Global flags come before the subcommand:
 - `-m <dir>` overrides the migrations directory.
 - `-s <file>` overrides the schema file or schema directory.
 - `-d <url>` overrides `DATABASE_URL`.
+- `--dialect postgres|sqlite` selects the SQL dialect explicitly. This is mainly for offline commands when `DATABASE_URL` is not set; `DATABASE_URL` inference is used otherwise, and PostgreSQL remains the default.
 
 ## Everyday commands
 
@@ -78,8 +79,12 @@ Print the resolved configuration and exit.
 
 Gaman reads three main environment variables:
 
-- `DATABASE_URL`: PostgreSQL connection string. Required for commands that talk to the database.
+- `DATABASE_URL`: database connection string. Required for commands that talk to the database. `postgres://`, `postgresql://`, `sqlite://`, and `sqlite:` URLs infer the dialect when the matching Cargo feature is enabled.
 - `MIGRATIONS_DIR`: directory containing migration YAML files. Defaults to `migrations`.
 - `SCHEMA_FILE`: path to the schema input. Defaults to `schema.yaml`. This can point to a `.yaml`, `.sql`, or a directory.
 
 CLI flags win over environment variables when both are provided.
+
+## Dialects
+
+PostgreSQL is enabled by default and remains the broadest supported engine. SQLite is available with `--features sqlite` and renders a useful native subset instead of emulating PostgreSQL semantics. Schema-qualified objects, extensions, enums, stored functions, PostgreSQL trigger semantics, concurrent indexes, advisory locks, and SQLite table-rebuild changes fail with explicit unsupported-operation errors.

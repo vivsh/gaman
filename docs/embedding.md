@@ -9,13 +9,13 @@ Gaman can run entirely inside your binary — no separate CLI process, no extern
 gaman = "0.3"
 ```
 
-Embed migration files at compile time with the `embedded_migrations!` macro. It reads every `.yaml` file in the given directory in lexicographic order and produces an `EmbeddedMigrations` value that carries both the compiled-in files and the source directory path.
+Embed migration files at compile time with the `embedded_migrations!` macro. It reads every `.yaml` file in the given directory in lexicographic order and produces an `EmbeddedMigrations` value that carries both the compiled-in files and the absolute source directory path.
 
 ```rust
 use gaman::{EmbeddedMigrations, embedded_migrations};
 
 static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
-// path is relative to the crate root (same rules as include_str!)
+// macro input is relative to the crate root; the stored dir is absolute
 ```
 
 ## MigrationEngine
@@ -45,9 +45,18 @@ To override specific fields while keeping the rest from env vars:
 let config = Config { database_url: Some(url.to_string()), ..Config::default() };
 ```
 
-### Builder method
+### Builder methods
 
-`with_schema` is the only builder method. It takes `self` and returns `Result<Self, EngineError>` so schema load errors surface before any action runs. Calling it more than once replaces the previous schema — last call wins.
+`with_schema` and `with_dialect` are the builder methods. They take `self` and return the updated engine; `with_schema` returns `Result<Self, EngineError>` so schema load errors surface before any action runs. Calling `with_schema` more than once replaces the previous schema — last call wins.
+
+Use `with_dialect(Dialect::Sqlite)` for offline SQLite planning when there is no `DATABASE_URL` to infer from. PostgreSQL remains the default when neither `DATABASE_URL` nor `with_dialect` selects an engine. SQLite support requires the `sqlite` Cargo feature.
+
+```rust
+use gaman::core::Dialect;
+
+let engine = MigrationEngine::new(Config::default(), &MIGRATIONS)
+    .with_dialect(Dialect::Postgres);
+```
 
 The closure receives a `SchemaBuilder` and can return either a `Schema` (infallible) or a `Result<Schema, SchemaLoadError>` (fallible). Both are accepted via the `IntoSchema` trait.
 
@@ -106,10 +115,10 @@ let schema: Schema = engine.inspect_db(&["public"])?;
 
 // Diff with_schema() against replayed state, write a migration file if changed.
 // Returns Some(migration) or None if already up to date.
-// Reads and writes to config.migrations_dir on disk — never the embedded slice.
+// Reads and writes to the embedded source directory on disk — never the embedded slice.
 // Re-compile after writing so embedded_migrations! picks up the new file.
 // Requires with_schema() — returns Err(EngineError::NoSchema) otherwise.
-// Returns Err(EngineError::MigrationsDirMismatch) if config.migrations_dir != MIGRATIONS.dir.
+// Returns Err(EngineError::MigrationsDirMismatch) if config.migrations_dir does not resolve to MIGRATIONS.dir.
 // Disambiguations (renames etc.) are resolved via interactive terminal prompts.
 let migration: Option<Migration> = engine.make_migration("add_posts")?;
 
@@ -133,7 +142,7 @@ All action methods return `Result<T, EngineError>`.
 | `Config(String)`              | Misconfiguration, e.g. missing `database_url`                                     |
 | `NoSchema`                    | `make_migration` called without `with_schema()`                                   |
 | `SchemaLoad(SchemaLoadError)` | `with_schema()` closure returned an error loading a schema file                   |
-| `MigrationsDirMismatch(…)`    | `config.migrations_dir` differs from the path baked into `embedded_migrations!()` |
+| `MigrationsDirMismatch(…)`    | `config.migrations_dir` does not resolve to the path baked into `embedded_migrations!()` |
 
 ## Common patterns
 

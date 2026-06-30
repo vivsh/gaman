@@ -1963,15 +1963,20 @@ mod tests {
         curr.tables.insert("products".to_string(), empty_table("products"));
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let create_table_pos = ops.iter().position(|op| matches!(op, Operation::CreateTable { .. }))
-            .expect("should have CreateTable");
-        // per-table changes should come after creates
-        for (i, op) in ops.iter().enumerate() {
-            if matches!(op, Operation::DropColumn { .. } | Operation::AddColumn { .. }) {
-                assert!(i > create_table_pos || true, // just verify ops exist without crashing
-                    "changes should not interfere with creates");
-            }
-        }
+        assert!(
+            ops.iter()
+                .any(|op| matches!(op, Operation::CreateTable { .. })),
+            "should create the new table"
+        );
+        assert!(
+            ops.iter()
+                .any(|op| matches!(op, Operation::DropColumn { .. })),
+            "should drop the removed column"
+        );
+        assert!(
+            ops.iter().any(|op| matches!(op, Operation::AddColumn { .. })),
+            "should add the new column"
+        );
 
         // Replay: applying all ops to prev must yield curr
         let mut replayed = prev.clone();

@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 
 use thiserror::Error;
 
@@ -70,14 +71,38 @@ impl MigrationSource for YamlAdapter {
             message: e.to_string(),
         })?;
         let path = self.directory.join(format!("{}.yaml", migration.id));
+        if path.exists() {
+            return Err(AdapterError::Io {
+                path: path.display().to_string(),
+                message: "migration file already exists".to_string(),
+            });
+        }
         let content = serde_yaml::to_string(migration).map_err(|e| AdapterError::Parse {
             path: path.display().to_string(),
             message: e.to_string(),
         })?;
-        fs::write(&path, content).map_err(|e| AdapterError::Io {
-            path: path.display().to_string(),
-            message: e.to_string(),
-        })?;
+        let tmp_path = self.directory.join(format!(
+            ".{}.{}.tmp",
+            migration.id,
+            std::process::id()
+        ));
+        let write_result = (|| {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp_path)?;
+            file.write_all(content.as_bytes())?;
+            file.sync_all()?;
+            fs::rename(&tmp_path, &path)
+        })();
+
+        if let Err(e) = write_result {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(AdapterError::Io {
+                path: path.display().to_string(),
+                message: e.to_string(),
+            });
+        }
         Ok(())
     }
 }

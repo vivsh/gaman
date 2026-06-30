@@ -22,7 +22,10 @@ pub struct Dep {
 
 impl Dep {
     pub fn new(kind: EntityKind, name: &str) -> Self {
-        Self { kind, name: Some(name.to_string()) }
+        Self {
+            kind,
+            name: Some(name.to_string()),
+        }
     }
 
     pub fn all_of(kind: EntityKind) -> Self {
@@ -241,6 +244,8 @@ pub struct Column {
     pub references: Option<ColumnRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

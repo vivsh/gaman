@@ -4,19 +4,26 @@ use std::fmt::Display;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(feature = "postgres")]
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use gaman::Config;
 use gaman::Migration;
-use gaman::core::{Decision, Dialect, Environment, EnvironmentError, EnvironmentExecutor, Executor, ExecutorError, Invoker, Introspectable, Migrator, PostgresExecutor, VecAdapter, BoxFuture};
+use gaman::core::{Decision, Dialect, Environment, EnvironmentError, EnvironmentExecutor, Invoker, Migrator, VecAdapter, BoxFuture};
+#[cfg(feature = "postgres")]
+use gaman::core::{Executor, ExecutorError, Introspectable, PostgresExecutor};
 use gaman::schema::{Operation, Schema};
+#[cfg(feature = "postgres")]
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
+#[cfg(feature = "postgres")]
 use sqlx::{ConnectOptions, Row};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use thiserror::Error;
 
+#[cfg(feature = "postgres")]
 static COUNTER: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "postgres")]
 const TEST_DATABASE_URL_ENV: &str = "TEST_DATABASE_URL";
 
 #[derive(Debug, Error)]
@@ -34,12 +41,16 @@ pub enum TestSupportError {
 pub enum FixtureDialect {
     #[default]
     Postgres,
+    #[cfg(feature = "sqlite")]
+    Sqlite,
 }
 
 impl FixtureDialect {
     pub fn to_dialect(self) -> Dialect {
         match self {
             Self::Postgres => Dialect::Postgres,
+            #[cfg(feature = "sqlite")]
+            Self::Sqlite => Dialect::Sqlite,
         }
     }
 }
@@ -73,11 +84,13 @@ impl Environment for FixtureEnvironment {
     }
 }
 
+#[cfg(feature = "postgres")]
 struct PostgresHarnessEnvironment {
     config: Arc<Config>,
     schema: String,
 }
 
+#[cfg(feature = "postgres")]
 impl PostgresHarnessEnvironment {
     fn new(url: &str, schema: &str) -> Self {
         let mut config = Config::default();
@@ -89,6 +102,7 @@ impl PostgresHarnessEnvironment {
     }
 }
 
+#[cfg(feature = "postgres")]
 impl Environment for PostgresHarnessEnvironment {
     fn config(&self) -> &Arc<Config> {
         &self.config
@@ -178,6 +192,7 @@ pub enum OfflineSpec {
     },
 }
 
+#[cfg(feature = "postgres")]
 #[derive(Debug, Deserialize)]
 pub struct PostgresCase {
     #[serde(default)]
@@ -186,6 +201,7 @@ pub struct PostgresCase {
     pub spec: PostgresSpec,
 }
 
+#[cfg(feature = "postgres")]
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PostgresSpec {
@@ -258,6 +274,7 @@ pub fn offline_cases_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cases/offline")
 }
 
+#[cfg(feature = "postgres")]
 pub fn postgres_cases_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cases/postgres")
 }
@@ -309,6 +326,7 @@ pub fn build_migrator(
     })
 }
 
+#[cfg(feature = "postgres")]
 pub fn build_postgres_migrator(
     case_name: &str,
     harness: &PgHarness,
@@ -360,18 +378,28 @@ pub fn replay_schema(case_name: &str, migrator: &Migrator) -> Result<Schema, Tes
         }
     }
 
-    canonicalize_schema(&mut replay);
+    canonicalize_schema(&mut replay, migrator.dialect());
     Ok(replay)
 }
 
 pub fn assert_schema_matches(
     case_name: &str,
     label: &str,
+    actual: Schema,
+    expected: Schema,
+) -> Result<(), TestSupportError> {
+    assert_schema_matches_with_dialect(case_name, label, actual, expected, Dialect::Postgres)
+}
+
+pub fn assert_schema_matches_with_dialect(
+    case_name: &str,
+    label: &str,
     mut actual: Schema,
     mut expected: Schema,
+    dialect: Dialect,
 ) -> Result<(), TestSupportError> {
-    canonicalize_schema(&mut actual);
-    canonicalize_schema(&mut expected);
+    canonicalize_schema(&mut actual, dialect);
+    canonicalize_schema(&mut expected, dialect);
     if actual == expected {
         return Ok(());
     }
@@ -476,11 +504,11 @@ pub fn scope_schema_for_compare(state: &mut Schema, schema: &str) {
     scope_field!(state.enums, schema);
 }
 
-pub fn canonicalize_schema(schema: &mut Schema) {
+pub fn canonicalize_schema(schema: &mut Schema, dialect: Dialect) {
     schema.normalize();
     for table in schema.tables.values_mut() {
         for column in &mut table.columns {
-            column.col_type = Dialect::Postgres.normalize_type(&column.col_type).to_string();
+            column.col_type = dialect.normalize_type(&column.col_type).to_string();
         }
     }
 }
@@ -498,12 +526,14 @@ fn to_migrations(migrations: &[InlineMigration]) -> Vec<Migration> {
     migrations.iter().map(InlineMigration::to_migration).collect()
 }
 
+#[cfg(feature = "postgres")]
 pub struct PgHarness {
     conn: sqlx::PgConnection,
     schema: String,
     url: String,
 }
 
+#[cfg(feature = "postgres")]
 impl PgHarness {
     pub async fn new() -> Result<Self, TestSupportError> {
         let url = test_database_url()?;
@@ -556,6 +586,7 @@ impl PgHarness {
     }
 }
 
+#[cfg(feature = "postgres")]
 impl Executor for PgHarness {
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async move {
@@ -600,6 +631,7 @@ impl Executor for PgHarness {
     }
 }
 
+#[cfg(feature = "postgres")]
 fn test_database_url() -> Result<String, TestSupportError> {
     std::env::var(TEST_DATABASE_URL_ENV).map_err(|_| {
         TestSupportError::message(format!(

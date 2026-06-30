@@ -2,6 +2,10 @@ use std::future::Future;
 use std::pin::Pin;
 use thiserror::Error;
 
+use crate::conf::TlsMode;
+use crate::dialects::Dialect;
+use crate::environment::EnvironmentExecutor;
+
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 #[derive(Debug, Error)]
@@ -44,7 +48,65 @@ pub trait Introspectable {
     fn inspect_db<'a>(&'a mut self, schemas: &'a [&'a str]) -> BoxFuture<'a, Result<crate::states::Schema, ExecutorError>>;
 }
 
+#[derive(Debug, Error)]
+pub enum ConnectError {
+    #[error("{0}")]
+    Config(String),
+    #[error("database connection failed: {0}")]
+    Connect(String),
+}
+
+pub fn connect_environment_executor<'a>(
+    dialect: Dialect,
+    url: &'a str,
+    tls: TlsMode,
+) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, ConnectError>> {
+    Box::pin(async move {
+        match (dialect, tls) {
+            #[cfg(feature = "postgres")]
+            (Dialect::Postgres, TlsMode::NoTls) => {
+                use sqlx::ConnectOptions;
+                let opts = url
+                    .parse::<sqlx::postgres::PgConnectOptions>()
+                    .map_err(|e| ConnectError::Connect(e.to_string()))?
+                    .ssl_mode(sqlx::postgres::PgSslMode::Disable);
+                let conn = opts
+                    .connect()
+                    .await
+                    .map_err(|e| ConnectError::Connect(e.to_string()))?;
+                Ok(Box::new(PostgresExecutor::new(conn)) as Box<dyn EnvironmentExecutor>)
+            }
+            #[cfg(not(feature = "postgres"))]
+            (Dialect::Postgres, TlsMode::NoTls) => {
+                let _ = url;
+                Err(ConnectError::Config(
+                    "postgres executor is not enabled; rebuild with the 'postgres' feature".into(),
+                ))
+            }
+            #[cfg(feature = "sqlite")]
+            (Dialect::Sqlite, TlsMode::NoTls) => {
+                use sqlx::ConnectOptions;
+                let opts = url
+                    .parse::<sqlx::sqlite::SqliteConnectOptions>()
+                    .map_err(|e| ConnectError::Connect(e.to_string()))?
+                    .foreign_keys(true);
+                let conn = opts
+                    .connect()
+                    .await
+                    .map_err(|e| ConnectError::Connect(e.to_string()))?;
+                Ok(Box::new(SqliteExecutor::new(conn)) as Box<dyn EnvironmentExecutor>)
+            }
+        }
+    })
+}
+
+#[cfg(feature = "postgres")]
 pub mod postgres;
+#[cfg(feature = "sqlite")]
+pub mod sqlite;
 pub mod subprocess;
+#[cfg(feature = "postgres")]
 pub use postgres::PostgresExecutor;
+#[cfg(feature = "sqlite")]
+pub use sqlite::SqliteExecutor;
 pub use subprocess::SubprocessInvoker;

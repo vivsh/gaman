@@ -1,16 +1,15 @@
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use thiserror::Error;
 
 use crate::adapters::{AdapterError, MigrationSource, YamlAdapter};
-use crate::cli::{CommandError, GamanArgs, dispatch};
+use crate::cli::{CommandError, GamanArgs, dispatch, parse_dialect};
 use crate::conf::Config;
 use crate::dialects::Dialect;
 use crate::disambiguator::{Decision, PromptEngine};
 use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
-use crate::executor::postgres::PostgresExecutor;
-use crate::executor::{BoxFuture, Invoker};
+use crate::executor::{BoxFuture, Invoker, connect_environment_executor};
 use crate::migrator::{Migrator, MigratorError};
 use crate::migrations::Migration;
 use crate::operations::Operation;
@@ -110,15 +109,17 @@ pub struct MigrationEngine {
     migrations: &'static EmbeddedMigrations,
     extra: Vec<(&'static str, &'static EmbeddedMigrations)>,
     schema: Option<Schema>,
+    dialect: Option<Dialect>,
 }
 
 struct EngineEnvironment {
     config: Arc<Config>,
+    dialect: Option<Dialect>,
 }
 
 impl EngineEnvironment {
-    fn new(config: Arc<Config>) -> Self {
-        Self { config }
+    fn new(config: Arc<Config>, dialect: Option<Dialect>) -> Self {
+        Self { config, dialect }
     }
 }
 
@@ -133,21 +134,20 @@ impl Environment for EngineEnvironment {
                 .ok_or_else(|| EnvironmentError::Config(
                     "database_url is not set — set DATABASE_URL or pass it in Config".into(),
                 ))?;
-            let conn = match (self.dialect(), self.config.tls) {
-                (Dialect::Postgres, crate::conf::TlsMode::NoTls) => {
-                    use sqlx::ConnectOptions;
-                    let opts = url.parse::<sqlx::postgres::PgConnectOptions>()
-                        .map_err(|e| EnvironmentError::Connect(e.to_string()))?
-                        .ssl_mode(sqlx::postgres::PgSslMode::Disable);
-                    opts.connect().await.map_err(|e| EnvironmentError::Connect(e.to_string()))?
-                }
-            };
-            Ok(Box::new(PostgresExecutor::new(conn)) as Box<dyn EnvironmentExecutor>)
+            connect_environment_executor(self.dialect(), url, self.config.tls)
+                .await
+                .map_err(EnvironmentError::from)
         })
     }
 
     fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
         Ok(None)
+    }
+
+    fn dialect(&self) -> Dialect {
+        self.dialect
+            .or_else(|| self.config.dialect())
+            .unwrap_or(Dialect::Postgres)
     }
 }
 
@@ -158,7 +158,13 @@ impl MigrationEngine {
             migrations,
             extra: Vec::new(),
             schema: None,
+            dialect: None,
         }
+    }
+
+    pub fn with_dialect(mut self, dialect: Dialect) -> Self {
+        self.dialect = Some(dialect);
+        self
     }
 
     pub fn add_migrations(mut self, ns: &'static str, m: &'static EmbeddedMigrations) -> Self {
@@ -170,15 +176,35 @@ impl MigrationEngine {
     /// `Schema` directly (infallible) or a `Result<Schema, SchemaLoadError>` (for file loading).
     /// Calling this more than once replaces the previous schema — last call wins.
     pub fn with_schema<R: IntoSchema>(mut self, f: impl FnOnce(SchemaBuilder) -> R) -> Result<Self, EngineError> {
-        let dialect = self.config.dialect().unwrap_or(Dialect::Postgres);
+        let dialect = self.dialect.or_else(|| self.config.dialect()).unwrap_or(Dialect::Postgres);
         self.schema = Some(f(SchemaBuilder::new(dialect)).into_schema()?);
         Ok(self)
     }
 
     fn build_migrator(&self) -> Result<Migrator, EngineError> {
         let source = Box::new(EmbedSource::new(self.migrations, self.extra.clone()));
-        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone())));
+        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone()), self.dialect));
         Ok(Migrator::new(source, environment)?)
+    }
+
+    fn writable_migrations_dir(&self) -> Result<PathBuf, EngineError> {
+        let embedded_dir = absolute_path(Path::new(self.migrations.dir))?;
+        let config_dir = Path::new(&self.config.migrations_dir);
+
+        let matches = if config_dir.is_absolute() {
+            absolute_path(config_dir)? == embedded_dir
+        } else {
+            absolute_path(config_dir)? == embedded_dir || embedded_dir.ends_with(config_dir)
+        };
+
+        if matches {
+            Ok(embedded_dir)
+        } else {
+            Err(EngineError::MigrationsDirMismatch(
+                self.config.migrations_dir.display().to_string(),
+                self.migrations.dir,
+            ))
+        }
     }
 
     /// Apply all pending migrations. Returns the number applied. Safe to call on every startup.
@@ -235,14 +261,9 @@ impl MigrationEngine {
     /// Requires `with_schema()` to have been called — returns `Err(EngineError::NoSchema)` if not.
     /// Any rename/ambiguity clarifications are resolved interactively via terminal prompts.
     pub fn make_migration(self, name: &str) -> Result<Option<Migration>, EngineError> {
-        if PathBuf::from(self.migrations.dir) != self.config.migrations_dir {
-            return Err(EngineError::MigrationsDirMismatch(
-                self.config.migrations_dir.display().to_string(),
-                self.migrations.dir,
-            ));
-        }
-        let source = Box::new(YamlAdapter { directory: self.config.migrations_dir.clone() });
-        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone())));
+        let migrations_dir = self.writable_migrations_dir()?;
+        let source = Box::new(YamlAdapter { directory: migrations_dir });
+        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone()), self.dialect));
         let migrator = Migrator::new(source, environment)?;
         let schema = self.schema.ok_or(EngineError::NoSchema)?;
         let engine = CliPromptEngine;
@@ -260,16 +281,11 @@ impl MigrationEngine {
     }
 
     /// Create an empty migration with no operations. Useful as a shell to fill by hand.
-    /// Writes to config.migrations_dir. Validates that dir matches the embedded source.
+    /// Writes to the embedded source dir after validating it matches config.migrations_dir.
     pub fn make_empty_migration(self, name: &str) -> Result<Migration, EngineError> {
-        if PathBuf::from(self.migrations.dir) != self.config.migrations_dir {
-            return Err(EngineError::MigrationsDirMismatch(
-                self.config.migrations_dir.display().to_string(),
-                self.migrations.dir,
-            ));
-        }
-        let source = Box::new(YamlAdapter { directory: self.config.migrations_dir.clone() });
-        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone())));
+        let migrations_dir = self.writable_migrations_dir()?;
+        let source = Box::new(YamlAdapter { directory: migrations_dir });
+        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone()), self.dialect));
         let migrator = Migrator::new(source, environment)?;
         Ok(migrator.make_empty_migration(name.to_string())?)
     }
@@ -280,14 +296,42 @@ impl MigrationEngine {
         let _ = dotenvy::dotenv();
         let args: GamanArgs = argh::from_env();
         let mut config = self.config;
-        let cmd = args.apply_to(&mut config);
+        let (cmd, cli_dialect) = args.apply_to(&mut config);
+        let dialect = parse_dialect(cli_dialect)?.or(self.dialect);
         let config = Arc::new(config);
         let source = Box::new(YamlAdapter { directory: config.migrations_dir.clone() });
-        let environment = Box::new(EngineEnvironment::new(config));
+        let environment = Box::new(EngineEnvironment::new(config, dialect));
         let migrator = Migrator::new(source, environment)?;
         dispatch(migrator, self.schema, cmd).await?;
         Ok(())
     }
+}
+
+fn absolute_path(path: &Path) -> Result<PathBuf, EngineError> {
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| EngineError::Config(format!("failed to resolve current directory: {e}")))?
+            .join(path)
+    };
+    Ok(normalize_path(&path))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push("..");
+                }
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 #[cfg(test)]

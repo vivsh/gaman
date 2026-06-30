@@ -30,13 +30,12 @@ impl Config {
 
     pub fn dialect(&self) -> Option<Dialect> {
         let url = self.database_url.as_deref()?;
-        let (scheme, _) = url.split_once("://")?;
+        let scheme = url
+            .split_once("://")
+            .map(|(scheme, _)| scheme)
+            .or_else(|| url.split_once(':').map(|(scheme, _)| scheme))?;
 
-        if scheme.eq_ignore_ascii_case("postgres") || scheme.eq_ignore_ascii_case("postgresql") {
-            Some(Dialect::Postgres)
-        } else {
-            None
-        }
+        Dialect::parse(scheme)
     }
 }
 
@@ -84,6 +83,22 @@ mod tests {
         let config = config_with_url(Some("postgresql://localhost/app"));
 
         assert!(matches!(config.dialect(), Some(Dialect::Postgres)));
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn parses_sqlite_dialect_from_database_url() {
+        let config = config_with_url(Some("sqlite://app.db"));
+
+        assert!(matches!(config.dialect(), Some(Dialect::Sqlite)));
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn parses_sqlite_memory_dialect_from_database_url() {
+        let config = config_with_url(Some("sqlite::memory:"));
+
+        assert!(matches!(config.dialect(), Some(Dialect::Sqlite)));
     }
 
     /// Verifies that unsupported URL schemes do not resolve to a known dialect.

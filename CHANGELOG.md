@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Generated columns — `Column` now has an optional `generated` field. When set, the column is emitted as `GENERATED ALWAYS AS (...) STORED` in SQL. `inspect_db` reads `generation_expression` from `information_schema.columns` and populates the field automatically.
+
 ## [0.3.17] - 2026-04-23
 
 ### Added
@@ -16,7 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.16] - 2026-04-23
 
-## [0.3.16] - 2026-04-23
+### Changed
+
+- Replaced `tokio-postgres` with `sqlx` (`sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-native-tls"] }`) as the database driver. All executor methods are now fully async via `BoxFuture`. The runtime is `tokio` with `#[tokio::main(flavor = "current_thread")]` in the CLI and `#[tokio::test]` in integration tests.
 
 ### Added
 

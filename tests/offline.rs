@@ -4,7 +4,7 @@ use gaman::schema::Schema;
 
 use support::{
     OfflineCase, OfflineSpec, TestSupportError, assert_error_contains, assert_ops_match,
-    assert_schema_matches, assert_sql_matches, build_migrator, case_label, case_name,
+    assert_schema_matches_with_dialect, assert_sql_matches, build_migrator, case_label, case_name,
     discover_cases, offline_cases_root, ordered_migrations, read_case_file, replay_schema,
 };
 
@@ -42,6 +42,7 @@ fn offline_cases() {
 }
 
 fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportError> {
+    let dialect = case.dialect.to_dialect();
     match &case.spec {
         OfflineSpec::SqlToSchema { sql, expect_schema, expect_error } => {
             let result = Schema::from_sql_str(sql);
@@ -55,7 +56,7 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
             let expected = expect_schema.clone().ok_or_else(|| {
                 TestSupportError::message(format!("{name}: sql_to_schema requires expect_schema when expect_error is absent"))
             })?;
-            assert_schema_matches(name, "parsed schema", actual, expected)
+            assert_schema_matches_with_dialect(name, "parsed schema", actual, expected, dialect)
         }
         OfflineSpec::SchemaToMigration {
             name: migration_name,
@@ -112,7 +113,7 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
             let expected = expect_schema.clone().ok_or_else(|| {
                 TestSupportError::message(format!("{name}: migration_to_replay requires expect_schema when expect_error is absent"))
             })?;
-            assert_schema_matches(name, "replayed schema", actual, expected)
+            assert_schema_matches_with_dialect(name, "replayed schema", actual, expected, dialect)
         }
         OfflineSpec::MigrationToSql { migrations, expect_sql, expect_error } => {
             let result = build_migrator(name, case.dialect, migrations)

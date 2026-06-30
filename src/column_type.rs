@@ -20,21 +20,21 @@ impl<T: ColumnType> ColumnType for Option<T> {
 }
 
 macro_rules! impl_column_type {
-    ($ty:ty, $( $variant:path => $sql:literal ),+ $(,)?) => {
+    ($ty:ty, $( $(#[$meta:meta])* $variant:path => $sql:literal ),+ $(,)?) => {
         impl ColumnType for $ty {
             fn column_desc(dialect: &Dialect) -> ColumnDesc {
-                let sql_type = match dialect { $( $variant => $sql, )+ };
+                let sql_type = match dialect { $( $(#[$meta])* $variant => $sql, )+ };
                 ColumnDesc { sql_type, nullable: false }
             }
         }
     };
 }
 
-impl_column_type!(i16,     Dialect::Postgres => "smallint");
-impl_column_type!(i32,     Dialect::Postgres => "integer");
-impl_column_type!(i64,     Dialect::Postgres => "bigint");
-impl_column_type!(f32,     Dialect::Postgres => "real");
-impl_column_type!(f64,     Dialect::Postgres => "double precision");
-impl_column_type!(bool,    Dialect::Postgres => "boolean");
-impl_column_type!(String,  Dialect::Postgres => "text");
-impl_column_type!(Vec<u8>, Dialect::Postgres => "bytea");
+impl_column_type!(i16,     Dialect::Postgres => "smallint", #[cfg(feature = "sqlite")] Dialect::Sqlite => "integer");
+impl_column_type!(i32,     Dialect::Postgres => "integer", #[cfg(feature = "sqlite")] Dialect::Sqlite => "integer");
+impl_column_type!(i64,     Dialect::Postgres => "bigint", #[cfg(feature = "sqlite")] Dialect::Sqlite => "integer");
+impl_column_type!(f32,     Dialect::Postgres => "real", #[cfg(feature = "sqlite")] Dialect::Sqlite => "real");
+impl_column_type!(f64,     Dialect::Postgres => "double precision", #[cfg(feature = "sqlite")] Dialect::Sqlite => "real");
+impl_column_type!(bool,    Dialect::Postgres => "boolean", #[cfg(feature = "sqlite")] Dialect::Sqlite => "integer");
+impl_column_type!(String,  Dialect::Postgres => "text", #[cfg(feature = "sqlite")] Dialect::Sqlite => "text");
+impl_column_type!(Vec<u8>, Dialect::Postgres => "bytea", #[cfg(feature = "sqlite")] Dialect::Sqlite => "blob");

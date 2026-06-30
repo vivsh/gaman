@@ -17,11 +17,30 @@ pub enum Severity {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClarificationKind {
-    RenameTable { old: String, candidates: Vec<String> },
-    RenameColumn { table: String, old: String, candidates: Vec<String> },
-    NotNullAdd { table: String, column: String, col_type: String },
-    NotNullChange { table: String, column: String },
-    TypeCast { table: String, column: String, from: String, to: String },
+    RenameTable {
+        old: String,
+        candidates: Vec<String>,
+    },
+    RenameColumn {
+        table: String,
+        old: String,
+        candidates: Vec<String>,
+    },
+    NotNullAdd {
+        table: String,
+        column: String,
+        col_type: String,
+    },
+    NotNullChange {
+        table: String,
+        column: String,
+    },
+    TypeCast {
+        table: String,
+        column: String,
+        from: String,
+        to: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -106,9 +125,11 @@ fn normalize_type(t: &str) -> String {
 
 fn type_family(t: &str) -> Option<u8> {
     match t {
-        "text" | "varchar" | "char" | "character varying" | "character" | "bpchar" | "name" => Some(0),
-        "int" | "integer" | "int4" | "int8" | "int2" | "bigint" | "smallint"
-        | "serial" | "bigserial" | "smallserial" => Some(1),
+        "text" | "varchar" | "char" | "character varying" | "character" | "bpchar" | "name" => {
+            Some(0)
+        }
+        "int" | "integer" | "int4" | "int8" | "int2" | "bigint" | "smallint" | "serial"
+        | "bigserial" | "smallserial" => Some(1),
         "float" | "float4" | "float8" | "real" | "double precision" => Some(2),
         "numeric" | "decimal" => Some(3),
         "bool" | "boolean" => Some(4),
@@ -148,11 +169,19 @@ fn all_clarifications_raw(ops: &[Operation]) -> Vec<Clarification> {
 
     for op in ops {
         match op {
-            Operation::DropColumn { table_name, column, .. } => {
-                dropped_cols.entry(table_name.as_str()).or_default().push(column);
+            Operation::DropColumn {
+                table_name, column, ..
+            } => {
+                dropped_cols
+                    .entry(table_name.as_str())
+                    .or_default()
+                    .push(column);
             }
             Operation::AddColumn { table_name, column } => {
-                added_cols.entry(table_name.as_str()).or_default().push(column);
+                added_cols
+                    .entry(table_name.as_str())
+                    .or_default()
+                    .push(column);
             }
             Operation::DropTable { table } => dropped_tables.push(table),
             Operation::CreateTable { table } => created_tables.push(table),
@@ -165,14 +194,19 @@ fn all_clarifications_raw(ops: &[Operation]) -> Vec<Clarification> {
 
     for table_name in table_names {
         let drops = &dropped_cols[table_name];
-        let adds = added_cols.get(table_name).map(|v| v.as_slice()).unwrap_or(&[]);
+        let adds = added_cols
+            .get(table_name)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         let mut sorted_drops = drops.to_vec();
         sorted_drops.sort_by_key(|c| c.name.as_str());
 
         for dropped in sorted_drops {
             let mut candidates: Vec<String> = adds
                 .iter()
-                .filter(|a| a.name != dropped.name && types_compatible(&dropped.col_type, &a.col_type))
+                .filter(|a| {
+                    a.name != dropped.name && types_compatible(&dropped.col_type, &a.col_type)
+                })
                 .map(|a| a.name.clone())
                 .collect();
             candidates.sort();
@@ -229,7 +263,12 @@ fn all_clarifications_raw(ops: &[Operation]) -> Vec<Clarification> {
                     },
                 });
             }
-            Operation::AlterColumn { table_name, old, new, .. } => {
+            Operation::AlterColumn {
+                table_name,
+                old,
+                new,
+                ..
+            } => {
                 if old.nullable && !new.nullable {
                     result.push(Clarification {
                         id: format!("notnull_change:{}:{}", table_name, old.name),
@@ -263,22 +302,30 @@ fn all_clarifications_raw(ops: &[Operation]) -> Vec<Clarification> {
 
 fn gather_clarifications(ops: &[Operation], decisions: &[Decision]) -> Vec<Clarification> {
     let raw = all_clarifications_raw(ops);
-    let decided_ids: HashSet<&str> = decisions.iter().map(|d| d.clarification_id.as_str()).collect();
-    let claimed: HashSet<&str> = decisions.iter().filter_map(|d| {
-        if let Answer::RenameTo(name) = &d.answer { Some(name.as_str()) } else { None }
-    }).collect();
+    let decided_ids: HashSet<&str> = decisions
+        .iter()
+        .map(|d| d.clarification_id.as_str())
+        .collect();
+    let claimed: HashSet<&str> = decisions
+        .iter()
+        .filter_map(|d| {
+            if let Answer::RenameTo(name) = &d.answer {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
 
     raw.into_iter()
         .filter(|c| !decided_ids.contains(c.id.as_str()))
-        .filter_map(|mut c| {
-            match &mut c.kind {
-                ClarificationKind::RenameColumn { candidates, .. }
-                | ClarificationKind::RenameTable { candidates, .. } => {
-                    candidates.retain(|n| !claimed.contains(n.as_str()));
-                    if candidates.is_empty() { None } else { Some(c) }
-                }
-                _ => Some(c),
+        .filter_map(|mut c| match &mut c.kind {
+            ClarificationKind::RenameColumn { candidates, .. }
+            | ClarificationKind::RenameTable { candidates, .. } => {
+                candidates.retain(|n| !claimed.contains(n.as_str()));
+                if candidates.is_empty() { None } else { Some(c) }
             }
+            _ => Some(c),
         })
         .collect()
 }
@@ -312,7 +359,9 @@ fn validate_answer(clar: &Clarification, answer: &Answer) -> Result<(), Disambig
         (ClarificationKind::TypeCast { .. }, Answer::TypeCast(_))
         | (ClarificationKind::TypeCast { .. }, Answer::TypeCastImplicit) => {}
         _ => {
-            return Err(DisambiguatorError::InvalidAnswer { id: clar.id.clone() });
+            return Err(DisambiguatorError::InvalidAnswer {
+                id: clar.id.clone(),
+            });
         }
     }
     Ok(())
@@ -328,7 +377,9 @@ fn apply_decisions(
     for decision in decisions {
         let clar = clar_map
             .get(decision.clarification_id.as_str())
-            .ok_or_else(|| DisambiguatorError::UnknownDecision(decision.clarification_id.clone()))?;
+            .ok_or_else(|| {
+                DisambiguatorError::UnknownDecision(decision.clarification_id.clone())
+            })?;
         validate_answer(clar, &decision.answer)?;
     }
 
@@ -364,7 +415,9 @@ fn apply_decisions(
 
     for op in ops {
         match op {
-            Operation::DropColumn { table_name, column, .. } => {
+            Operation::DropColumn {
+                table_name, column, ..
+            } => {
                 if let Some(new_name) =
                     col_renames.get(&(table_name.as_str(), column.name.as_str()))
                 {
@@ -390,7 +443,10 @@ fn apply_decisions(
                         _ => {}
                     }
                 }
-                result.push(Operation::AddColumn { table_name: table_name.clone(), column: col });
+                result.push(Operation::AddColumn {
+                    table_name: table_name.clone(),
+                    column: col,
+                });
             }
             Operation::DropTable { table } => {
                 if let Some(new_name) = table_renames.get(table.name.as_str()) {
@@ -408,7 +464,12 @@ fn apply_decisions(
                 }
                 result.push(op.clone());
             }
-            Operation::AlterColumn { table_name, old, new, cast_expr } => {
+            Operation::AlterColumn {
+                table_name,
+                old,
+                new,
+                cast_expr,
+            } => {
                 let mut new_col = new.clone();
                 let mut cast = cast_expr.clone();
 
@@ -472,11 +533,15 @@ mod tests {
             primary_key: false,
             references: None,
             check: None,
+            generated: None,
         }
     }
 
     fn decision(id: &str, answer: Answer) -> Decision {
-        Decision { clarification_id: id.to_string(), answer }
+        Decision {
+            clarification_id: id.to_string(),
+            answer,
+        }
     }
 
     fn get_clarifications(ops: &[Operation]) -> Vec<Clarification> {
@@ -507,7 +572,11 @@ mod tests {
         assert_eq!(clar[0].id, "rename_col:users:email");
         assert_eq!(clar[0].severity, Severity::Suggestion);
         match &clar[0].kind {
-            ClarificationKind::RenameColumn { table, old, candidates } => {
+            ClarificationKind::RenameColumn {
+                table,
+                old,
+                candidates,
+            } => {
                 assert_eq!(table, "users");
                 assert_eq!(old, "email");
                 assert_eq!(candidates, &["email_address"]);
@@ -576,7 +645,11 @@ mod tests {
         assert_eq!(clar[0].severity, Severity::Fatal);
         assert_eq!(clar[0].id, "notnull_add:orders:reference_id");
         match &clar[0].kind {
-            ClarificationKind::NotNullAdd { table, column, col_type } => {
+            ClarificationKind::NotNullAdd {
+                table,
+                column,
+                col_type,
+            } => {
                 assert_eq!(table, "orders");
                 assert_eq!(column, "reference_id");
                 assert_eq!(col_type, "integer");
@@ -648,10 +721,14 @@ mod tests {
                 column: col("x", "int", false),
             },
         ];
-        let ids_a: Vec<String> =
-            get_clarifications(&ops_a).into_iter().map(|c| c.id).collect();
-        let ids_b: Vec<String> =
-            get_clarifications(&ops_b).into_iter().map(|c| c.id).collect();
+        let ids_a: Vec<String> = get_clarifications(&ops_a)
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        let ids_b: Vec<String> = get_clarifications(&ops_b)
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
         assert_eq!(ids_a, ids_b);
     }
 
@@ -694,7 +771,10 @@ mod tests {
         assert_eq!(second.len(), 1);
         match &second[0].kind {
             ClarificationKind::RenameColumn { candidates, .. } => {
-                assert!(!candidates.contains(&"alpha".to_string()), "alpha must be excluded");
+                assert!(
+                    !candidates.contains(&"alpha".to_string()),
+                    "alpha must be excluded"
+                );
                 assert!(candidates.contains(&"beta".to_string()));
             }
             _ => panic!("expected RenameColumn"),
@@ -722,13 +802,19 @@ mod tests {
             DisambiguationResult::NeedsInput(_)
         ));
 
-        let decisions =
-            vec![decision("rename_col:users:old_email", Answer::RenameTo("new_email".into()))];
+        let decisions = vec![decision(
+            "rename_col:users:old_email",
+            Answer::RenameTo("new_email".into()),
+        )];
         match d.process(&ops, &decisions).unwrap() {
             DisambiguationResult::Resolved(final_ops) => {
                 assert_eq!(final_ops.len(), 1);
                 match &final_ops[0] {
-                    Operation::RenameColumn { table_name, old_name, new_name } => {
+                    Operation::RenameColumn {
+                        table_name,
+                        old_name,
+                        new_name,
+                    } => {
                         assert_eq!(table_name, "users");
                         assert_eq!(old_name, "old_email");
                         assert_eq!(new_name, "new_email");
@@ -750,8 +836,10 @@ mod tests {
             new: col("status", "text", false),
             cast_expr: None,
         }];
-        let decisions =
-            vec![decision("notnull_change:users:status", Answer::NotNullDefault("'active'".into()))];
+        let decisions = vec![decision(
+            "notnull_change:users:status",
+            Answer::NotNullDefault("'active'".into()),
+        )];
         let d = Disambiguator;
         match d.process(&ops, &decisions).unwrap() {
             DisambiguationResult::Resolved(result) => {
@@ -778,7 +866,10 @@ mod tests {
         let err = d
             .process(&[], &[decision("rename_col:t:x", Answer::RenameNo)])
             .unwrap_err();
-        assert_eq!(err, DisambiguatorError::UnknownDecision("rename_col:t:x".into()));
+        assert_eq!(
+            err,
+            DisambiguatorError::UnknownDecision("rename_col:t:x".into())
+        );
     }
 
     /// Verifies that process returns InvalidCandidate when a RenameTo answer
@@ -798,7 +889,13 @@ mod tests {
         ];
         let d = Disambiguator;
         let err = d
-            .process(&ops, &[decision("rename_col:t:x", Answer::RenameTo("nonexistent".into()))])
+            .process(
+                &ops,
+                &[decision(
+                    "rename_col:t:x",
+                    Answer::RenameTo("nonexistent".into()),
+                )],
+            )
             .unwrap_err();
         assert!(matches!(err, DisambiguatorError::InvalidCandidate { .. }));
     }
@@ -820,7 +917,13 @@ mod tests {
         ];
         let d = Disambiguator;
         let err = d
-            .process(&ops, &[decision("rename_col:t:x", Answer::NotNullDefault("0".into()))])
+            .process(
+                &ops,
+                &[decision(
+                    "rename_col:t:x",
+                    Answer::NotNullDefault("0".into()),
+                )],
+            )
             .unwrap_err();
         assert!(matches!(err, DisambiguatorError::InvalidAnswer { .. }));
     }

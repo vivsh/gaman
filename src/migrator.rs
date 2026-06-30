@@ -6,14 +6,16 @@ use crate::adapters::{AdapterError, MigrationSource};
 use crate::conf::Config;
 use crate::dialects::{Dialect, DialectError};
 use crate::diff::{DiffEngine, DiffError};
-use crate::disambiguator::{Clarification, Decision, Disambiguator, DisambiguationResult, DisambiguatorError};
+use crate::disambiguator::{
+    Clarification, Decision, DisambiguationResult, Disambiguator, DisambiguatorError,
+};
 use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
-use crate::executor::{BoxFuture, Executor, ExecutorError, Invoker, InvokerError};
+use crate::executor::{Executor, ExecutorError, Invoker, InvokerError};
 use crate::graphs::{GraphError, MigrationGraph};
 use crate::migrations::Migration;
 use crate::operations::Operation;
-use crate::states::{ReplayError, Schema};
 use crate::states::types::EntityKind;
+use crate::states::{ReplayError, Schema};
 
 #[derive(Debug, Error)]
 pub enum MigratorError {
@@ -48,22 +50,31 @@ pub struct Migrator {
     environment: Box<dyn Environment>,
     pub source: Box<dyn MigrationSource>,
     pub graph: MigrationGraph,
+    ordered_ids: Vec<String>,
     pub diff: DiffEngine,
 }
 
 impl Migrator {
-    pub fn new(source: Box<dyn MigrationSource>, environment: Box<dyn Environment>) -> Result<Self, MigratorError> {
+    pub fn new(
+        source: Box<dyn MigrationSource>,
+        environment: Box<dyn Environment>,
+    ) -> Result<Self, MigratorError> {
         let mut graph = MigrationGraph::new();
         let migrations = source.load_all()?;
         for migration in migrations {
             graph.add(migration)?;
         }
         // Validate dependency integrity eagerly so broken repos fail at construction, not at migrate-time.
-        graph.topological_order()?;
+        let ordered_ids = graph
+            .topological_order()?
+            .into_iter()
+            .map(str::to_string)
+            .collect();
         Ok(Self {
             environment,
             source,
             graph,
+            ordered_ids,
             diff: DiffEngine::new(),
         })
     }
@@ -77,7 +88,10 @@ impl Migrator {
     }
 
     async fn executor(&self) -> Result<Box<dyn EnvironmentExecutor>, MigratorError> {
-        self.environment.executor().await.map_err(MigratorError::from)
+        self.environment
+            .executor()
+            .await
+            .map_err(MigratorError::from)
     }
 
     fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, MigratorError> {
@@ -105,7 +119,9 @@ impl Migrator {
             return Ok(None);
         }
         let ops = match Disambiguator.process(&raw_ops, decisions)? {
-            DisambiguationResult::NeedsInput(clars) => return Err(MigratorError::NeedsInput(clars)),
+            DisambiguationResult::NeedsInput(clars) => {
+                return Err(MigratorError::NeedsInput(clars));
+            }
             DisambiguationResult::Resolved(ops) => ops,
         };
         let ops = dialect.reorder(ops, &previous, &current);
@@ -113,7 +129,12 @@ impl Migrator {
         let id = format!("{:04}_{}", self.graph.next_number(), name);
         MigrationGraph::validate_id(&id).map_err(MigratorError::Graph)?;
         let dependencies = compute_deps(&ops, &last_per_ns, &entity_ns);
-        let migration = Migration { id, dependencies, operations: ops, atomic: true };
+        let migration = Migration {
+            id,
+            dependencies,
+            operations: ops,
+            atomic: true,
+        };
         if !dry_run {
             self.source.save(&migration)?;
         }
@@ -125,8 +146,17 @@ impl Migrator {
         Ok(state)
     }
 
-    fn replay_with_sources(&self) -> Result<(Schema, HashMap<String, String>, HashMap<(EntityKind, String), String>), MigratorError> {
-        let order = self.graph.topological_order()?;
+    fn replay_with_sources(
+        &self,
+    ) -> Result<
+        (
+            Schema,
+            HashMap<String, String>,
+            HashMap<(EntityKind, String), String>,
+        ),
+        MigratorError,
+    > {
+        let order = self.ordered_ids.iter().map(String::as_str);
         let mut state = Schema::default();
         let mut last_per_ns: HashMap<String, String> = HashMap::new();
         let mut entity_ns: HashMap<(EntityKind, String), String> = HashMap::new();
@@ -157,7 +187,12 @@ impl Migrator {
         let id = format!("{:04}_{}", self.graph.next_number(), name);
         MigrationGraph::validate_id(&id).map_err(MigratorError::Graph)?;
         let dependencies = compute_deps(&[], &last_per_ns, &entity_ns);
-        let migration = Migration { id, dependencies, operations: vec![], atomic: true };
+        let migration = Migration {
+            id,
+            dependencies,
+            operations: vec![],
+            atomic: true,
+        };
         self.source.save(&migration)?;
         Ok(migration)
     }
@@ -177,14 +212,76 @@ impl Migrator {
     /// The caller controls direction — pass operations as-is for forward, or pre-mapped
     /// inverses in reverse order for backward. Does not include tracking INSERT/DELETE.
     pub fn sql_migrate(&self, migrations: &[Migration]) -> Result<Vec<String>, MigratorError> {
-        let dialect = self.dialect();
         let mut stmts = Vec::new();
+        let mut state = self.initial_state_for_sql_migrate(migrations)?;
         for migration in migrations {
-            for op in &migration.operations {
-                stmts.extend(dialect.operation_to_sql(op)?);
-            }
+            stmts.extend(self.render_migration_sql(migration, &state)?);
+            apply_migration_to_state(&mut state, migration)?;
         }
         Ok(stmts)
+    }
+
+    fn initial_state_for_sql_migrate(
+        &self,
+        migrations: &[Migration],
+    ) -> Result<Schema, MigratorError> {
+        let first_graph_position = migrations
+            .iter()
+            .filter_map(|migration| {
+                self.ordered_ids
+                    .iter()
+                    .position(|id| id == &migration.id)
+            })
+            .min();
+
+        match first_graph_position {
+            Some(position) => self.replay_prefix(position),
+            None => self.replay_prefix(self.ordered_ids.len()),
+        }
+    }
+
+    fn replay_prefix(&self, end_exclusive: usize) -> Result<Schema, MigratorError> {
+        let mut state = Schema::default();
+        for id in self.ordered_ids.iter().take(end_exclusive) {
+            let migration = self.graph.get(id).expect("ordered id must exist in graph");
+            apply_migration_to_state(&mut state, migration)?;
+        }
+        Ok(state)
+    }
+
+    fn replay_before_migration(&self, id: &str) -> Result<Schema, MigratorError> {
+        let position = self
+            .ordered_ids
+            .iter()
+            .position(|known| known == id)
+            .ok_or_else(|| MigratorError::Config(format!("unknown migration '{id}'")))?;
+        self.replay_prefix(position)
+    }
+
+    fn replay_through_migration(&self, id: &str) -> Result<Schema, MigratorError> {
+        let position = self
+            .ordered_ids
+            .iter()
+            .position(|known| known == id)
+            .ok_or_else(|| MigratorError::Config(format!("unknown migration '{id}'")))?;
+        self.replay_prefix(position + 1)
+    }
+
+    fn render_migration_sql(
+        &self,
+        migration: &Migration,
+        start: &Schema,
+    ) -> Result<Vec<String>, MigratorError> {
+        if migration
+            .operations
+            .iter()
+            .any(|op| matches!(op, Operation::Invoke { .. }))
+        {
+            return Err(MigratorError::Config(
+                "Invoke operations are not yet supported and cannot be executed".into(),
+            ));
+        }
+        Ok(self.dialect().migration_to_sql(migration, start)?)
     }
 
     /// Validate a list of ordered migrations before any SQL is sent to the database.
@@ -206,7 +303,9 @@ impl Migrator {
                     if op.inverse().is_none() {
                         return Err(MigratorError::Config(format!(
                             "migration '{}' (operation {}): operation '{}' has no inverse",
-                            m.id, i + 1, op.type_name()
+                            m.id,
+                            i + 1,
+                            op.type_name()
                         )));
                     }
                 }
@@ -217,8 +316,10 @@ impl Migrator {
         let mut state = Schema::default();
         let mut index_names: std::collections::HashMap<String, std::collections::HashSet<String>> =
             std::collections::HashMap::new();
-        let mut constraint_names: std::collections::HashMap<String, std::collections::HashSet<String>> =
-            std::collections::HashMap::new();
+        let mut constraint_names: std::collections::HashMap<
+            String,
+            std::collections::HashSet<String>,
+        > = std::collections::HashMap::new();
 
         for m in migrations {
             for (i, op) in m.operations.iter().enumerate() {
@@ -226,7 +327,8 @@ impl Migrator {
                     return Err(MigratorError::Config(format!(
                         "migration '{}' (operation {}): Invoke operations are not yet supported \
                          and cannot be executed — remove or replace with a Statement operation",
-                        m.id, i + 1
+                        m.id,
+                        i + 1
                     )));
                 }
                 match op {
@@ -236,7 +338,10 @@ impl Migrator {
                             if !is_self_ref && !state.tables.contains_key(&fk.to_table) {
                                 return Err(MigratorError::Config(format!(
                                     "migration '{}' (operation {}): foreign key '{}' references unknown table '{}'",
-                                    m.id, i + 1, fk.name, fk.to_table
+                                    m.id,
+                                    i + 1,
+                                    fk.name,
+                                    fk.to_table
                                 )));
                             }
                         }
@@ -245,7 +350,10 @@ impl Migrator {
                             if !entry.insert(idx.name.clone()) {
                                 return Err(MigratorError::Config(format!(
                                     "migration '{}' (operation {}): duplicate index name '{}' on table '{}'",
-                                    m.id, i + 1, idx.name, table.name
+                                    m.id,
+                                    i + 1,
+                                    idx.name,
+                                    table.name
                                 )));
                             }
                         }
@@ -254,34 +362,54 @@ impl Migrator {
                             if !entry.insert(c.name().to_string()) {
                                 return Err(MigratorError::Config(format!(
                                     "migration '{}' (operation {}): duplicate constraint name '{}' on table '{}'",
-                                    m.id, i + 1, c.name(), table.name
+                                    m.id,
+                                    i + 1,
+                                    c.name(),
+                                    table.name
                                 )));
                             }
                         }
                     }
-                    crate::operations::Operation::AddForeignKey { table_name: _, foreign_key } => {
+                    crate::operations::Operation::AddForeignKey {
+                        table_name: _,
+                        foreign_key,
+                    } => {
                         if !state.tables.contains_key(&foreign_key.to_table) {
                             return Err(MigratorError::Config(format!(
                                 "migration '{}' (operation {}): foreign key '{}' references unknown table '{}'",
-                                m.id, i + 1, foreign_key.name, foreign_key.to_table
+                                m.id,
+                                i + 1,
+                                foreign_key.name,
+                                foreign_key.to_table
                             )));
                         }
                     }
-                    crate::operations::Operation::AddIndex { table_name, index, .. } => {
+                    crate::operations::Operation::AddIndex {
+                        table_name, index, ..
+                    } => {
                         let entry = index_names.entry(table_name.clone()).or_default();
                         if !entry.insert(index.name.clone()) {
                             return Err(MigratorError::Config(format!(
                                 "migration '{}' (operation {}): duplicate index name '{}' on table '{}'",
-                                m.id, i + 1, index.name, table_name
+                                m.id,
+                                i + 1,
+                                index.name,
+                                table_name
                             )));
                         }
                     }
-                    crate::operations::Operation::AddConstraint { table_name, constraint } => {
+                    crate::operations::Operation::AddConstraint {
+                        table_name,
+                        constraint,
+                    } => {
                         let entry = constraint_names.entry(table_name.clone()).or_default();
                         if !entry.insert(constraint.name().to_string()) {
                             return Err(MigratorError::Config(format!(
                                 "migration '{}' (operation {}): duplicate constraint name '{}' on table '{}'",
-                                m.id, i + 1, constraint.name(), table_name
+                                m.id,
+                                i + 1,
+                                constraint.name(),
+                                table_name
                             )));
                         }
                     }
@@ -307,29 +435,28 @@ impl Migrator {
         Ok(())
     }
 
-    async fn run_ops(
+    async fn run_migration_sql(
         &self,
-        ops: &[Operation],
+        migration: &Migration,
+        start: &Schema,
         executor: &mut dyn Executor,
         _invoker: Option<&dyn Invoker>,
     ) -> Result<(), MigratorError> {
-        let dialect = self.dialect();
-        for op in ops {
-            if let Operation::Invoke { .. } = op {
-                return Err(MigratorError::Config(
-                    "Invoke operations are not yet supported and cannot be executed".into()
-                ));
-            } else {
-                for sql in dialect.operation_to_sql(op)? {
-                    executor.execute(&sql).await?;
-                }
-            }
+        for sql in self.render_migration_sql(migration, start)? {
+            executor.execute(&sql).await?;
         }
         Ok(())
     }
 
-    async fn applied_set(&self, executor: &mut dyn Executor) -> Result<HashSet<String>, MigratorError> {
-        Ok(executor.fetch_strings(self.dialect().applied_migrations_sql()).await?.into_iter().collect())
+    async fn applied_set(
+        &self,
+        executor: &mut dyn Executor,
+    ) -> Result<HashSet<String>, MigratorError> {
+        Ok(executor
+            .fetch_strings(self.dialect().applied_migrations_sql())
+            .await?
+            .into_iter()
+            .collect())
     }
 
     async fn apply_one(
@@ -339,15 +466,28 @@ impl Migrator {
         invoker: Option<&dyn Invoker>,
         fake: bool,
     ) -> Result<(), MigratorError> {
-        if migration.atomic { executor.begin().await?; }
+        if migration.atomic {
+            executor.begin().await?;
+        }
         if !fake {
-            if let Err(e) = self.run_ops(&migration.operations, executor, invoker).await {
-                if migration.atomic { let _ = executor.rollback().await; }
+            let start = self.replay_before_migration(&migration.id)?;
+            if let Err(e) = self
+                .run_migration_sql(migration, &start, executor, invoker)
+                .await
+            {
+                if migration.atomic {
+                    let _ = executor.rollback().await;
+                }
                 return Err(e);
             }
         }
-        if let Err(e) = executor.execute(&self.dialect().record_sql(&migration.id)).await {
-            if migration.atomic { let _ = executor.rollback().await; }
+        if let Err(e) = executor
+            .execute(&self.dialect().record_sql(&migration.id))
+            .await
+        {
+            if migration.atomic {
+                let _ = executor.rollback().await;
+            }
             return Err(e.into());
         }
         if migration.atomic {
@@ -369,7 +509,8 @@ impl Migrator {
     pub async fn migrate(&self, target: Option<&str>, fake: bool) -> Result<usize, MigratorError> {
         let mut executor = self.executor().await?;
         let invoker = self.invoker()?;
-        self.migrate_with(executor.as_mut(), invoker.as_deref(), target, fake).await
+        self.migrate_with(executor.as_mut(), invoker.as_deref(), target, fake)
+            .await
     }
 
     pub async fn migrate_with(
@@ -380,7 +521,7 @@ impl Migrator {
         fake: bool,
     ) -> Result<usize, MigratorError> {
         self.graph.detect_conflict()?;
-        let all_ordered = self.graph.topological_order()?;
+        let all_ordered: Vec<&str> = self.ordered_ids.iter().map(String::as_str).collect();
 
         let all_migrations: Vec<_> = all_ordered
             .iter()
@@ -391,16 +532,40 @@ impl Migrator {
 
         self.install(executor).await?;
         executor.acquire_lock().await?;
+        let result = self
+            .migrate_locked(executor, invoker, target, fake, all_ordered)
+            .await;
+        let release_result = executor.release_lock().await;
 
+        match (result, release_result) {
+            (Ok(count), Ok(())) => Ok(count),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error.into()),
+        }
+    }
+
+    async fn migrate_locked<'a>(
+        &'a self,
+        executor: &mut dyn Executor,
+        invoker: Option<&dyn Invoker>,
+        target: Option<&str>,
+        fake: bool,
+        all_ordered: Vec<&'a str>,
+    ) -> Result<usize, MigratorError> {
         if let Some(target_id) = target {
             if self.graph.get(target_id).is_none() {
-                return Err(MigratorError::Config(format!("unknown target migration '{target_id}'")));
+                return Err(MigratorError::Config(format!(
+                    "unknown target migration '{target_id}'"
+                )));
             }
 
             let order = all_ordered;
             let applied: HashSet<String> = self.applied_set(executor).await?;
+            self.validate_applied_ids(&applied)?;
 
-            let target_pos = order.iter().position(|id| *id == target_id)
+            let target_pos = order
+                .iter()
+                .position(|id| *id == target_id)
                 .expect("target exists in graph so must be in topo order");
 
             let mut to_revert: Vec<&str> = order[target_pos + 1..]
@@ -412,14 +577,18 @@ impl Migrator {
 
             for id in to_revert {
                 let migration = self.graph.get(id).expect("applied id must exist in graph");
-                if migration.atomic { executor.begin().await?; }
+                if migration.atomic {
+                    executor.begin().await?;
+                }
                 if !fake {
                     let mut inv_ops = Vec::with_capacity(migration.operations.len());
                     for op in &migration.operations {
                         match op.inverse() {
                             Some(inv) => inv_ops.push(inv),
                             None => {
-                                if migration.atomic { let _ = executor.rollback().await; }
+                                if migration.atomic {
+                                    let _ = executor.rollback().await;
+                                }
                                 return Err(MigratorError::Config(format!(
                                     "migration '{id}' is not reversible: operation '{}' has no inverse",
                                     op.type_name()
@@ -428,13 +597,27 @@ impl Migrator {
                         }
                     }
                     inv_ops.reverse();
-                    if let Err(e) = self.run_ops(&inv_ops, executor, invoker).await {
-                        if migration.atomic { let _ = executor.rollback().await; }
+                    let start = self.replay_through_migration(id)?;
+                    let rollback_migration = Migration {
+                        id: format!("{id}__rollback"),
+                        dependencies: vec![],
+                        operations: inv_ops,
+                        atomic: migration.atomic,
+                    };
+                    if let Err(e) = self
+                        .run_migration_sql(&rollback_migration, &start, executor, invoker)
+                        .await
+                    {
+                        if migration.atomic {
+                            let _ = executor.rollback().await;
+                        }
                         return Err(e);
                     }
                 }
                 if let Err(e) = executor.execute(&self.dialect().unrecord_sql(id)).await {
-                    if migration.atomic { let _ = executor.rollback().await; }
+                    if migration.atomic {
+                        let _ = executor.rollback().await;
+                    }
                     return Err(e.into());
                 }
                 if migration.atomic {
@@ -456,12 +639,13 @@ impl Migrator {
                 self.apply_one(migration, executor, invoker, fake).await?;
             }
 
-            executor.release_lock().await?;
             return Ok(applied_count);
         }
 
         let applied: HashSet<String> = self.applied_set(executor).await?;
-        let pending: Vec<String> = all_ordered.iter()
+        self.validate_applied_ids(&applied)?;
+        let pending: Vec<String> = all_ordered
+            .iter()
             .filter(|id| !applied.contains(**id))
             .map(|id| id.to_string())
             .collect();
@@ -469,8 +653,23 @@ impl Migrator {
             let migration = self.graph.get(id).expect("pending id must exist in graph");
             self.apply_one(migration, executor, invoker, fake).await?;
         }
-        executor.release_lock().await?;
         Ok(pending.len())
+    }
+
+    fn validate_applied_ids(&self, applied: &HashSet<String>) -> Result<(), MigratorError> {
+        let unknown: Vec<&str> = applied
+            .iter()
+            .map(String::as_str)
+            .filter(|id| self.graph.get(id).is_none())
+            .collect();
+        if unknown.is_empty() {
+            Ok(())
+        } else {
+            Err(MigratorError::Config(format!(
+                "database has applied migration ids that are not present locally: {}",
+                unknown.join(", ")
+            )))
+        }
     }
 
     /// Return the ordered list of migration ids that would be applied.
@@ -481,12 +680,16 @@ impl Migrator {
         self.plan_with(executor.as_mut()).await
     }
 
-    pub async fn plan_with(&self, executor: &mut dyn Executor) -> Result<Vec<String>, MigratorError> {
+    pub async fn plan_with(
+        &self,
+        executor: &mut dyn Executor,
+    ) -> Result<Vec<String>, MigratorError> {
         self.graph.detect_conflict()?;
         self.install(executor).await?;
-        let order = self.graph.topological_order()?;
+        let order: Vec<&str> = self.ordered_ids.iter().map(String::as_str).collect();
         let applied: HashSet<String> = self.applied_set(executor).await?;
-        let pending = order.iter()
+        let pending = order
+            .iter()
             .filter(|id| !applied.contains(**id))
             .map(|id| id.to_string())
             .collect();
@@ -500,7 +703,9 @@ impl Migrator {
     }
 
     pub async fn check_with(&self, executor: &mut dyn Executor) -> Result<bool, MigratorError> {
-        self.plan_with(executor).await.map(|pending| !pending.is_empty())
+        self.plan_with(executor)
+            .await
+            .map(|pending| !pending.is_empty())
     }
 
     /// Return all migration ids in topological order paired with whether each has been applied.
@@ -509,17 +714,26 @@ impl Migrator {
         self.show_migrations_with(executor.as_mut()).await
     }
 
-    pub async fn show_migrations_with(&self, executor: &mut dyn Executor) -> Result<Vec<(String, bool)>, MigratorError> {
+    pub async fn show_migrations_with(
+        &self,
+        executor: &mut dyn Executor,
+    ) -> Result<Vec<(String, bool)>, MigratorError> {
         self.graph.detect_conflict()?;
         self.install(executor).await?;
-        let order = self.graph.topological_order()?;
+        let order: Vec<&str> = self.ordered_ids.iter().map(String::as_str).collect();
         let applied: HashSet<String> = self.applied_set(executor).await?;
-        Ok(order.iter().map(|id| (id.to_string(), applied.contains(*id))).collect())
+        Ok(order
+            .iter()
+            .map(|id| (id.to_string(), applied.contains(*id)))
+            .collect())
     }
 
     pub async fn inspect_db(&self, schemas: &[&str]) -> Result<Schema, MigratorError> {
         let mut executor = self.executor().await?;
-        executor.inspect_db(schemas).await.map_err(MigratorError::Executor)
+        executor
+            .inspect_db(schemas)
+            .await
+            .map_err(MigratorError::Executor)
     }
 
     /// Compare the replayed schema state against the live database and return any differences.
@@ -532,7 +746,11 @@ impl Migrator {
         self.verify_with(executor.as_mut(), schema).await
     }
 
-    pub async fn verify_with(&self, executor: &mut dyn EnvironmentExecutor, schema: &str) -> Result<Vec<Operation>, MigratorError> {
+    pub async fn verify_with(
+        &self,
+        executor: &mut dyn EnvironmentExecutor,
+        schema: &str,
+    ) -> Result<Vec<Operation>, MigratorError> {
         let dialect = self.dialect();
         let mut replay = self.replay()?;
         replay.normalize();
@@ -540,7 +758,8 @@ impl Migrator {
         normalize_state_types(&mut replay, &dialect);
 
         let mut live = executor
-            .inspect_db(&[schema]).await
+            .inspect_db(&[schema])
+            .await
             .map_err(MigratorError::Executor)?;
         live.normalize();
         scope_tables_for_verify(&mut live, schema);
@@ -567,6 +786,20 @@ fn namespace_of(id: &str) -> &str {
     }
 }
 
+fn apply_migration_to_state(
+    state: &mut Schema,
+    migration: &Migration,
+) -> Result<(), MigratorError> {
+    for (i, op) in migration.operations.iter().enumerate() {
+        state.apply(op).map_err(|e| ReplayError::WithContext {
+            migration: migration.id.clone(),
+            op_num: i + 1,
+            inner: Box::new(e),
+        })?;
+    }
+    Ok(())
+}
+
 fn op_entity_label(op: &Operation) -> Option<&str> {
     match op {
         Operation::CreateTable { table } | Operation::DropTable { table } => Some(&table.name),
@@ -584,12 +817,18 @@ fn op_entity_label(op: &Operation) -> Option<&str> {
         | Operation::CreateTrigger { table_name, .. }
         | Operation::AlterTrigger { table_name, .. }
         | Operation::DropTrigger { table_name, .. } => Some(table_name),
-        Operation::CreateFunction { function } | Operation::DropFunction { function } => Some(&function.name),
+        Operation::CreateFunction { function } | Operation::DropFunction { function } => {
+            Some(&function.name)
+        }
         Operation::AlterFunction { new, .. } => Some(&new.name),
         Operation::CreateView { view } | Operation::DropView { view } => Some(&view.name),
         Operation::ReplaceView { new, .. } => Some(&new.name),
-        Operation::CreateExtension { extension } | Operation::DropExtension { extension } => Some(&extension.name),
-        Operation::CreateEnum { enum_def } | Operation::DropEnum { enum_def } => Some(&enum_def.name),
+        Operation::CreateExtension { extension } | Operation::DropExtension { extension } => {
+            Some(&extension.name)
+        }
+        Operation::CreateEnum { enum_def } | Operation::DropEnum { enum_def } => {
+            Some(&enum_def.name)
+        }
         Operation::AlterEnum { new, .. } => Some(&new.name),
         Operation::Statement { .. } | Operation::Invoke { .. } => None,
     }
@@ -613,7 +852,10 @@ fn name_from_ops(ops: &[Operation]) -> String {
 
 fn auto_timestamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     let mins = secs / 60;
     let hhmm = (mins % (24 * 60)) as u32;
     let days = secs / 86400;
@@ -654,8 +896,15 @@ fn compute_deps(
                 }
                 v
             }
-            Operation::AddForeignKey { table_name, foreign_key }
-            | Operation::DropForeignKey { table_name, foreign_key, .. } => {
+            Operation::AddForeignKey {
+                table_name,
+                foreign_key,
+            }
+            | Operation::DropForeignKey {
+                table_name,
+                foreign_key,
+                ..
+            } => {
                 vec![
                     (EntityKind::Table, table_name.clone()),
                     (EntityKind::Table, foreign_key.to_table.clone()),
@@ -676,8 +925,7 @@ fn compute_deps(
             | Operation::ReplaceView { new: view, .. } => {
                 vec![(EntityKind::View, view.qualified_name())]
             }
-            Operation::CreateExtension { extension }
-            | Operation::DropExtension { extension } => {
+            Operation::CreateExtension { extension } | Operation::DropExtension { extension } => {
                 vec![(EntityKind::Extension, extension.qualified_name())]
             }
             Operation::AddColumn { table_name, .. }
@@ -787,8 +1035,14 @@ mod tests {
             &self.config
         }
 
-        fn executor<'a>(&'a self) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
-            Box::pin(async { Err(EnvironmentError::Config("executor is not available in the test environment".into())) })
+        fn executor<'a>(
+            &'a self,
+        ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+            Box::pin(async {
+                Err(EnvironmentError::Config(
+                    "executor is not available in the test environment".into(),
+                ))
+            })
         }
 
         fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
@@ -801,7 +1055,14 @@ mod tests {
     }
 
     fn simple_column(name: &str) -> Column {
-        Column { name: name.to_string(), col_type: "text".to_string(), nullable: true, default: None, primary_key: false, ..Default::default() }
+        Column {
+            name: name.to_string(),
+            col_type: "text".to_string(),
+            nullable: true,
+            default: None,
+            primary_key: false,
+            ..Default::default()
+        }
     }
 
     fn simple_table(name: &str, cols: &[&str]) -> Table {
@@ -834,8 +1095,15 @@ mod tests {
     }
 
     fn migrator_from(migrations: Vec<Migration>) -> Migrator {
-        let source = MockSource { migrations, ..MockSource::default() };
-        Migrator::new(Box::new(source), Box::new(TestEnvironment::new(Dialect::Postgres))).unwrap()
+        let source = MockSource {
+            migrations,
+            ..MockSource::default()
+        };
+        Migrator::new(
+            Box::new(source),
+            Box::new(TestEnvironment::new(Dialect::Postgres)),
+        )
+        .unwrap()
     }
 
     struct NullExecutor {
@@ -844,20 +1112,90 @@ mod tests {
     }
 
     impl NullExecutor {
-        fn empty() -> Self { Self { applied: vec![], lock_count: 0 } }
+        fn empty() -> Self {
+            Self {
+                applied: vec![],
+                lock_count: 0,
+            }
+        }
     }
 
     impl Executor for NullExecutor {
         fn execute<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
             Box::pin(async { Ok(()) })
         }
-        fn fetch_strings<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> {
+        fn fetch_strings<'a>(
+            &'a mut self,
+            _sql: &'a str,
+        ) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> {
             let applied = self.applied.clone();
             Box::pin(async move { Ok(applied) })
         }
-        fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> { Box::pin(async { Ok(()) }) }
-        fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> { Box::pin(async { Ok(()) }) }
-        fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> { Box::pin(async { Ok(()) }) }
+        fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn acquire_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            self.lock_count += 1;
+            Box::pin(async { Ok(()) })
+        }
+        fn release_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            self.lock_count -= 1;
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    struct FailingExecutor {
+        applied: Vec<String>,
+        fail_on: &'static str,
+        lock_count: usize,
+        rollback_count: usize,
+    }
+
+    impl FailingExecutor {
+        fn new(fail_on: &'static str) -> Self {
+            Self {
+                applied: vec![],
+                fail_on,
+                lock_count: 0,
+                rollback_count: 0,
+            }
+        }
+    }
+
+    impl Executor for FailingExecutor {
+        fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            let should_fail = sql.contains(self.fail_on);
+            Box::pin(async move {
+                if should_fail {
+                    Err(ExecutorError::Execute("forced failure".to_string()))
+                } else {
+                    Ok(())
+                }
+            })
+        }
+        fn fetch_strings<'a>(
+            &'a mut self,
+            _sql: &'a str,
+        ) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> {
+            let applied = self.applied.clone();
+            Box::pin(async move { Ok(applied) })
+        }
+        fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            self.rollback_count += 1;
+            Box::pin(async { Ok(()) })
+        }
         fn acquire_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
             self.lock_count += 1;
             Box::pin(async { Ok(()) })
@@ -873,15 +1211,31 @@ mod tests {
     }
 
     impl Executor for InspectingExecutor {
-        fn execute<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> { Box::pin(async { Ok(()) }) }
-        fn fetch_strings<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> { Box::pin(async { Ok(vec![]) }) }
-        fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> { Box::pin(async { Ok(()) }) }
-        fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> { Box::pin(async { Ok(()) }) }
-        fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> { Box::pin(async { Ok(()) }) }
+        fn execute<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn fetch_strings<'a>(
+            &'a mut self,
+            _sql: &'a str,
+        ) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> {
+            Box::pin(async { Ok(vec![]) })
+        }
+        fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
     }
 
     impl Introspectable for InspectingExecutor {
-        fn inspect_db<'a>(&'a mut self, _schemas: &'a [&'a str]) -> BoxFuture<'a, Result<Schema, ExecutorError>> {
+        fn inspect_db<'a>(
+            &'a mut self,
+            _schemas: &'a [&'a str],
+        ) -> BoxFuture<'a, Result<Schema, ExecutorError>> {
             let live = self.live.clone();
             Box::pin(async move { Ok(live) })
         }
@@ -893,31 +1247,111 @@ mod tests {
         let users = simple_table("users", &["id"]);
         let posts = simple_table("posts", &["id"]);
         let m = migrator_from(vec![
-            migration_with_ops("0001_create_users", &[], vec![Operation::CreateTable { table: users }]),
-            migration_with_ops("0002_create_posts", &["0001_create_users"], vec![Operation::CreateTable { table: posts }]),
+            migration_with_ops(
+                "0001_create_users",
+                &[],
+                vec![Operation::CreateTable { table: users }],
+            ),
+            migration_with_ops(
+                "0002_create_posts",
+                &["0001_create_users"],
+                vec![Operation::CreateTable { table: posts }],
+            ),
         ]);
-        m.migrate_with(&mut NullExecutor::empty(), None, None, false).await
+        m.migrate_with(&mut NullExecutor::empty(), None, None, false)
+            .await
             .expect("migrate must succeed on a valid multi-migration chain");
     }
 
     /// Verifies that migrate() acquires and then releases the advisory lock exactly once.
     #[tokio::test]
     async fn migrate_acquires_and_releases_lock() {
-        let m = migrator_from(vec![
-            migration_with_ops("0001_init", &[], vec![Operation::CreateTable { table: simple_table("t", &["id"]) }]),
-        ]);
+        let m = migrator_from(vec![migration_with_ops(
+            "0001_init",
+            &[],
+            vec![Operation::CreateTable {
+                table: simple_table("t", &["id"]),
+            }],
+        )]);
         let mut ex = NullExecutor::empty();
-        m.migrate_with(&mut ex, None, None, false).await.expect("migrate should succeed");
-        assert_eq!(ex.lock_count, 0, "lock must be released after migrate completes");
+        m.migrate_with(&mut ex, None, None, false)
+            .await
+            .expect("migrate should succeed");
+        assert_eq!(
+            ex.lock_count, 0,
+            "lock must be released after migrate completes"
+        );
+    }
+
+    #[tokio::test]
+    async fn migrate_releases_lock_when_operation_fails() {
+        let m = migrator_from(vec![migration_with_ops(
+            "0001_init",
+            &[],
+            vec![Operation::Statement {
+                up: "FAIL".to_string(),
+                down: None,
+            }],
+        )]);
+        let mut ex = FailingExecutor::new("FAIL");
+
+        let err = m.migrate_with(&mut ex, None, None, false).await.unwrap_err();
+
+        assert!(err.to_string().contains("forced failure"));
+        assert_eq!(ex.lock_count, 0, "lock must be released after failure");
+        assert_eq!(ex.rollback_count, 1, "atomic failure should roll back");
+    }
+
+    #[tokio::test]
+    async fn migrate_releases_lock_when_tracking_table_has_unknown_applied_id() {
+        let m = migrator_from(vec![migration_with_ops(
+            "0001_init",
+            &[],
+            vec![Operation::CreateTable {
+                table: simple_table("t", &["id"]),
+            }],
+        )]);
+        let mut ex = FailingExecutor::new("never");
+        ex.applied = vec!["0009_missing".to_string()];
+
+        let err = m.migrate_with(&mut ex, None, None, false).await.unwrap_err();
+
+        assert!(err.to_string().contains("not present locally"));
+        assert_eq!(ex.lock_count, 0, "lock must be released after validation failure");
+    }
+
+    #[tokio::test]
+    async fn migrate_does_not_rollback_non_atomic_failure() {
+        let mut migration = migration_with_ops(
+            "0001_init",
+            &[],
+            vec![Operation::Statement {
+                up: "FAIL".to_string(),
+                down: None,
+            }],
+        );
+        migration.atomic = false;
+        let m = migrator_from(vec![migration]);
+        let mut ex = FailingExecutor::new("FAIL");
+
+        let err = m.migrate_with(&mut ex, None, None, false).await.unwrap_err();
+
+        assert!(err.to_string().contains("forced failure"));
+        assert_eq!(ex.lock_count, 0, "lock must be released after failure");
+        assert_eq!(ex.rollback_count, 0, "non-atomic failure should not roll back");
     }
     // we build the Migrator manually to keep a reference to the inner saved vec.
     fn migrator_with_source(migrations: Vec<Migration>) -> (Migrator, Arc<MockSourceShared>) {
         let shared = Arc::new(MockSourceShared::default());
-        let source = ArcMockSource { shared: Arc::clone(&shared), migrations };
+        let source = ArcMockSource {
+            shared: Arc::clone(&shared),
+            migrations,
+        };
         let migrator = Migrator::new(
             Box::new(source),
             Box::new(TestEnvironment::new(Dialect::Postgres)),
-        ).unwrap();
+        )
+        .unwrap();
         (migrator, shared)
     }
 
@@ -944,22 +1378,39 @@ mod tests {
     #[test]
     fn no_changes_returns_none() {
         let m = migrator_from(vec![]);
-        assert!(m.make_migrations(Some("x".into()), Schema::default(), false, &[]).unwrap().is_none());
+        assert!(
+            m.make_migrations(Some("x".into()), Schema::default(), false, &[])
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
     fn auto_name_single_create_table() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations(None, current, true, &[]).unwrap().unwrap();
-        assert!(mig.id.ends_with("_users"), "expected id ending in '_users', got '{}'", mig.id);
+        let mig = m
+            .make_migrations(None, current, true, &[])
+            .unwrap()
+            .unwrap();
+        assert!(
+            mig.id.ends_with("_users"),
+            "expected id ending in '_users', got '{}'",
+            mig.id
+        );
     }
 
     #[test]
     fn auto_name_two_tables() {
         let m = migrator_from(vec![]);
-        let current = state_with_tables(&[simple_table("users", &["id"]), simple_table("posts", &["id"])]);
-        let mig = m.make_migrations(None, current, true, &[]).unwrap().unwrap();
+        let current = state_with_tables(&[
+            simple_table("users", &["id"]),
+            simple_table("posts", &["id"]),
+        ]);
+        let mig = m
+            .make_migrations(None, current, true, &[])
+            .unwrap()
+            .unwrap();
         assert!(
             mig.id.contains("users_posts") || mig.id.contains("posts_users"),
             "expected 'users_posts' or 'posts_users' in id, got '{}'",
@@ -971,47 +1422,70 @@ mod tests {
     fn new_table_creates_migration() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let result = m.make_migrations(Some("initial".into()), current, false, &[]).unwrap();
+        let result = m
+            .make_migrations(Some("initial".into()), current, false, &[])
+            .unwrap();
         let mig = result.unwrap();
         assert_eq!(mig.operations.len(), 1);
-        assert!(matches!(&mig.operations[0], Operation::CreateTable { table } if table.name == "users"));
+        assert!(
+            matches!(&mig.operations[0], Operation::CreateTable { table } if table.name == "users")
+        );
     }
 
     #[test]
     fn removed_table_creates_migration() {
         let users = simple_table("users", &["id"]);
         let m = migrator_from(vec![migration_with_ops(
-            "0001_initial", &[],
+            "0001_initial",
+            &[],
             vec![Operation::CreateTable { table: users }],
         )]);
-        let result = m.make_migrations(Some("drop_users".into()), Schema::default(), false, &[]).unwrap();
+        let result = m
+            .make_migrations(Some("drop_users".into()), Schema::default(), false, &[])
+            .unwrap();
         let mig = result.unwrap();
         assert_eq!(mig.operations.len(), 1);
-        assert!(matches!(&mig.operations[0], Operation::DropTable { table } if table.name == "users"));
+        assert!(
+            matches!(&mig.operations[0], Operation::DropTable { table } if table.name == "users")
+        );
     }
 
     #[test]
     fn added_column_creates_migration() {
         let users_v1 = simple_table("users", &["id"]);
         let m = migrator_from(vec![migration_with_ops(
-            "0001_initial", &[],
+            "0001_initial",
+            &[],
             vec![Operation::CreateTable { table: users_v1 }],
         )]);
         let current = state_with_tables(&[simple_table("users", &["id", "email"])]);
-        let mig = m.make_migrations(Some("add_email".into()), current, false, &[]).unwrap().unwrap();
-        assert!(mig.operations.iter().any(|op| matches!(op, Operation::AddColumn { column, .. } if column.name == "email")));
+        let mig = m
+            .make_migrations(Some("add_email".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
+        assert!(
+            mig.operations.iter().any(
+                |op| matches!(op, Operation::AddColumn { column, .. } if column.name == "email")
+            )
+        );
     }
 
     #[test]
     fn dropped_column_creates_migration() {
         let users_v1 = simple_table("users", &["id", "email"]);
         let m = migrator_from(vec![migration_with_ops(
-            "0001_initial", &[],
+            "0001_initial",
+            &[],
             vec![Operation::CreateTable { table: users_v1 }],
         )]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations(Some("drop_email".into()), current, false, &[]).unwrap().unwrap();
-        assert!(mig.operations.iter().any(|op| matches!(op, Operation::DropColumn { column, .. } if column.name == "email")));
+        let mig = m
+            .make_migrations(Some("drop_email".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
+        assert!(mig.operations.iter().any(
+            |op| matches!(op, Operation::DropColumn { column, .. } if column.name == "email")
+        ));
     }
 
     #[test]
@@ -1021,7 +1495,10 @@ mod tests {
             simple_table("users", &["id"]),
             simple_table("posts", &["id"]),
         ]);
-        let mig = m.make_migrations(Some("multi".into()), current, false, &[]).unwrap().unwrap();
+        let mig = m
+            .make_migrations(Some("multi".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
         assert_eq!(mig.operations.len(), 2);
     }
 
@@ -1029,7 +1506,10 @@ mod tests {
     fn migration_number_increments() {
         let m = migrator_from(vec![migration_with_ops("0001_initial", &[], vec![])]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations(Some("add_users".into()), current, false, &[]).unwrap().unwrap();
+        let mig = m
+            .make_migrations(Some("add_users".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
         assert!(mig.id.starts_with("0002_"));
     }
 
@@ -1037,7 +1517,10 @@ mod tests {
     fn migration_number_empty_graph() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations(Some("initial".into()), current, false, &[]).unwrap().unwrap();
+        let mig = m
+            .make_migrations(Some("initial".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
         assert!(mig.id.starts_with("0001_"));
     }
 
@@ -1045,7 +1528,10 @@ mod tests {
     fn migration_dependencies_set_to_head() {
         let m = migrator_from(vec![migration_with_ops("0001_initial", &[], vec![])]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations(Some("add_users".into()), current, false, &[]).unwrap().unwrap();
+        let mig = m
+            .make_migrations(Some("add_users".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
         assert_eq!(mig.dependencies, vec!["0001_initial"]);
     }
 
@@ -1053,7 +1539,10 @@ mod tests {
     fn migration_dependencies_empty_graph() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations(Some("initial".into()), current, false, &[]).unwrap().unwrap();
+        let mig = m
+            .make_migrations(Some("initial".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
         assert!(mig.dependencies.is_empty());
     }
 
@@ -1061,7 +1550,9 @@ mod tests {
     fn dry_run_does_not_save() {
         let (m, shared) = migrator_with_source(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        m.make_migrations(Some("initial".into()), current, true, &[]).unwrap().unwrap();
+        m.make_migrations(Some("initial".into()), current, true, &[])
+            .unwrap()
+            .unwrap();
         assert!(shared.saved.borrow().is_empty());
     }
 
@@ -1069,7 +1560,9 @@ mod tests {
     fn dry_run_still_returns_migration() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let result = m.make_migrations(Some("initial".into()), current, true, &[]).unwrap();
+        let result = m
+            .make_migrations(Some("initial".into()), current, true, &[])
+            .unwrap();
         assert!(result.is_some());
     }
 
@@ -1080,7 +1573,9 @@ mod tests {
             migration_with_ops("0001_a", &[], vec![]),
             migration_with_ops("0001_b", &[], vec![]),
         ]);
-        let err = m.make_migrations(Some("x".into()), Schema::default(), false, &[]).unwrap_err();
+        let err = m
+            .make_migrations(Some("x".into()), Schema::default(), false, &[])
+            .unwrap_err();
         assert!(matches!(err, MigratorError::Graph(GraphError::Conflict)));
     }
 
@@ -1088,11 +1583,16 @@ mod tests {
     fn replay_error_propagates() {
         // Migration tries to drop a table that was never created
         let bad = migration_with_ops(
-            "0001_bad", &[],
-            vec![Operation::DropTable { table: simple_table("ghost", &["id"]) }],
+            "0001_bad",
+            &[],
+            vec![Operation::DropTable {
+                table: simple_table("ghost", &["id"]),
+            }],
         );
         let m = migrator_from(vec![bad]);
-        let err = m.make_migrations(Some("x".into()), Schema::default(), false, &[]).unwrap_err();
+        let err = m
+            .make_migrations(Some("x".into()), Schema::default(), false, &[])
+            .unwrap_err();
         assert!(matches!(err, MigratorError::Replay(_)));
     }
 
@@ -1100,7 +1600,10 @@ mod tests {
     fn make_migrations_name_used_in_id() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations(Some("my_migration".into()), current, false, &[]).unwrap().unwrap();
+        let mig = m
+            .make_migrations(Some("my_migration".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
         assert!(mig.id.contains("my_migration"));
     }
 
@@ -1109,18 +1612,31 @@ mod tests {
         let users = simple_table("users", &["id"]);
         let posts = simple_table("posts", &["id"]);
         let m = migrator_from(vec![
-            migration_with_ops("0001_create_users", &[], vec![Operation::CreateTable { table: users }]),
-            migration_with_ops("0002_create_posts", &["0001_create_users"], vec![Operation::CreateTable { table: posts }]),
+            migration_with_ops(
+                "0001_create_users",
+                &[],
+                vec![Operation::CreateTable { table: users }],
+            ),
+            migration_with_ops(
+                "0002_create_posts",
+                &["0001_create_users"],
+                vec![Operation::CreateTable { table: posts }],
+            ),
         ]);
         let current = state_with_tables(&[
             simple_table("users", &["id"]),
             simple_table("posts", &["id"]),
             simple_table("comments", &["id"]),
         ]);
-        let mig = m.make_migrations(Some("add_comments".into()), current, false, &[]).unwrap().unwrap();
+        let mig = m
+            .make_migrations(Some("add_comments".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
         assert_eq!(mig.dependencies, vec!["0002_create_posts"]);
         assert_eq!(mig.operations.len(), 1);
-        assert!(matches!(&mig.operations[0], Operation::CreateTable { table } if table.name == "comments"));
+        assert!(
+            matches!(&mig.operations[0], Operation::CreateTable { table } if table.name == "comments")
+        );
     }
 
     /// Verifies verify_with() handles schema scoping correctly for non-public schemas.
@@ -1129,7 +1645,9 @@ mod tests {
         let migrator = migrator_from(vec![migration_with_ops(
             "0001_create_users",
             &[],
-            vec![Operation::CreateTable { table: simple_table("users", &["id"]) }],
+            vec![Operation::CreateTable {
+                table: simple_table("users", &["id"]),
+            }],
         )]);
 
         let mut live_users = simple_table("users", &["id"]);
@@ -1138,7 +1656,8 @@ mod tests {
         let mut executor = InspectingExecutor { live };
 
         let drift = migrator
-            .verify_with(&mut executor, "isolated").await
+            .verify_with(&mut executor, "isolated")
+            .await
             .expect("verify should succeed");
 
         assert!(drift.is_empty(), "expected no drift, got: {drift:?}");
@@ -1152,8 +1671,22 @@ mod tests {
             name: "users".to_string(),
             schema: None,
             columns: vec![
-                Column { name: "id".to_string(), col_type: "bigint".to_string(), nullable: false, default: None, primary_key: true, ..Default::default() },
-                Column { name: "alt_id".to_string(), col_type: "bigint".to_string(), nullable: false, default: None, primary_key: true, ..Default::default() },
+                Column {
+                    name: "id".to_string(),
+                    col_type: "bigint".to_string(),
+                    nullable: false,
+                    default: None,
+                    primary_key: true,
+                    ..Default::default()
+                },
+                Column {
+                    name: "alt_id".to_string(),
+                    col_type: "bigint".to_string(),
+                    nullable: false,
+                    default: None,
+                    primary_key: true,
+                    ..Default::default()
+                },
             ],
             foreign_keys: vec![],
             indexes: vec![],
@@ -1162,7 +1695,9 @@ mod tests {
         };
         let mut current = Schema::default();
         current.tables.insert("users".to_string(), table);
-        let err = m.make_migrations(Some("bad".into()), current, false, &[]).unwrap_err();
+        let err = m
+            .make_migrations(Some("bad".into()), current, false, &[])
+            .unwrap_err();
         assert!(matches!(err, MigratorError::Config(_)));
     }
 
@@ -1171,7 +1706,9 @@ mod tests {
     fn save_called_when_not_dry_run() {
         let (m, shared) = migrator_with_source(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        m.make_migrations(Some("initial".into()), current, false, &[]).unwrap().unwrap();
+        m.make_migrations(Some("initial".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
         assert_eq!(shared.saved.borrow().len(), 1);
     }
 
@@ -1181,7 +1718,10 @@ mod tests {
         let migrations = vec![Migration {
             id: "0001_x".into(),
             dependencies: vec![],
-            operations: vec![Operation::Statement { up: "SELECT 1".into(), down: None }],
+            operations: vec![Operation::Statement {
+                up: "SELECT 1".into(),
+                down: None,
+            }],
             atomic: true,
         }];
         let err = m.validate_plan(&migrations, false).unwrap_err();
@@ -1194,7 +1734,9 @@ mod tests {
         let migrations = vec![Migration {
             id: "0001_x".into(),
             dependencies: vec![],
-            operations: vec![Operation::CreateTable { table: simple_table("users", &["id"]) }],
+            operations: vec![Operation::CreateTable {
+                table: simple_table("users", &["id"]),
+            }],
             atomic: true,
         }];
         assert!(m.validate_plan(&migrations, false).is_ok());
@@ -1274,7 +1816,9 @@ mod tests {
             Migration {
                 id: "0001_create_users".into(),
                 dependencies: vec![],
-                operations: vec![Operation::CreateTable { table: simple_table("users", &["id"]) }],
+                operations: vec![Operation::CreateTable {
+                    table: simple_table("users", &["id"]),
+                }],
                 atomic: true,
             },
             Migration {
@@ -1282,7 +1826,12 @@ mod tests {
                 dependencies: vec!["0001_create_users".into()],
                 operations: vec![Operation::AddIndex {
                     table_name: "users".into(),
-                    index: Index { name: "users_name_idx".into(), columns: vec!["id".into()], unique: false, predicate: None },
+                    index: Index {
+                        name: "users_name_idx".into(),
+                        columns: vec!["id".into()],
+                        unique: false,
+                        predicate: None,
+                    },
                     concurrent: false,
                 }],
                 atomic: true,
@@ -1292,7 +1841,12 @@ mod tests {
                 dependencies: vec!["0002_idx_a".into()],
                 operations: vec![Operation::AddIndex {
                     table_name: "users".into(),
-                    index: Index { name: "users_name_idx".into(), columns: vec!["id".into()], unique: false, predicate: None },
+                    index: Index {
+                        name: "users_name_idx".into(),
+                        columns: vec!["id".into()],
+                        unique: false,
+                        predicate: None,
+                    },
                     concurrent: false,
                 }],
                 atomic: true,
@@ -1311,13 +1865,28 @@ mod tests {
     }
 
     #[test]
-    fn validate_duplicate_column_in_schema_state() {        use crate::states::Column;
+    fn validate_duplicate_column_in_schema_state() {
+        use crate::states::Column;
         let table = Table {
             name: "users".into(),
             schema: None,
             columns: vec![
-                Column { name: "id".into(), col_type: "integer".into(), nullable: false, default: None, primary_key: true, ..Default::default() },
-                Column { name: "id".into(), col_type: "text".into(), nullable: true, default: None, primary_key: false, ..Default::default() },
+                Column {
+                    name: "id".into(),
+                    col_type: "integer".into(),
+                    nullable: false,
+                    default: None,
+                    primary_key: true,
+                    ..Default::default()
+                },
+                Column {
+                    name: "id".into(),
+                    col_type: "text".into(),
+                    nullable: true,
+                    default: None,
+                    primary_key: false,
+                    ..Default::default()
+                },
             ],
             foreign_keys: vec![],
             indexes: vec![],
@@ -1330,31 +1899,48 @@ mod tests {
         assert!(err.contains("duplicate column"));
     }
 
-#[tokio::test]
+    #[tokio::test]
     async fn invoke_op_is_not_supported() {
         let m = migrator_from(vec![migration_with_ops(
-            "0001_seed", &[],
-            vec![Operation::Invoke { up: "echo hello".into(), down: None }],
+            "0001_seed",
+            &[],
+            vec![Operation::Invoke {
+                up: "echo hello".into(),
+                down: None,
+            }],
         )]);
-        let err = m.migrate_with(&mut NullExecutor::empty(), None, None, false).await.unwrap_err();
-        assert!(err.to_string().contains("not yet supported"), "unexpected error: {err}");
+        let err = m
+            .migrate_with(&mut NullExecutor::empty(), None, None, false)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("not yet supported"),
+            "unexpected error: {err}"
+        );
     }
 
-#[tokio::test]
+    #[tokio::test]
     async fn show_migrations_marks_applied_and_pending() {
         let users = simple_table("users", &["id"]);
         let m = migrator_from(vec![
-            migration_with_ops("0001_create_users", &[], vec![Operation::CreateTable { table: users }]),
+            migration_with_ops(
+                "0001_create_users",
+                &[],
+                vec![Operation::CreateTable { table: users }],
+            ),
             migration_with_ops("0002_add_email", &["0001_create_users"], vec![]),
         ]);
-        let mut exec = NullExecutor { applied: vec!["0001_create_users".to_string()], lock_count: 0 };
+        let mut exec = NullExecutor {
+            applied: vec!["0001_create_users".to_string()],
+            lock_count: 0,
+        };
         let rows = m.show_migrations_with(&mut exec).await.unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0], ("0001_create_users".to_string(), true));
         assert_eq!(rows[1], ("0002_add_email".to_string(), false));
     }
 
-#[tokio::test]
+    #[tokio::test]
     async fn show_migrations_empty_graph() {
         let m = migrator_from(vec![]);
         let mut exec = NullExecutor::empty();
@@ -1385,8 +1971,14 @@ mod tests {
     fn deps_empty_graph_yields_no_deps() {
         let m = migrator_from(vec![]);
         let current = state_with_tables(&[simple_table("users", &["id"])]);
-        let mig = m.make_migrations(Some("initial".into()), current, false, &[]).unwrap().unwrap();
-        assert!(mig.dependencies.is_empty(), "no migrations exist, so no deps expected");
+        let mig = m
+            .make_migrations(Some("initial".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
+        assert!(
+            mig.dependencies.is_empty(),
+            "no migrations exist, so no deps expected"
+        );
     }
 
     /// When one root migration exists and the new migration only creates a new table
@@ -1394,14 +1986,20 @@ mod tests {
     #[test]
     fn deps_single_root_migration_is_dep() {
         let m = migrator_from(vec![migration_with_ops(
-            "0001_create_users", &[],
-            vec![Operation::CreateTable { table: simple_table("users", &["id"]) }],
+            "0001_create_users",
+            &[],
+            vec![Operation::CreateTable {
+                table: simple_table("users", &["id"]),
+            }],
         )]);
         let current = state_with_tables(&[
             simple_table("users", &["id"]),
             simple_table("posts", &["id"]),
         ]);
-        let mig = m.make_migrations(Some("add_posts".into()), current, false, &[]).unwrap().unwrap();
+        let mig = m
+            .make_migrations(Some("add_posts".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
         assert_eq!(mig.dependencies, vec!["0001_create_users"]);
     }
 
@@ -1411,12 +2009,16 @@ mod tests {
     fn deps_fk_to_root_ns_table_is_just_root_dep() {
         let users = simple_table("users", &["id"]);
         let m = migrator_from(vec![migration_with_ops(
-            "0001_create_users", &[],
+            "0001_create_users",
+            &[],
             vec![Operation::CreateTable { table: users }],
         )]);
         let posts = table_with_fk("posts", "users");
         let current = state_with_tables(&[simple_table("users", &["id"]), posts]);
-        let mig = m.make_migrations(Some("add_posts".into()), current, false, &[]).unwrap().unwrap();
+        let mig = m
+            .make_migrations(Some("add_posts".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
         assert_eq!(mig.dependencies, vec!["0001_create_users"]);
     }
 
@@ -1429,11 +2031,15 @@ mod tests {
         let auth_users = simple_table("auth_users", &["id"]);
         let m = migrator_from(vec![
             migration_with_ops(
-                "0001_root_init", &[],
-                vec![Operation::CreateTable { table: simple_table("settings", &["id"]) }],
+                "0001_root_init",
+                &[],
+                vec![Operation::CreateTable {
+                    table: simple_table("settings", &["id"]),
+                }],
             ),
             migration_with_ops(
-                "auth/0001_create_users", &["0001_root_init"],
+                "auth/0001_create_users",
+                &["0001_root_init"],
                 vec![Operation::CreateTable { table: auth_users }],
             ),
         ]);
@@ -1443,9 +2049,19 @@ mod tests {
             simple_table("auth_users", &["id"]),
             posts,
         ]);
-        let mig = m.make_migrations(Some("add_posts".into()), current, false, &[]).unwrap().unwrap();
-        assert!(mig.dependencies.contains(&"0001_root_init".to_string()), "must include last root migration");
-        assert!(mig.dependencies.contains(&"auth/0001_create_users".to_string()), "must include last auth migration");
+        let mig = m
+            .make_migrations(Some("add_posts".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
+        assert!(
+            mig.dependencies.contains(&"0001_root_init".to_string()),
+            "must include last root migration"
+        );
+        assert!(
+            mig.dependencies
+                .contains(&"auth/0001_create_users".to_string()),
+            "must include last auth migration"
+        );
     }
 
     /// When the new migration references tables from two different namespaces,
@@ -1457,16 +2073,23 @@ mod tests {
         let billing_plans = simple_table("billing_plans", &["id"]);
         let m = migrator_from(vec![
             migration_with_ops(
-                "0001_root", &[],
-                vec![Operation::CreateTable { table: simple_table("root_t", &["id"]) }],
+                "0001_root",
+                &[],
+                vec![Operation::CreateTable {
+                    table: simple_table("root_t", &["id"]),
+                }],
             ),
             migration_with_ops(
-                "auth/0001_users", &["0001_root"],
+                "auth/0001_users",
+                &["0001_root"],
                 vec![Operation::CreateTable { table: auth_users }],
             ),
             migration_with_ops(
-                "billing/0001_plans", &["auth/0001_users"],
-                vec![Operation::CreateTable { table: billing_plans }],
+                "billing/0001_plans",
+                &["auth/0001_users"],
+                vec![Operation::CreateTable {
+                    table: billing_plans,
+                }],
             ),
         ]);
         let t = {
@@ -1476,8 +2099,18 @@ mod tests {
                 schema: None,
                 columns: vec![simple_column("id")],
                 foreign_keys: vec![
-                    ForeignKey { name: "sub_user_fkey".into(), from_column: "user_id".into(), to_table: "auth_users".into(), to_column: "id".into() },
-                    ForeignKey { name: "sub_plan_fkey".into(), from_column: "plan_id".into(), to_table: "billing_plans".into(), to_column: "id".into() },
+                    ForeignKey {
+                        name: "sub_user_fkey".into(),
+                        from_column: "user_id".into(),
+                        to_table: "auth_users".into(),
+                        to_column: "id".into(),
+                    },
+                    ForeignKey {
+                        name: "sub_plan_fkey".into(),
+                        from_column: "plan_id".into(),
+                        to_table: "billing_plans".into(),
+                        to_column: "id".into(),
+                    },
                 ],
                 indexes: vec![],
                 constraints: vec![],
@@ -1490,7 +2123,10 @@ mod tests {
             simple_table("billing_plans", &["id"]),
             t,
         ]);
-        let mig = m.make_migrations(Some("add_subscriptions".into()), current, false, &[]).unwrap().unwrap();
+        let mig = m
+            .make_migrations(Some("add_subscriptions".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
         assert!(mig.dependencies.contains(&"0001_root".to_string()));
         assert!(mig.dependencies.contains(&"auth/0001_users".to_string()));
         assert!(mig.dependencies.contains(&"billing/0001_plans".to_string()));
@@ -1502,48 +2138,83 @@ mod tests {
     fn deps_no_root_migrations_yields_empty_deps() {
         let auth_users = simple_table("auth_users", &["id"]);
         let m = migrator_from(vec![migration_with_ops(
-            "auth/0001_create_users", &[],
+            "auth/0001_create_users",
+            &[],
             vec![Operation::CreateTable { table: auth_users }],
         )]);
         let current = state_with_tables(&[
             simple_table("auth_users", &["id"]),
             simple_table("settings", &["id"]),
         ]);
-        let mig = m.make_migrations(Some("add_settings".into()), current, false, &[]).unwrap().unwrap();
-        assert!(!mig.dependencies.contains(&"auth/0001_create_users".to_string()),
-            "new root migration should not dep on unrelated auth namespace");
-        assert!(mig.dependencies.is_empty(), "no root ns migration exists, so deps must be empty");
+        let mig = m
+            .make_migrations(Some("add_settings".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
+        assert!(
+            !mig.dependencies
+                .contains(&"auth/0001_create_users".to_string()),
+            "new root migration should not dep on unrelated auth namespace"
+        );
+        assert!(
+            mig.dependencies.is_empty(),
+            "no root ns migration exists, so deps must be empty"
+        );
     }
 
     /// The last migration in a namespace, not just the first one, is used as the dep.
     #[test]
     fn deps_uses_last_not_first_migration_in_namespace() {
         let m = migrator_from(vec![
-            migration_with_ops("0001_create_users", &[], vec![
-                Operation::CreateTable { table: simple_table("users", &["id"]) },
-            ]),
-            migration_with_ops("0002_add_email", &["0001_create_users"], vec![
-                Operation::AddColumn { table_name: "users".into(), column: simple_column("email") },
-            ]),
+            migration_with_ops(
+                "0001_create_users",
+                &[],
+                vec![Operation::CreateTable {
+                    table: simple_table("users", &["id"]),
+                }],
+            ),
+            migration_with_ops(
+                "0002_add_email",
+                &["0001_create_users"],
+                vec![Operation::AddColumn {
+                    table_name: "users".into(),
+                    column: simple_column("email"),
+                }],
+            ),
         ]);
         let current = state_with_tables(&[
             simple_table("users", &["id", "email"]),
             simple_table("posts", &["id"]),
         ]);
-        let mig = m.make_migrations(Some("add_posts".into()), current, false, &[]).unwrap().unwrap();
-        assert_eq!(mig.dependencies, vec!["0002_add_email"], "must dep on last migration, not first");
+        let mig = m
+            .make_migrations(Some("add_posts".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            mig.dependencies,
+            vec!["0002_add_email"],
+            "must dep on last migration, not first"
+        );
     }
 
     /// An empty migration always deps on the last root migration only.
     #[test]
     fn make_empty_migration_deps_on_last_root() {
         let (m, _) = migrator_with_source(vec![
-            migration_with_ops("0001_init", &[], vec![
-                Operation::CreateTable { table: simple_table("users", &["id"]) },
-            ]),
-            migration_with_ops("0002_more", &["0001_init"], vec![
-                Operation::AddColumn { table_name: "users".into(), column: simple_column("email") },
-            ]),
+            migration_with_ops(
+                "0001_init",
+                &[],
+                vec![Operation::CreateTable {
+                    table: simple_table("users", &["id"]),
+                }],
+            ),
+            migration_with_ops(
+                "0002_more",
+                &["0001_init"],
+                vec![Operation::AddColumn {
+                    table_name: "users".into(),
+                    column: simple_column("email"),
+                }],
+            ),
         ]);
         let mig = m.make_empty_migration("placeholder".into()).unwrap();
         assert_eq!(mig.dependencies, vec!["0002_more"]);
@@ -1562,15 +2233,27 @@ mod tests {
     #[test]
     fn deps_alter_existing_table_uses_last_root_dep() {
         let m = migrator_from(vec![
-            migration_with_ops("0001_create_users", &[], vec![
-                Operation::CreateTable { table: simple_table("users", &["id"]) },
-            ]),
-            migration_with_ops("0002_add_email", &["0001_create_users"], vec![
-                Operation::AddColumn { table_name: "users".into(), column: simple_column("email") },
-            ]),
+            migration_with_ops(
+                "0001_create_users",
+                &[],
+                vec![Operation::CreateTable {
+                    table: simple_table("users", &["id"]),
+                }],
+            ),
+            migration_with_ops(
+                "0002_add_email",
+                &["0001_create_users"],
+                vec![Operation::AddColumn {
+                    table_name: "users".into(),
+                    column: simple_column("email"),
+                }],
+            ),
         ]);
         let current = state_with_tables(&[simple_table("users", &["id", "email", "name"])]);
-        let mig = m.make_migrations(Some("add_name".into()), current, false, &[]).unwrap().unwrap();
+        let mig = m
+            .make_migrations(Some("add_name".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
         assert_eq!(mig.dependencies, vec!["0002_add_email"]);
     }
 
@@ -1579,15 +2262,27 @@ mod tests {
     #[test]
     fn deps_namespaced_ns_uses_last_migration() {
         let m = migrator_from(vec![
-            migration_with_ops("0001_root", &[], vec![
-                Operation::CreateTable { table: simple_table("root_t", &["id"]) },
-            ]),
-            migration_with_ops("auth/0001_users", &["0001_root"], vec![
-                Operation::CreateTable { table: simple_table("auth_users", &["id"]) },
-            ]),
-            migration_with_ops("auth/0002_groups", &["auth/0001_users"], vec![
-                Operation::CreateTable { table: simple_table("auth_groups", &["id"]) },
-            ]),
+            migration_with_ops(
+                "0001_root",
+                &[],
+                vec![Operation::CreateTable {
+                    table: simple_table("root_t", &["id"]),
+                }],
+            ),
+            migration_with_ops(
+                "auth/0001_users",
+                &["0001_root"],
+                vec![Operation::CreateTable {
+                    table: simple_table("auth_users", &["id"]),
+                }],
+            ),
+            migration_with_ops(
+                "auth/0002_groups",
+                &["auth/0001_users"],
+                vec![Operation::CreateTable {
+                    table: simple_table("auth_groups", &["id"]),
+                }],
+            ),
         ]);
         let posts = table_with_fk("posts", "auth_users");
         let current = state_with_tables(&[
@@ -1596,12 +2291,17 @@ mod tests {
             simple_table("auth_groups", &["id"]),
             posts,
         ]);
-        let mig = m.make_migrations(Some("add_posts".into()), current, false, &[]).unwrap().unwrap();
-        assert!(mig.dependencies.contains(&"auth/0002_groups".to_string()),
-            "must use last auth migration, not auth/0001_users");
-        assert!(!mig.dependencies.contains(&"auth/0001_users".to_string()),
-            "must not include non-last auth migration");
+        let mig = m
+            .make_migrations(Some("add_posts".into()), current, false, &[])
+            .unwrap()
+            .unwrap();
+        assert!(
+            mig.dependencies.contains(&"auth/0002_groups".to_string()),
+            "must use last auth migration, not auth/0001_users"
+        );
+        assert!(
+            !mig.dependencies.contains(&"auth/0001_users".to_string()),
+            "must not include non-last auth migration"
+        );
     }
 }
-
-

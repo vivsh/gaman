@@ -14,6 +14,15 @@ pub enum EnvironmentError {
     Connect(String),
 }
 
+impl From<crate::executor::ConnectError> for EnvironmentError {
+    fn from(value: crate::executor::ConnectError) -> Self {
+        match value {
+            crate::executor::ConnectError::Config(message) => Self::Config(message),
+            crate::executor::ConnectError::Connect(message) => Self::Connect(message),
+        }
+    }
+}
+
 pub trait EnvironmentExecutor: Executor + Introspectable {}
 
 impl<T> EnvironmentExecutor for T where T: Executor + Introspectable {}

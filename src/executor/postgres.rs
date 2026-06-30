@@ -1,11 +1,11 @@
 use sqlx::PgConnection;
 use sqlx::Row;
 
-use crate::states::{
-    Column, Constraint, ForeignKey, FunctionDef, Index, Schema, Table, TriggerDef,
-    TriggerEvent, TriggerScope, TriggerTiming, ViewDef, Volatility, schema_qualified_key,
-};
 use super::{BoxFuture, Executor, ExecutorError, Introspectable};
+use crate::states::{
+    Column, Constraint, ForeignKey, FunctionDef, Index, Schema, Table, TriggerDef, TriggerEvent,
+    TriggerScope, TriggerTiming, ViewDef, Volatility, schema_qualified_key,
+};
 
 const GAMAN_LOCK_KEY: i64 = 7242068691819328000;
 
@@ -32,14 +32,20 @@ impl Executor for PostgresExecutor {
         })
     }
 
-    fn fetch_strings<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> {
+    fn fetch_strings<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> {
         Box::pin(async move {
             let rows = sqlx::query(sql)
                 .fetch_all(&mut self.conn)
                 .await
                 .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
             rows.into_iter()
-                .map(|r| r.try_get::<String, _>(0).map_err(|e| ExecutorError::Fetch(e.to_string())))
+                .map(|r| {
+                    r.try_get::<String, _>(0)
+                        .map_err(|e| ExecutorError::Fetch(e.to_string()))
+                })
                 .collect()
         })
     }
@@ -85,7 +91,9 @@ impl Executor for PostgresExecutor {
                 .execute(&mut self.conn)
                 .await
                 .map(|_| ())
-                .map_err(|e| ExecutorError::Execute(format!("could not acquire migration lock: {e}")))
+                .map_err(|e| {
+                    ExecutorError::Execute(format!("could not acquire migration lock: {e}"))
+                })
         })
     }
 
@@ -96,7 +104,9 @@ impl Executor for PostgresExecutor {
                 .execute(&mut self.conn)
                 .await
                 .map(|_| ())
-                .map_err(|e| ExecutorError::Execute(format!("could not release migration lock: {e}")))
+                .map_err(|e| {
+                    ExecutorError::Execute(format!("could not release migration lock: {e}"))
+                })
         })
     }
 }
@@ -109,7 +119,10 @@ fn parse_index_def(def: &str) -> (Vec<String>, bool, Option<String>) {
 
     // Split off the optional WHERE clause before parsing columns
     let (col_part, predicate) = if let Some(where_pos) = def.find(") WHERE (") {
-        let pred = def[where_pos + 9..].trim_end_matches(')').trim().to_string();
+        let pred = def[where_pos + 9..]
+            .trim_end_matches(')')
+            .trim()
+            .to_string();
         (&def[..where_pos + 1], Some(pred))
     } else {
         (def, None)
@@ -125,7 +138,11 @@ fn parse_index_def(def: &str) -> (Vec<String>, bool, Option<String>) {
                 // e.g. `"col" DESC`, `col varchar_pattern_ops`, `col NULLS FIRST`
                 let stripped = s.trim().trim_matches('"');
                 // Take only the first whitespace-delimited token as the column name
-                let col_name = stripped.split_whitespace().next().unwrap_or("").trim_matches('"');
+                let col_name = stripped
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim_matches('"');
                 col_name.to_string()
             })
             .filter(|s| !s.is_empty())
@@ -154,16 +171,31 @@ fn decode_tgtype(tgtype: i16) -> (TriggerTiming, Vec<TriggerEvent>, TriggerScope
         TriggerTiming::After
     };
     let mut events = vec![];
-    if tgtype & 0x04 != 0 { events.push(TriggerEvent::Insert); }
-    if tgtype & 0x08 != 0 { events.push(TriggerEvent::Delete); }
-    if tgtype & 0x10 != 0 { events.push(TriggerEvent::Update); }
-    if tgtype & 0x20 != 0 { events.push(TriggerEvent::Truncate); }
-    let scope = if tgtype & 0x01 != 0 { TriggerScope::Row } else { TriggerScope::Statement };
+    if tgtype & 0x04 != 0 {
+        events.push(TriggerEvent::Insert);
+    }
+    if tgtype & 0x08 != 0 {
+        events.push(TriggerEvent::Delete);
+    }
+    if tgtype & 0x10 != 0 {
+        events.push(TriggerEvent::Update);
+    }
+    if tgtype & 0x20 != 0 {
+        events.push(TriggerEvent::Truncate);
+    }
+    let scope = if tgtype & 0x01 != 0 {
+        TriggerScope::Row
+    } else {
+        TriggerScope::Statement
+    };
     (timing, events, scope)
 }
 
 impl Introspectable for PostgresExecutor {
-    fn inspect_db<'a>(&'a mut self, schemas: &'a [&'a str]) -> BoxFuture<'a, Result<Schema, ExecutorError>> {
+    fn inspect_db<'a>(
+        &'a mut self,
+        schemas: &'a [&'a str],
+    ) -> BoxFuture<'a, Result<Schema, ExecutorError>> {
         Box::pin(async move {
             let mut state = Schema::default();
 
@@ -179,12 +211,18 @@ impl Introspectable for PostgresExecutor {
                 .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
                 for row in &table_rows {
-                    let table_name: String = row.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                    let table_name: String = row
+                        .try_get(0)
+                        .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                     let key = table_name.clone();
 
                     let mut table = Table {
                         name: table_name.clone(),
-                        schema: if schema == "public" { None } else { Some(schema.to_string()) },
+                        schema: if schema == "public" {
+                            None
+                        } else {
+                            Some(schema.to_string())
+                        },
                         columns: vec![],
                         foreign_keys: vec![],
                         indexes: vec![],
@@ -195,7 +233,7 @@ impl Introspectable for PostgresExecutor {
                     let col_rows = sqlx::query(
                         "SELECT c.column_name, c.data_type, c.character_maximum_length, \
                          c.numeric_precision, c.numeric_scale, c.is_nullable, c.column_default, \
-                         a.attidentity \
+                         a.attidentity, c.generation_expression \
                          FROM information_schema.columns c \
                          JOIN pg_class cl ON cl.relname = c.table_name \
                          JOIN pg_namespace ns ON ns.nspname = c.table_schema AND ns.oid = cl.relnamespace \
@@ -227,24 +265,51 @@ impl Introspectable for PostgresExecutor {
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                     let pk_cols: Vec<String> = pk_rows
                         .iter()
-                        .map(|r| r.try_get::<String, _>(0).map_err(|e| ExecutorError::Fetch(e.to_string())))
+                        .map(|r| {
+                            r.try_get::<String, _>(0)
+                                .map_err(|e| ExecutorError::Fetch(e.to_string()))
+                        })
                         .collect::<Result<_, _>>()?;
 
                     for cr in &col_rows {
-                        let col_name: String = cr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let data_type: String = cr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let char_max: Option<i32> = cr.try_get(2).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let num_prec: Option<i32> = cr.try_get(3).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let num_scale: Option<i32> = cr.try_get(4).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let is_nullable: String = cr.try_get(5).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let col_default: Option<String> = cr.try_get(6).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let col_name: String = cr
+                            .try_get(0)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let data_type: String = cr
+                            .try_get(1)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let char_max: Option<i32> = cr
+                            .try_get(2)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let num_prec: Option<i32> = cr
+                            .try_get(3)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let num_scale: Option<i32> = cr
+                            .try_get(4)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let is_nullable: String = cr
+                            .try_get(5)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let col_default: Option<String> = cr
+                            .try_get(6)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                         // attidentity is pg "char" (i8): b'a' = ALWAYS, b'd' = BY DEFAULT, 0 = not identity
-                        let attidentity: i8 = cr.try_get(7).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let attidentity: i8 = cr
+                            .try_get(7)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let generation_expression: Option<String> = cr
+                            .try_get(8)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
-                        let default = match attidentity as u8 {
-                            b'a' => Some("GENERATED ALWAYS AS IDENTITY".to_string()),
-                            b'd' => Some("GENERATED BY DEFAULT AS IDENTITY".to_string()),
-                            _ => col_default,
+                        let generated = generation_expression.filter(|s| !s.is_empty());
+                        let default = if generated.is_some() {
+                            None
+                        } else {
+                            match attidentity as u8 {
+                                b'a' => Some("GENERATED ALWAYS AS IDENTITY".to_string()),
+                                b'd' => Some("GENERATED BY DEFAULT AS IDENTITY".to_string()),
+                                _ => col_default,
+                            }
                         };
 
                         let col_type = if data_type == "character varying" {
@@ -275,6 +340,7 @@ impl Introspectable for PostgresExecutor {
                             primary_key: is_pk,
                             references: None,
                             check: None,
+                            generated,
                         });
                     }
 
@@ -301,11 +367,21 @@ impl Introspectable for PostgresExecutor {
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
                     for fkr in &fk_rows {
-                        let fk_name: String = fkr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let from_col: String = fkr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let _ref_schema: String = fkr.try_get(2).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let ref_table: String = fkr.try_get(3).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let ref_col: String = fkr.try_get(4).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let fk_name: String = fkr
+                            .try_get(0)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let from_col: String = fkr
+                            .try_get(1)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let _ref_schema: String = fkr
+                            .try_get(2)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let ref_table: String = fkr
+                            .try_get(3)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let ref_col: String = fkr
+                            .try_get(4)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                         table.foreign_keys.push(ForeignKey {
                             name: fk_name,
                             from_column: from_col,
@@ -330,10 +406,15 @@ impl Introspectable for PostgresExecutor {
                     .await
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
-                    let mut uq_map: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+                    let mut uq_map: std::collections::BTreeMap<String, Vec<String>> =
+                        std::collections::BTreeMap::new();
                     for uqr in &uq_rows {
-                        let cname: String = uqr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let col: String = uqr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let cname: String = uqr
+                            .try_get(0)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let col: String = uqr
+                            .try_get(1)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                         uq_map.entry(cname).or_default().push(col);
                     }
                     for (name, columns) in uq_map {
@@ -358,9 +439,16 @@ impl Introspectable for PostgresExecutor {
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
                     for ckr in &ck_rows {
-                        let cname: String = ckr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let expr: String = ckr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        table.constraints.push(Constraint::Check { name: cname, expression: expr });
+                        let cname: String = ckr
+                            .try_get(0)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let expr: String = ckr
+                            .try_get(1)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        table.constraints.push(Constraint::Check {
+                            name: cname,
+                            expression: expr,
+                        });
                     }
 
                     let idx_rows = sqlx::query(
@@ -386,10 +474,19 @@ impl Introspectable for PostgresExecutor {
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
                     for idr in &idx_rows {
-                        let idx_name: String = idr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let idx_def: String = idr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let idx_name: String = idr
+                            .try_get(0)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let idx_def: String = idr
+                            .try_get(1)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                         let (cols, unique, predicate) = parse_index_def(&idx_def);
-                        table.indexes.push(Index { name: idx_name, columns: cols, unique, predicate });
+                        table.indexes.push(Index {
+                            name: idx_name,
+                            columns: cols,
+                            unique,
+                            predicate,
+                        });
                     }
 
                     let tg_rows = sqlx::query(
@@ -410,10 +507,18 @@ impl Introspectable for PostgresExecutor {
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
                     for tgr in &tg_rows {
-                        let tg_name: String = tgr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let tgtype: i16 = tgr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let fn_name: String = tgr.try_get(2).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let fn_schema: String = tgr.try_get(3).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let tg_name: String = tgr
+                            .try_get(0)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let tgtype: i16 = tgr
+                            .try_get(1)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let fn_name: String = tgr
+                            .try_get(2)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let fn_schema: String = tgr
+                            .try_get(3)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                         let (timing, events, scope) = decode_tgtype(tgtype);
                         let fn_key = schema_qualified_key(&fn_name, Some(&fn_schema));
                         table.triggers.push(TriggerDef {
@@ -441,14 +546,25 @@ impl Introspectable for PostgresExecutor {
                 .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
                 for vr in &view_rows {
-                    let view_name: String = vr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                    let definition: String = vr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                    let view_name: String = vr
+                        .try_get(0)
+                        .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                    let definition: String = vr
+                        .try_get(1)
+                        .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                     let key = schema_qualified_key(&view_name, Some(schema));
-                    state.views.insert(key, ViewDef {
-                        name: view_name,
-                        schema: if schema == "public" { None } else { Some(schema.to_string()) },
-                        definition,
-                    });
+                    state.views.insert(
+                        key,
+                        ViewDef {
+                            name: view_name,
+                            schema: if schema == "public" {
+                                None
+                            } else {
+                                Some(schema.to_string())
+                            },
+                            definition,
+                        },
+                    );
                 }
             }
 
@@ -475,14 +591,30 @@ impl Introspectable for PostgresExecutor {
             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
             for fnr in &fn_rows {
-                let fn_name: String = fnr.try_get(0).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let fn_schema: String = fnr.try_get(1).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let args: String = fnr.try_get(2).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let body: String = fnr.try_get(3).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let language: String = fnr.try_get(4).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let provolatile: i8 = fnr.try_get(5).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let security_definer: bool = fnr.try_get(6).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let returns: String = fnr.try_get(7).map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let fn_name: String = fnr
+                    .try_get(0)
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let fn_schema: String = fnr
+                    .try_get(1)
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let args: String = fnr
+                    .try_get(2)
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let body: String = fnr
+                    .try_get(3)
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let language: String = fnr
+                    .try_get(4)
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let provolatile: i8 = fnr
+                    .try_get(5)
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let security_definer: bool = fnr
+                    .try_get(6)
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let returns: String = fnr
+                    .try_get(7)
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
                 let volatility = match provolatile as u8 {
                     b'i' => Volatility::Immutable,
@@ -497,16 +629,23 @@ impl Introspectable for PostgresExecutor {
                     format!("{}({})", key, args)
                 };
 
-                state.functions.insert(final_key, FunctionDef {
-                    name: fn_name,
-                    schema: if fn_schema == "public" { None } else { Some(fn_schema) },
-                    arguments: args,
-                    returns,
-                    language,
-                    body,
-                    volatility,
-                    security_definer,
-                });
+                state.functions.insert(
+                    final_key,
+                    FunctionDef {
+                        name: fn_name,
+                        schema: if fn_schema == "public" {
+                            None
+                        } else {
+                            Some(fn_schema)
+                        },
+                        arguments: args,
+                        returns,
+                        language,
+                        body,
+                        volatility,
+                        security_definer,
+                    },
+                );
             }
 
             Ok(state)
@@ -531,7 +670,8 @@ mod tests {
     /// Verifies that a unique multi-column index is parsed correctly.
     #[test]
     fn parse_index_def_unique_multi_col() {
-        let def = r#"CREATE UNIQUE INDEX idx ON public.orders USING btree ("tenant_id", order_num)"#;
+        let def =
+            r#"CREATE UNIQUE INDEX idx ON public.orders USING btree ("tenant_id", order_num)"#;
         let (cols, unique, predicate) = parse_index_def(def);
         assert_eq!(cols, vec!["tenant_id", "order_num"]);
         assert!(unique);
@@ -550,7 +690,8 @@ mod tests {
     /// Verifies that a partial index has its WHERE predicate extracted and columns are clean.
     #[test]
     fn parse_index_def_partial_index() {
-        let def = "CREATE INDEX idx ON public.tasks USING btree (status, ready_time) WHERE (status = 0)";
+        let def =
+            "CREATE INDEX idx ON public.tasks USING btree (status, ready_time) WHERE (status = 0)";
         let (cols, unique, predicate) = parse_index_def(def);
         assert_eq!(cols, vec!["status", "ready_time"]);
         assert!(!unique);
@@ -560,7 +701,8 @@ mod tests {
     /// Verifies that DESC sort modifiers and operator classes are stripped from column names.
     #[test]
     fn parse_index_def_strips_modifiers() {
-        let def = "CREATE INDEX idx ON t USING btree (provider_id, created DESC) WHERE (deleted IS NULL)";
+        let def =
+            "CREATE INDEX idx ON t USING btree (provider_id, created DESC) WHERE (deleted IS NULL)";
         let (cols, _, predicate) = parse_index_def(def);
         assert_eq!(cols, vec!["provider_id", "created"]);
         assert_eq!(predicate.as_deref(), Some("deleted IS NULL"));

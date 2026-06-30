@@ -44,8 +44,12 @@ pub mod core {
     pub use crate::migrator::{Migrator, MigratorError};
     pub use crate::executor::{
         Executor, ExecutorError, BoxFuture, Invoker, InvokerError, Introspectable,
-        PostgresExecutor, SubprocessInvoker,
+        SubprocessInvoker,
     };
+    #[cfg(feature = "postgres")]
+    pub use crate::executor::PostgresExecutor;
+    #[cfg(feature = "sqlite")]
+    pub use crate::executor::SqliteExecutor;
     pub use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
     pub use crate::adapters::{MigrationSource, AdapterError, YamlAdapter, VecAdapter};
     pub use crate::graphs::{MigrationGraph, MigrationNode, GraphError};

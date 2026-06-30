@@ -5,7 +5,7 @@
 [![Crates.io](https://img.shields.io/crates/v/gaman)](https://crates.io/crates/gaman)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A deterministic, offline-first migration engine for PostgreSQL, written in Rust and inspired by Django migrations.
+A deterministic, offline-first migration engine for PostgreSQL, written in Rust and inspired by Django migrations. SQLite support is available behind the `sqlite` Cargo feature as an engine-specific dialect with explicit errors for unsupported operations.
 
 Declare your schema as **YAML**, **SQL DDL**, or **Rust structs**. Gaman diffs that desired state against replayed migration history and writes the next migration without touching a database at plan time.
 
@@ -57,6 +57,8 @@ gaman sql_migrate              # preview SQL without a database
 gaman migrate                  # apply pending migrations
 ```
 
+PostgreSQL remains the default dialect. For offline commands without `DATABASE_URL`, pass `--dialect postgres` or `--dialect sqlite` to select the SQL renderer explicitly. SQLite support requires building with `--features sqlite`.
+
 Typical loop:
 
 1. Change the schema.
@@ -71,7 +73,7 @@ Typical loop:
 gaman = "0.3"
 ```
 
-Use the library when you want migrations to ship with your binary. `embedded_migrations!("path")` embeds every `.yaml` file at compile time; `MigrationEngine` runs them.
+Use the library when you want migrations to ship with your binary. `embedded_migrations!("path")` embeds every `.yaml` file at compile time and stores the absolute source directory for generation; `MigrationEngine` runs them.
 
 ```rust
 use gaman::{Config, EmbeddedMigrations, MigrationEngine, embedded_migrations};
@@ -272,7 +274,7 @@ The short version:
 - `gaman verify_db` compares the live database against replayed state.
 - `gaman inspect_db` bootstraps a `schema.yaml` from an existing database.
 
-Global overrides stay the same: `-m <dir>`, `-s <file>`, `-d <url>`.
+Global overrides stay the same: `-m <dir>`, `-s <file>`, `-d <url>`. Use `--dialect postgres|sqlite` when there is no `DATABASE_URL` to infer from, or when you want an explicit offline renderer.
 
 ## Development
 
@@ -285,6 +287,9 @@ cargo test --test offline
 # Integration tests require a running PostgreSQL instance.
 export TEST_DATABASE_URL=postgres://localhost/gaman_test
 cargo test --test postgres -- --include-ignored
+
+# SQLite dialect tests are feature-gated.
+cargo test --features sqlite
 ```
 
 Integration tests create and destroy isolated schemas automatically; they leave no lasting state.
@@ -293,7 +298,12 @@ Offline transform cases live under `tests/cases/offline/`, and PostgreSQL-backed
 
 ## Status
 
-PostgreSQL only. Core migration engine is stable and used in production. Public API may change before 1.0.
+Engine-specific migration files are expected; Gaman does not try to make one file portable across databases. Unsupported operations fail during validation or SQL rendering instead of silently producing no-op SQL.
+
+| Engine | Feature | Support level | Supported scope | Unsupported or deferred |
+| --- | --- | --- | --- | --- |
+| PostgreSQL | `postgres` (default) | Primary, production-used dialect | Offline diffing and SQL rendering for schemas, tables, columns, indexes, unique/check constraints, foreign keys, extensions, enums, functions, triggers, views, raw SQL, migration tracking, advisory locks, live introspection, and drift verification | `verify_db` does not yet validate view, function, extension, or enum definitions; `alter_enum` has no inverse |
+| SQLite | `sqlite` | Native subset with table rebuilds | Create/drop/rename table, add/rename column, drop column, alter type/nullability/defaults through table rebuilds, create/drop index, inline and rebuilt foreign key/unique/check constraints, views, raw SQL, migration tracking, and conservative introspection | Schemas, extensions, enums, most stored functions, PostgreSQL trigger semantics, concurrent indexes, advisory locks, primary-key rebuilds, non-atomic table rebuilds, and automatic preservation of dependent triggers/views |
 
 ### Known limitations
 
@@ -301,3 +311,5 @@ PostgreSQL only. Core migration engine is stable and used in production. Public 
 - Column order is not tracked
 - `verify_db` does not validate view, function, extension, or enum definitions
 - `alter_enum` has no inverse, so migrations containing it cannot be rolled back
+- SQLite table rebuilds require `atomic: true`; primary-key changes, modeled triggers, and dependent views are rejected until Gaman can preserve them safely
+- SQLite nullable-to-not-null rebuilds require a default or explicit cast expression so existing rows can be copied deterministically

@@ -15,11 +15,16 @@ keywords = ["migrations", "postgresql", "database", "schema", "cli"]
 categories = ["database", "command-line-utilities"]
 exclude = [".env", "output.txt", "tests/", ".github/"]
 
+[features]
+default = ["postgres"]
+postgres = ["sqlx/postgres"]
+sqlite = ["sqlx/sqlite"]
+
 [dependencies]
 argh = "0.1.19"
 dotenvy = "0.15.7"
 gaman-macros = { version = "0.3.17", path = "gaman-macros" }
-sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-native-tls"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-native-tls"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"

@@ -1,13 +1,13 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{format_ident, quote};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use syn::{LitStr, Type, parse_macro_input};
 use darling::{FromDeriveInput, FromField, ast};
 
 /// Embed `.yaml` migrations from a directory at compile time.
-/// Returns an `EmbeddedMigrations` value carrying both the compiled-in files and the source
-/// directory path, so the runtime can validate against `config.migrations_dir`.
+/// Returns an `EmbeddedMigrations` value carrying both the compiled-in files and the absolute
+/// source directory path, so the runtime can validate against `config.migrations_dir`.
 #[proc_macro]
 pub fn embedded_migrations(input: TokenStream) -> TokenStream {
     let path_lit = parse_macro_input!(input as LitStr);
@@ -16,6 +16,7 @@ pub fn embedded_migrations(input: TokenStream) -> TokenStream {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
         .expect("CARGO_MANIFEST_DIR not set");
     let dir = Path::new(&manifest_dir).join(&rel_path);
+    let embedded_dir = absolute_dir(&dir);
 
     let mut entries: Vec<_> = if dir.exists() {
         std::fs::read_dir(&dir)
@@ -45,7 +46,7 @@ pub fn embedded_migrations(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    let dir_lit = LitStr::new(&rel_path, Span::call_site());
+    let dir_lit = LitStr::new(&embedded_dir.to_string_lossy(), Span::call_site());
 
     quote! {
         gaman::EmbeddedMigrations {
@@ -55,6 +56,10 @@ pub fn embedded_migrations(input: TokenStream) -> TokenStream {
         }
     }
     .into()
+}
+
+fn absolute_dir(dir: &Path) -> PathBuf {
+    std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
 }
 
 #[derive(FromDeriveInput)]
@@ -87,6 +92,14 @@ struct IntoTableField {
     #[darling(default)]
     primary_key: bool,
     #[darling(default)]
+    index: bool,
+    #[darling(default)]
+    index_name: Option<String>,
+    #[darling(default)]
+    unique: bool,
+    #[darling(default)]
+    unique_name: Option<String>,
+    #[darling(default)]
     default: Option<String>,
     /// Inline FK as `table.column`.
     #[darling(default)]
@@ -110,7 +123,7 @@ fn to_snake_case(s: &str) -> String {
 
 /// Derive `IntoTable` for a named struct.
 /// Supports `#[table(name = "...", schema = "...")]` plus column attributes for
-/// naming, explicit SQL types, nullability, defaults, keys, and checks.
+/// naming, explicit SQL types, nullability, defaults, keys, indexes, and checks.
 #[proc_macro_derive(IntoTable, attributes(table, column))]
 pub fn derive_into_table(input: TokenStream) -> TokenStream {
     let args = match IntoTableInput::from_derive_input(&parse_macro_input!(input)) {
@@ -127,6 +140,7 @@ pub fn derive_into_table(input: TokenStream) -> TokenStream {
 
     let mut pre_stmts: Vec<proc_macro2::TokenStream> = vec![];
     let mut col_stmts: Vec<proc_macro2::TokenStream> = vec![];
+    let mut table_stmts: Vec<proc_macro2::TokenStream> = vec![];
 
     for (i, field) in fields.iter().enumerate() {
         if field.skip {
@@ -199,6 +213,22 @@ pub fn derive_into_table(input: TokenStream) -> TokenStream {
             closure_stmts.push(quote! { let c = c.check(#expr); });
         }
 
+        if field.index || field.index_name.is_some() {
+            let index_name = field
+                .index_name
+                .clone()
+                .unwrap_or_else(|| format!("{}_{}_idx", table_name, col_name));
+            table_stmts.push(quote! { .index(#index_name, &[#col_name]) });
+        }
+
+        if field.unique || field.unique_name.is_some() {
+            let unique_name = field
+                .unique_name
+                .clone()
+                .unwrap_or_else(|| format!("{}_{}_key", table_name, col_name));
+            table_stmts.push(quote! { .unique(#unique_name, &[#col_name]) });
+        }
+
         col_stmts.push(quote! {
             .column(#col_name, #type_expr, |c| {
                 #(#closure_stmts)*
@@ -220,10 +250,10 @@ pub fn derive_into_table(input: TokenStream) -> TokenStream {
                 ::gaman::schema::TableBuilder::new(#table_name)
                     #schema_stmt
                     #(#col_stmts)*
+                    #(#table_stmts)*
                     .build()
             }
         }
     }
     .into()
 }
-

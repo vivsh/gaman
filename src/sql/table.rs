@@ -2,7 +2,7 @@ use sqlparser::ast::{ColumnOption, CreateTable, TableConstraint};
 
 use super::error::SqlParseError;
 use super::util::{data_type_to_str, index_col_name, object_name_parts};
-use crate::states::{schema_qualified_key, Column, Constraint, ForeignKey, Table};
+use crate::states::{Column, Constraint, ForeignKey, Table, schema_qualified_key};
 
 pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), SqlParseError> {
     let (name, schema) = object_name_parts(&ct.name);
@@ -23,11 +23,12 @@ pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), Sq
         let mut col = Column {
             name: col_name.clone(),
             col_type: data_type_to_str(&col_def.data_type),
-            nullable: true,  // PostgreSQL default: nullable unless NOT NULL is specified
+            nullable: true, // PostgreSQL default: nullable unless NOT NULL is specified
             default: None,
             primary_key: false,
             references: None,
             check: None,
+            generated: None,
         };
 
         for opt in &col_def.options {
@@ -37,7 +38,7 @@ pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), Sq
                 ColumnOption::Default(expr) => col.default = Some(expr.to_string()),
                 ColumnOption::PrimaryKey(_) => {
                     col.primary_key = true;
-                    col.nullable = false;  // PRIMARY KEY implies NOT NULL
+                    col.nullable = false; // PRIMARY KEY implies NOT NULL
                 }
                 ColumnOption::Unique(u) => {
                     let cname = u
@@ -100,21 +101,20 @@ fn apply_table_constraint(tc: &TableConstraint, table_name: &str, table: &mut Ta
             for col in table.columns.iter_mut() {
                 if pk_cols.contains(&col.name) {
                     col.primary_key = true;
-                    col.nullable = false;  // PRIMARY KEY implies NOT NULL
+                    col.nullable = false; // PRIMARY KEY implies NOT NULL
                 }
             }
         }
         TableConstraint::Unique(u) => {
-            let cname = u
-                .name
-                .as_ref()
-                .map(|n| n.value.clone())
-                .unwrap_or_else(|| {
-                    let cols: Vec<_> = u.columns.iter().map(|ic| index_col_name(ic)).collect();
-                    format!("{}_{}_key", table_name, cols.join("_"))
-                });
+            let cname = u.name.as_ref().map(|n| n.value.clone()).unwrap_or_else(|| {
+                let cols: Vec<_> = u.columns.iter().map(|ic| index_col_name(ic)).collect();
+                format!("{}_{}_key", table_name, cols.join("_"))
+            });
             let columns: Vec<String> = u.columns.iter().map(|ic| index_col_name(ic)).collect();
-            table.constraints.push(Constraint::Unique { name: cname, columns });
+            table.constraints.push(Constraint::Unique {
+                name: cname,
+                columns,
+            });
         }
         TableConstraint::ForeignKey(fk) => {
             let fk_name = fk
@@ -122,11 +122,19 @@ fn apply_table_constraint(tc: &TableConstraint, table_name: &str, table: &mut Ta
                 .as_ref()
                 .map(|n| n.value.clone())
                 .unwrap_or_else(|| {
-                    let from = fk.columns.first().map(|i| i.value.as_str()).unwrap_or("col");
+                    let from = fk
+                        .columns
+                        .first()
+                        .map(|i| i.value.as_str())
+                        .unwrap_or("col");
                     format!("{}_{}_fkey", table_name, from)
                 });
             let (to_table, _) = object_name_parts(&fk.foreign_table);
-            let from_column = fk.columns.first().map(|i| i.value.clone()).unwrap_or_default();
+            let from_column = fk
+                .columns
+                .first()
+                .map(|i| i.value.clone())
+                .unwrap_or_default();
             let to_column = fk
                 .referred_columns
                 .first()
