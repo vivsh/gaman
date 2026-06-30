@@ -206,6 +206,7 @@ fn rebuild_table_sql(
     validate_rebuild(state, before, after)?;
 
     let temp_name = format!("__gaman_rebuild_{}", after.name);
+    let fk_check_name = format!("__gaman_fk_check_{}", after.name);
     let mut temp_table = after.clone();
     temp_table.name = temp_name.clone();
     let copy = copy_mapping(before, after, ops)?;
@@ -234,15 +235,16 @@ fn rebuild_table_sql(
     for index in &after.indexes {
         stmts.push(create_index_sql(index, &after.name, false)?);
     }
-    stmts.push(
-        r#"CREATE TEMP TABLE "__gaman_fk_check" ("violation" integer CHECK ("violation" = 0))"#
-            .to_string(),
-    );
-    stmts.push(
-        r#"INSERT INTO "__gaman_fk_check" ("violation") SELECT 1 FROM pragma_foreign_key_check"#
-            .to_string(),
-    );
-    stmts.push(r#"DROP TABLE "__gaman_fk_check""#.to_string());
+    stmts.push(format!("DROP TABLE IF EXISTS temp.{}", quote_ident(&fk_check_name)));
+    stmts.push(format!(
+        r#"CREATE TEMP TABLE {} ("violation" integer CHECK ("violation" = 0))"#,
+        quote_ident(&fk_check_name)
+    ));
+    stmts.push(format!(
+        r#"INSERT INTO temp.{} ("violation") SELECT 1 FROM pragma_foreign_key_check"#,
+        quote_ident(&fk_check_name)
+    ));
+    stmts.push(format!("DROP TABLE temp.{}", quote_ident(&fk_check_name)));
     stmts.push("PRAGMA foreign_key_check".to_string());
     Ok(stmts)
 }
@@ -288,6 +290,7 @@ fn copy_expr(source: &Column, target: &Column, ops: &[Operation]) -> Result<Stri
     let mut expr = if let Some(Some(cast_expr)) = alter {
         cast_expr.to_string()
     } else if type_changed {
+        validate_auto_cast_type(&target.col_type)?;
         format!("CAST({} AS {})", quote_ident(&source.name), target.col_type)
     } else {
         quote_ident(&source.name)
@@ -312,6 +315,43 @@ fn copy_expr(source: &Column, target: &Column, ops: &[Operation]) -> Result<Stri
     }
 
     Ok(expr)
+}
+
+fn validate_auto_cast_type(col_type: &str) -> Result<(), DialectError> {
+    let normalized = normalize_type(col_type).to_ascii_lowercase();
+    let base = normalized
+        .split_once('(')
+        .map_or(normalized.as_str(), |(head, _)| head)
+        .trim();
+    let supported = matches!(
+        base,
+        "integer"
+            | "int"
+            | "bigint"
+            | "smallint"
+            | "tinyint"
+            | "real"
+            | "double"
+            | "float"
+            | "text"
+            | "varchar"
+            | "char"
+            | "clob"
+            | "blob"
+            | "numeric"
+            | "decimal"
+            | "boolean"
+    );
+    if supported {
+        Ok(())
+    } else {
+        Err(unsupported(
+            "alter_column",
+            format!(
+                "SQLite cannot automatically cast to ambiguous type '{col_type}'; provide cast_expr"
+            ),
+        ))
+    }
 }
 
 fn new_column_expr(column: &Column) -> Result<String, DialectError> {
@@ -341,6 +381,13 @@ fn validate_rebuild(state: &Schema, before: &Table, after: &Table) -> Result<(),
             format!("SQLite rebuild temp table '{temp_name}' already exists"),
         ));
     }
+    let fk_check_name = format!("__gaman_fk_check_{}", after.name);
+    if state.tables.contains_key(&fk_check_name) {
+        return Err(unsupported(
+            "table_rebuild",
+            format!("SQLite rebuild FK-check temp table '{fk_check_name}' already exists"),
+        ));
+    }
 
     if !before.triggers.is_empty() || !after.triggers.is_empty() {
         return Err(unsupported(
@@ -362,6 +409,16 @@ fn validate_rebuild(state: &Schema, before: &Table, after: &Table) -> Result<(),
         ));
     }
 
+    if let Some((child_table, fk_name)) = inbound_foreign_key(state, &after.name) {
+        return Err(unsupported(
+            "table_rebuild",
+            format!(
+                "SQLite rebuild for table '{}' is blocked by inbound foreign key '{}' on table '{}'",
+                after.name, fk_name, child_table
+            ),
+        ));
+    }
+
     if pk_signature(before) != pk_signature(after) {
         return Err(unsupported(
             "table_rebuild",
@@ -376,14 +433,87 @@ fn validate_rebuild(state: &Schema, before: &Table, after: &Table) -> Result<(),
 }
 
 fn dependent_view<'a>(state: &'a Schema, table_name: &str) -> Option<&'a str> {
-    let quoted = quote_ident(table_name);
     state
         .views
         .values()
-        .find(|view| {
-            view.definition.contains(table_name) || view.definition.contains(&quoted)
-        })
+        .find(|view| view_references_table(&view.definition, table_name))
         .map(|view| view.name.as_str())
+}
+
+fn inbound_foreign_key<'a>(state: &'a Schema, table_name: &str) -> Option<(&'a str, &'a str)> {
+    state.tables.values().find_map(|table| {
+        if table.name == table_name {
+            return None;
+        }
+        table
+            .foreign_keys
+            .iter()
+            .find(|fk| fk.to_table == table_name)
+            .map(|fk| (table.name.as_str(), fk.name.as_str()))
+    })
+}
+
+fn view_references_table(definition: &str, table_name: &str) -> bool {
+    identifier_tokens(definition)
+        .iter()
+        .any(|token| token.eq_ignore_ascii_case(table_name))
+}
+
+fn identifier_tokens(sql: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut chars = sql.char_indices().peekable();
+    while let Some((_, ch)) = chars.next() {
+        if ch == '"' || ch == '`' || ch == '[' {
+            let close = if ch == '[' { ']' } else { ch };
+            let mut ident = String::new();
+            while let Some((_, next)) = chars.next() {
+                if next == close {
+                    if close != ']' && matches!(chars.peek(), Some((_, escaped)) if *escaped == close)
+                    {
+                        ident.push(next);
+                        chars.next();
+                        continue;
+                    }
+                    break;
+                }
+                ident.push(next);
+            }
+            if !ident.is_empty() {
+                tokens.push(ident);
+            }
+        } else if ch == '\'' {
+            while let Some((_, next)) = chars.next() {
+                if next == '\'' {
+                    if matches!(chars.peek(), Some((_, '\''))) {
+                        chars.next();
+                        continue;
+                    }
+                    break;
+                }
+            }
+        } else if is_ident_start(ch) {
+            let mut ident = String::new();
+            ident.push(ch);
+            while let Some((_, next)) = chars.peek().copied() {
+                if is_ident_continue(next) {
+                    ident.push(next);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            tokens.push(ident);
+        }
+    }
+    tokens
+}
+
+fn is_ident_start(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphabetic()
+}
+
+fn is_ident_continue(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphanumeric()
 }
 
 fn pk_signature(table: &Table) -> Vec<(&str, &str)> {

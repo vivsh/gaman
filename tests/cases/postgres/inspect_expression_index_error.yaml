@@ -1,0 +1,9 @@
+description: Inspect fails clearly for expression indexes until model metadata supports index expressions.
+kind: inspect
+setup_sql: |
+  CREATE TABLE users (
+      id integer PRIMARY KEY,
+      email text NOT NULL
+  );
+  CREATE INDEX users_lower_email_idx ON users ((lower(email)));
+expect_error: expression index

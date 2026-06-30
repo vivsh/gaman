@@ -498,6 +498,21 @@ macro_rules! scope_field {
 
 pub fn scope_schema_for_compare(state: &mut Schema, schema: &str) {
     scope_field!(state.tables, schema);
+    let prefix = format!("{schema}.");
+    for table in state.tables.values_mut() {
+        for fk in &mut table.foreign_keys {
+            if let Some(local) = fk.to_table.strip_prefix(&prefix) {
+                fk.to_table = local.to_string();
+            }
+        }
+        for trigger in &mut table.triggers {
+            if let Some(function_name) = &mut trigger.function_name
+                && let Some(local) = function_name.strip_prefix(&prefix)
+            {
+                *function_name = local.to_string();
+            }
+        }
+    }
     scope_field!(state.views, schema);
     scope_field!(state.functions, schema);
     scope_field!(state.extensions, schema);

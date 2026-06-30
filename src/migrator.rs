@@ -331,6 +331,9 @@ impl Migrator {
                         i + 1
                     )));
                 }
+            }
+            dialect.validate_migration_with_state(m, &state)?;
+            for (i, op) in m.operations.iter().enumerate() {
                 match op {
                     crate::operations::Operation::CreateTable { table } => {
                         for fk in &table.foreign_keys {
@@ -421,7 +424,6 @@ impl Migrator {
                     inner: Box::new(e),
                 })?;
             }
-            dialect.validate_migration(m)?;
         }
         Ok(())
     }
@@ -435,15 +437,14 @@ impl Migrator {
         Ok(())
     }
 
-    async fn run_migration_sql(
+    async fn run_sql_statements(
         &self,
-        migration: &Migration,
-        start: &Schema,
+        sqls: &[String],
         executor: &mut dyn Executor,
         _invoker: Option<&dyn Invoker>,
     ) -> Result<(), MigratorError> {
-        for sql in self.render_migration_sql(migration, start)? {
-            executor.execute(&sql).await?;
+        for sql in sqls {
+            executor.execute(sql).await?;
         }
         Ok(())
     }
@@ -466,20 +467,22 @@ impl Migrator {
         invoker: Option<&dyn Invoker>,
         fake: bool,
     ) -> Result<(), MigratorError> {
+        let rendered = if fake {
+            None
+        } else {
+            let start = self.replay_before_migration(&migration.id)?;
+            Some(self.render_migration_sql(migration, &start)?)
+        };
         if migration.atomic {
             executor.begin().await?;
         }
-        if !fake {
-            let start = self.replay_before_migration(&migration.id)?;
-            if let Err(e) = self
-                .run_migration_sql(migration, &start, executor, invoker)
-                .await
-            {
-                if migration.atomic {
-                    let _ = executor.rollback().await;
-                }
-                return Err(e);
+        if let Some(sqls) = rendered.as_ref()
+            && let Err(e) = self.run_sql_statements(sqls, executor, invoker).await
+        {
+            if migration.atomic {
+                let _ = executor.rollback().await;
             }
+            return Err(e);
         }
         if let Err(e) = executor
             .execute(&self.dialect().record_sql(&migration.id))
@@ -490,11 +493,11 @@ impl Migrator {
             }
             return Err(e.into());
         }
-        if migration.atomic {
-            if let Err(e) = executor.commit().await {
-                let _ = executor.rollback().await;
-                return Err(e.into());
-            }
+        if migration.atomic
+            && let Err(e) = executor.commit().await
+        {
+            let _ = executor.rollback().await;
+            return Err(e.into());
         }
         Ok(())
     }
@@ -523,7 +526,21 @@ impl Migrator {
         self.graph.detect_conflict()?;
         let all_ordered: Vec<&str> = self.ordered_ids.iter().map(String::as_str).collect();
 
-        let all_migrations: Vec<_> = all_ordered
+        let validation_ordered = if let Some(target_id) = target {
+            if self.graph.get(target_id).is_none() {
+                return Err(MigratorError::Config(format!(
+                    "unknown target migration '{target_id}'"
+                )));
+            }
+            let target_pos = all_ordered
+                .iter()
+                .position(|id| *id == target_id)
+                .expect("target exists in graph so must be in topo order");
+            &all_ordered[..=target_pos]
+        } else {
+            &all_ordered[..]
+        };
+        let all_migrations: Vec<_> = validation_ordered
             .iter()
             .filter_map(|id| self.graph.get(id))
             .cloned()
@@ -577,18 +594,14 @@ impl Migrator {
 
             for id in to_revert {
                 let migration = self.graph.get(id).expect("applied id must exist in graph");
-                if migration.atomic {
-                    executor.begin().await?;
-                }
-                if !fake {
+                let rendered = if fake {
+                    None
+                } else {
                     let mut inv_ops = Vec::with_capacity(migration.operations.len());
                     for op in &migration.operations {
                         match op.inverse() {
                             Some(inv) => inv_ops.push(inv),
                             None => {
-                                if migration.atomic {
-                                    let _ = executor.rollback().await;
-                                }
                                 return Err(MigratorError::Config(format!(
                                     "migration '{id}' is not reversible: operation '{}' has no inverse",
                                     op.type_name()
@@ -604,15 +617,18 @@ impl Migrator {
                         operations: inv_ops,
                         atomic: migration.atomic,
                     };
-                    if let Err(e) = self
-                        .run_migration_sql(&rollback_migration, &start, executor, invoker)
-                        .await
-                    {
-                        if migration.atomic {
-                            let _ = executor.rollback().await;
-                        }
-                        return Err(e);
+                    Some(self.render_migration_sql(&rollback_migration, &start)?)
+                };
+                if migration.atomic {
+                    executor.begin().await?;
+                }
+                if let Some(sqls) = rendered.as_ref()
+                    && let Err(e) = self.run_sql_statements(sqls, executor, invoker).await
+                {
+                    if migration.atomic {
+                        let _ = executor.rollback().await;
                     }
+                    return Err(e);
                 }
                 if let Err(e) = executor.execute(&self.dialect().unrecord_sql(id)).await {
                     if migration.atomic {
@@ -620,11 +636,11 @@ impl Migrator {
                     }
                     return Err(e.into());
                 }
-                if migration.atomic {
-                    if let Err(e) = executor.commit().await {
-                        let _ = executor.rollback().await;
-                        return Err(e.into());
-                    }
+                if migration.atomic
+                    && let Err(e) = executor.commit().await
+                {
+                    let _ = executor.rollback().await;
+                    return Err(e.into());
                 }
             }
 
@@ -967,15 +983,35 @@ fn scope_tables_for_verify(state: &mut Schema, schema: &str) {
     state.tables = tables
         .into_values()
         .filter_map(|mut table| match table.schema.as_deref() {
-            None => Some(table),
+            None => {
+                scope_table_references(&mut table, schema);
+                Some(table)
+            }
             Some(current) if current == schema || (schema == "public" && current == "public") => {
                 table.schema = None;
+                scope_table_references(&mut table, schema);
                 Some(table)
             }
             _ => None,
         })
         .map(|table| (table.qualified_name(), table))
         .collect();
+}
+
+fn scope_table_references(table: &mut crate::states::Table, schema: &str) {
+    let prefix = format!("{schema}.");
+    for fk in &mut table.foreign_keys {
+        if let Some(local) = fk.to_table.strip_prefix(&prefix) {
+            fk.to_table = local.to_string();
+        }
+    }
+    for trigger in &mut table.triggers {
+        if let Some(function_name) = &mut trigger.function_name
+            && let Some(local) = function_name.strip_prefix(&prefix)
+        {
+            *function_name = local.to_string();
+        }
+    }
 }
 
 fn normalize_state_types(state: &mut Schema, dialect: &crate::dialects::Dialect) {
@@ -998,7 +1034,7 @@ mod tests {
     use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
     use crate::executor::{BoxFuture, Introspectable};
     use crate::operations::Operation;
-    use crate::states::{Column, Schema, Table};
+    use crate::states::{Column, ForeignKey, Schema, Table};
 
     #[derive(Default)]
     struct MockSource {
@@ -1653,6 +1689,49 @@ mod tests {
         let mut live_users = simple_table("users", &["id"]);
         live_users.schema = Some("isolated".to_string());
         let live = state_with_tables(&[live_users]);
+        let mut executor = InspectingExecutor { live };
+
+        let drift = migrator
+            .verify_with(&mut executor, "isolated")
+            .await
+            .expect("verify should succeed");
+
+        assert!(drift.is_empty(), "expected no drift, got: {drift:?}");
+    }
+
+    #[tokio::test]
+    async fn verify_treats_same_schema_fk_target_as_default_namespace() {
+        let mut posts = simple_table("posts", &["id", "user_id"]);
+        posts.foreign_keys.push(ForeignKey {
+            name: "posts_user_id_fkey".to_string(),
+            from_column: "user_id".to_string(),
+            to_table: "users".to_string(),
+            to_column: "id".to_string(),
+        });
+        let migrator = migrator_from(vec![migration_with_ops(
+            "0001_create_tables",
+            &[],
+            vec![
+                Operation::CreateTable {
+                    table: simple_table("users", &["id"]),
+                },
+                Operation::CreateTable {
+                    table: posts,
+                },
+            ],
+        )]);
+
+        let mut live_users = simple_table("users", &["id"]);
+        live_users.schema = Some("isolated".to_string());
+        let mut live_posts = simple_table("posts", &["id", "user_id"]);
+        live_posts.schema = Some("isolated".to_string());
+        live_posts.foreign_keys.push(ForeignKey {
+            name: "posts_user_id_fkey".to_string(),
+            from_column: "user_id".to_string(),
+            to_table: "isolated.users".to_string(),
+            to_column: "id".to_string(),
+        });
+        let live = state_with_tables(&[live_users, live_posts]);
         let mut executor = InspectingExecutor { live };
 
         let drift = migrator

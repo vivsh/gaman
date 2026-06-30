@@ -131,6 +131,18 @@ impl Dialect {
             Dialect::Sqlite => sqlite::validate_migration(m),
         }
     }
+
+    pub(crate) fn validate_migration_with_state(
+        &self,
+        m: &Migration,
+        _start: &Schema,
+    ) -> Result<(), DialectError> {
+        match self {
+            Dialect::Postgres => postgres::validate_migration(m),
+            #[cfg(feature = "sqlite")]
+            Dialect::Sqlite => sqlite::migration_to_sql(m, _start).map(|_| ()),
+        }
+    }
 }
 
 mod postgres;

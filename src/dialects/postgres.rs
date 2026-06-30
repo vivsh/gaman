@@ -160,6 +160,14 @@ fn quote_table_name(name: &str) -> String {
     }
 }
 
+fn quote_maybe_qualified_name(name: &str) -> String {
+    quote_table_name(name)
+}
+
+fn bare_name(name: &str) -> &str {
+    name.rsplit_once('.').map_or(name, |(_, bare)| bare)
+}
+
 fn qualified_name(name: &str, schema: Option<&str>) -> String {
     match schema {
         None | Some("public") => quote_ident(name),
@@ -173,6 +181,10 @@ fn qualified_table(table: &Table) -> String {
 
 fn qualified_view(view: &ViewDef) -> String {
     qualified_name(&view.name, view.schema.as_deref())
+}
+
+fn qualified_function(function: &crate::states::FunctionDef) -> String {
+    qualified_name(&function.name, function.schema.as_deref())
 }
 
 fn quoted_columns(columns: &[String]) -> String {
@@ -212,9 +224,14 @@ fn create_index_sql(index: &Index, table_name: &str, concurrent: bool) -> String
     )
 }
 
-fn drop_index_sql(index_name: &str, concurrent: bool) -> String {
+fn drop_index_sql(table_name: &str, index_name: &str, concurrent: bool) -> String {
     let concurrent = if concurrent { " CONCURRENTLY" } else { "" };
-    format!("DROP INDEX{} {}", concurrent, quote_ident(index_name))
+    let index = if let Some((schema, _)) = table_name.split_once('.') {
+        qualified_name(index_name, Some(schema))
+    } else {
+        quote_ident(index_name)
+    };
+    format!("DROP INDEX{} {}", concurrent, index)
 }
 
 pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
@@ -317,9 +334,11 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             vec![create_index_sql(index, table_name, *concurrent)]
         }
         Operation::DropIndex {
-            index, concurrent, ..
+            table_name,
+            index,
+            concurrent,
         } => {
-            vec![drop_index_sql(&index.name, *concurrent)]
+            vec![drop_index_sql(table_name, &index.name, *concurrent)]
         }
         Operation::AddConstraint {
             table_name,
@@ -353,7 +372,7 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
         Operation::DropFunction { function } => {
             vec![format!(
                 "DROP FUNCTION {}({})",
-                quote_ident(&function.name),
+                qualified_function(function),
                 function.arguments
             )]
         }
@@ -361,15 +380,10 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             if old.arguments == new.arguments {
                 vec![create_function_sql(new)?]
             } else {
-                eprintln!(
-                    "warning: function '{}' argument signature changed — dropping old and creating new; \
-                     existing callers referencing the old signature will break",
-                    old.name
-                );
                 vec![
                     format!(
                         "DROP FUNCTION {}({})",
-                        quote_ident(&old.name),
+                        qualified_function(old),
                         old.arguments
                     ),
                     create_function_sql(new)?,
@@ -569,7 +583,7 @@ fn alter_column_statements(
         (true, false) => stmts.push(format!(
             "ALTER TABLE {} DROP CONSTRAINT {}",
             quote_table_name(table),
-            quote_ident(&Table::pk_constraint_name_for(table))
+            quote_ident(&Table::pk_constraint_name_for(bare_name(table)))
         )),
         _ => {}
     }
@@ -617,7 +631,7 @@ fn create_function_sql(f: &crate::states::FunctionDef) -> Result<String, Dialect
     Ok(format!(
         "CREATE OR REPLACE FUNCTION {}({})\nRETURNS {}\nLANGUAGE {}{}{}
 AS $func$\n{}\n$func$",
-        quote_ident(&f.name),
+        qualified_function(f),
         f.arguments,
         f.returns,
         f.language,
@@ -665,7 +679,7 @@ EXECUTE FUNCTION {}()",
         quote_table_name(table_name),
         scope,
         when_clause,
-        quote_ident(fn_name)
+        quote_maybe_qualified_name(fn_name)
     )
 }
 
@@ -883,6 +897,24 @@ mod tests {
     }
 
     #[test]
+    fn alter_column_drops_schema_qualified_primary_key_by_bare_table_name() {
+        let mut old = col("id", "integer");
+        old.primary_key = true;
+        let new = col("id", "integer");
+        let sql = operation_to_sql(&Operation::AlterColumn {
+            table_name: "app.users".to_string(),
+            old,
+            new,
+            cast_expr: None,
+        })
+        .unwrap();
+        assert_eq!(
+            sql,
+            vec!["ALTER TABLE \"app\".\"users\" DROP CONSTRAINT \"users_pkey\""]
+        );
+    }
+
+    #[test]
     fn add_foreign_key_sql() {
         let fk = ForeignKey {
             name: "posts_user_id_fkey".to_string(),
@@ -1001,6 +1033,23 @@ mod tests {
     }
 
     #[test]
+    fn drop_index_sql_schema_qualifies_index_from_table_schema() {
+        let index = Index {
+            name: "users_email_idx".to_string(),
+            columns: vec!["email".to_string()],
+            unique: false,
+            predicate: None,
+        };
+        let sql = operation_to_sql(&Operation::DropIndex {
+            table_name: "app.users".to_string(),
+            index,
+            concurrent: true,
+        })
+        .unwrap();
+        assert_eq!(sql, vec!["DROP INDEX CONCURRENTLY \"app\".\"users_email_idx\""]);
+    }
+
+    #[test]
     fn tracking_table_has_two_statements() {
         let sqls = create_tracking_table_sql();
         assert_eq!(sqls.len(), 2);
@@ -1091,6 +1140,22 @@ mod tests {
         assert_eq!(sql, vec!["DROP FUNCTION \"process\"(user_id integer)"]);
     }
 
+    #[test]
+    fn custom_schema_function_sql_is_qualified() {
+        let mut f = basic_function("process");
+        f.schema = Some("app".to_string());
+        f.arguments = "user_id integer".to_string();
+
+        let create_sql = operation_to_sql(&Operation::CreateFunction {
+            function: f.clone(),
+        })
+        .unwrap();
+        assert!(create_sql[0].starts_with("CREATE OR REPLACE FUNCTION \"app\".\"process\"("));
+
+        let drop_sql = operation_to_sql(&Operation::DropFunction { function: f }).unwrap();
+        assert_eq!(drop_sql, vec!["DROP FUNCTION \"app\".\"process\"(user_id integer)"]);
+    }
+
     /// AlterFunction with same arguments produces a single CREATE OR REPLACE.
     #[test]
     fn alter_function_same_args_produces_replace() {
@@ -1122,6 +1187,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn alter_function_different_args_preserves_schema() {
+        let mut old = basic_function("process");
+        old.schema = Some("app".to_string());
+        let mut new = old.clone();
+        new.arguments = "user_id integer".to_string();
+
+        let sql = operation_to_sql(&Operation::AlterFunction { old, new }).unwrap();
+
+        assert_eq!(sql[0], "DROP FUNCTION \"app\".\"process\"()");
+        assert!(sql[1].starts_with("CREATE OR REPLACE FUNCTION \"app\".\"process\"("));
+    }
+
     /// CreateTrigger SQL has correct BEFORE/AFTER and FOR EACH ROW.
     #[test]
     fn create_trigger_sql() {
@@ -1140,6 +1218,25 @@ mod tests {
         assert!(sql[0].contains("INSERT"), "got: {}", sql[0]);
         assert!(sql[0].contains("FOR EACH ROW"), "got: {}", sql[0]);
         assert!(sql[0].contains("EXECUTE FUNCTION"), "got: {}", sql[0]);
+    }
+
+    #[test]
+    fn create_trigger_sql_qualifies_function_name() {
+        let mut trigger = basic_trigger("audit_trg");
+        trigger.function_name = Some("audit.audit_fn".to_string());
+
+        let sql = operation_to_sql(&Operation::CreateTrigger {
+            table_name: "app.users".to_string(),
+            trigger,
+        })
+        .unwrap();
+
+        assert!(sql[0].contains("ON \"app\".\"users\""), "got: {}", sql[0]);
+        assert!(
+            sql[0].contains("EXECUTE FUNCTION \"audit\".\"audit_fn\"()"),
+            "got: {}",
+            sql[0]
+        );
     }
 
     /// AlterTrigger SQL is CREATE OR REPLACE TRIGGER (PG14+).

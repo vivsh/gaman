@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "gaman"
-version = "0.3.17"
+version = "0.3.18"
 edition = "2024"
 description = "PostgreSQL-first, offline schema migration tool with Django-like ergonomics"
 license = "MIT"
@@ -23,7 +23,7 @@ sqlite = ["sqlx/sqlite"]
 [dependencies]
 argh = "0.1.19"
 dotenvy = "0.15.7"
-gaman-macros = { version = "0.3.17", path = "gaman-macros" }
+gaman-macros = { version = "0.3.18", path = "gaman-macros" }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-native-tls"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 serde = { version = "1.0.228", features = ["derive"] }

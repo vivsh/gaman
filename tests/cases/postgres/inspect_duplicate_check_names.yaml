@@ -1,0 +1,39 @@
+description: Inspect check constraints with the same name on different tables independently.
+kind: inspect
+setup_sql: |
+  CREATE TABLE products (
+      id integer PRIMARY KEY,
+      price integer NOT NULL,
+      CONSTRAINT positive_value CHECK (price > 0)
+  );
+  CREATE TABLE invoices (
+      id integer PRIMARY KEY,
+      total integer NOT NULL,
+      CONSTRAINT positive_value CHECK (total > 0)
+  );
+expect_schema:
+  tables:
+    invoices:
+      name: invoices
+      columns:
+        - name: id
+          type: integer
+          primary_key: true
+        - name: total
+          type: integer
+      constraints:
+        - kind: check
+          name: positive_value
+          expression: total > 0
+    products:
+      name: products
+      columns:
+        - name: id
+          type: integer
+          primary_key: true
+        - name: price
+          type: integer
+      constraints:
+        - kind: check
+          name: positive_value
+          expression: price > 0

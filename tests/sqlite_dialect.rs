@@ -234,9 +234,10 @@ fn sqlite_rebuilds_drop_column_and_recreates_indexes() {
             r#"DROP TABLE "users""#,
             r#"ALTER TABLE "__gaman_rebuild_users" RENAME TO "users""#,
             r#"CREATE INDEX "users_username_idx" ON "users" ("username")"#,
-            r#"CREATE TEMP TABLE "__gaman_fk_check" ("violation" integer CHECK ("violation" = 0))"#,
-            r#"INSERT INTO "__gaman_fk_check" ("violation") SELECT 1 FROM pragma_foreign_key_check"#,
-            r#"DROP TABLE "__gaman_fk_check""#,
+            r#"DROP TABLE IF EXISTS temp."__gaman_fk_check_users""#,
+            r#"CREATE TEMP TABLE "__gaman_fk_check_users" ("violation" integer CHECK ("violation" = 0))"#,
+            r#"INSERT INTO temp."__gaman_fk_check_users" ("violation") SELECT 1 FROM pragma_foreign_key_check"#,
+            r#"DROP TABLE temp."__gaman_fk_check_users""#,
             "PRAGMA foreign_key_check",
         ]
     );
@@ -459,6 +460,21 @@ fn sqlite_rebuild_rejects_unsafe_cases() {
     ])
     .unwrap_err();
     assert!(err.to_string().contains("require atomic migrations"));
+
+    let err = sql_for_result(vec![
+        migration("0001_create_users", vec![Operation::CreateTable { table: users }]),
+        migration(
+            "0002_custom_type",
+            vec![Operation::AlterColumn {
+                table_name: "users".to_string(),
+                old: col("name", "text", true),
+                new: col("name", "email_address", true),
+                cast_expr: None,
+            }],
+        ),
+    ])
+    .unwrap_err();
+    assert!(err.to_string().contains("ambiguous type"));
 }
 
 #[test]
@@ -481,6 +497,15 @@ fn sqlite_rebuild_rejects_temp_collision_triggers_and_views() {
         constraints: vec![],
         triggers: vec![],
     };
+    let fk_temp = Table {
+        name: "__gaman_fk_check_users".to_string(),
+        schema: None,
+        columns: vec![pk_col("id")],
+        foreign_keys: vec![],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![],
+    };
     let drop_name = Operation::DropColumn {
         table_name: "users".to_string(),
         column: col("name", "text", true),
@@ -494,6 +519,14 @@ fn sqlite_rebuild_rejects_temp_collision_triggers_and_views() {
     ])
     .unwrap_err();
     assert!(err.to_string().contains("already exists"));
+
+    let err = sql_for_result(vec![
+        migration("0001_create_users", vec![Operation::CreateTable { table: users.clone() }]),
+        migration("0002_create_fk_temp", vec![Operation::CreateTable { table: fk_temp }]),
+        migration("0003_drop_name", vec![drop_name.clone()]),
+    ])
+    .unwrap_err();
+    assert!(err.to_string().contains("FK-check temp table"));
 
     let mut triggered = users.clone();
     triggered.triggers.push(TriggerDef {
@@ -520,6 +553,57 @@ fn sqlite_rebuild_rejects_temp_collision_triggers_and_views() {
             vec![Operation::CreateView {
                 view: ViewDef {
                     name: "active_users".to_string(),
+                    schema: None,
+                    definition: r#"SELECT id FROM "users""#.to_string(),
+                },
+            }],
+        ),
+        migration("0003_drop_name", vec![drop_name]),
+    ])
+    .unwrap_err();
+    assert!(err.to_string().contains("dependent view"));
+}
+
+#[test]
+fn sqlite_dependent_view_detection_is_identifier_aware() {
+    let users = Table {
+        name: "users".to_string(),
+        schema: None,
+        columns: vec![pk_col("id"), col("name", "text", true)],
+        foreign_keys: vec![],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![],
+    };
+    let drop_name = Operation::DropColumn {
+        table_name: "users".to_string(),
+        column: col("name", "text", true),
+        cascade: false,
+    };
+
+    sql_for_result(vec![
+        migration("0001_create_users", vec![Operation::CreateTable { table: users.clone() }]),
+        migration(
+            "0002_create_unrelated_view",
+            vec![Operation::CreateView {
+                view: ViewDef {
+                    name: "user_summary".to_string(),
+                    schema: None,
+                    definition: r#"SELECT 1 AS users_count"#.to_string(),
+                },
+            }],
+        ),
+        migration("0003_drop_name", vec![drop_name.clone()]),
+    ])
+    .unwrap();
+
+    let err = sql_for_result(vec![
+        migration("0001_create_users", vec![Operation::CreateTable { table: users }]),
+        migration(
+            "0002_create_quoted_view",
+            vec![Operation::CreateView {
+                view: ViewDef {
+                    name: "quoted_users".to_string(),
                     schema: None,
                     definition: r#"SELECT id FROM "users""#.to_string(),
                 },
@@ -689,6 +773,93 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
             .unwrap(),
         vec!["users_account_id_idx".to_string()]
     );
+}
+
+#[tokio::test]
+async fn sqlite_rebuild_live_preserves_child_rows_when_parent_is_rebuilt() {
+    let mut accounts_v1 = Table {
+        name: "accounts".to_string(),
+        schema: None,
+        columns: vec![pk_col("id"), col("legacy_code", "text", true)],
+        foreign_keys: vec![],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![],
+    };
+    let users = Table {
+        name: "users".to_string(),
+        schema: None,
+        columns: vec![pk_col("id"), col("account_id", "integer", false)],
+        foreign_keys: vec![ForeignKey {
+            name: "users_account_id_fkey".to_string(),
+            from_column: "account_id".to_string(),
+            to_table: "accounts".to_string(),
+            to_column: "id".to_string(),
+        }],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![],
+    };
+    accounts_v1.indexes.push(Index {
+        name: "accounts_id_idx".to_string(),
+        columns: vec!["id".to_string()],
+        unique: false,
+        predicate: None,
+    });
+
+    let migrations = vec![
+        migration("0001_create_accounts", vec![Operation::CreateTable { table: accounts_v1 }]),
+        migration_after("0002_create_users", "0001_create_accounts", vec![Operation::CreateTable { table: users }]),
+        migration_after(
+            "0003_rebuild_parent",
+            "0002_create_users",
+            vec![Operation::DropColumn {
+                table_name: "accounts".to_string(),
+                column: col("legacy_code", "text", true),
+                cascade: false,
+            }],
+        ),
+    ];
+
+    let migrator = migrator(migrations);
+    let mut executor = sqlite_executor().await;
+    migrator
+        .migrate_with(&mut executor, None, Some("0002_create_users"), false)
+        .await
+        .unwrap();
+    executor
+        .execute(r#"INSERT INTO "accounts" ("id", "legacy_code") VALUES (1, 'A')"#)
+        .await
+        .unwrap();
+    executor
+        .execute(r#"INSERT INTO "users" ("id", "account_id") VALUES (1, 1)"#)
+        .await
+        .unwrap();
+
+    let err = migrator
+        .migrate_with(&mut executor, None, None, false)
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("inbound foreign key"), "{err}");
+    assert_eq!(
+        executor
+            .fetch_strings(r#"SELECT CAST(account_id AS TEXT) FROM "users" ORDER BY id"#)
+            .await
+            .unwrap(),
+        vec!["1".to_string()]
+    );
+    assert_eq!(
+        executor
+            .fetch_strings(r#"SELECT legacy_code FROM "accounts" WHERE id = 1"#)
+            .await
+            .unwrap(),
+        vec!["A".to_string()]
+    );
+    executor
+        .execute(r#"INSERT INTO "users" ("id", "account_id") VALUES (2, 404)"#)
+        .await
+        .unwrap_err();
 }
 
 #[tokio::test]
@@ -912,7 +1083,7 @@ async fn sqlite_rebuild_failure_rolls_back_without_recording_and_releases_lock()
 }
 
 #[tokio::test]
-async fn sqlite_rebuild_render_failure_rolls_back_and_releases_lock() {
+async fn sqlite_rebuild_render_failure_preflights_before_install_lock_or_begin() {
     let users = Table {
         name: "users".to_string(),
         schema: None,
@@ -944,7 +1115,6 @@ async fn sqlite_rebuild_render_failure_rolls_back_and_releases_lock() {
         .unwrap_err();
 
     assert!(err.to_string().contains("without a default or cast expression"));
-    assert!(executor.log.iter().any(|entry| entry == "ROLLBACK"));
+    assert!(executor.log.is_empty(), "unexpected executor activity: {:?}", executor.log);
     assert_eq!(executor.lock_count, 0);
-    assert_eq!(executor.log.last().map(String::as_str), Some("RELEASE_LOCK"));
 }

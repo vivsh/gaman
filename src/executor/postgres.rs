@@ -114,7 +114,7 @@ impl Executor for PostgresExecutor {
 // Extracts column list, UNIQUE flag, and optional partial-index predicate from a
 // pg_indexes.indexdef string.
 // e.g. "CREATE UNIQUE INDEX idx ON t USING btree (a, b DESC) WHERE (deleted IS NULL)"
-fn parse_index_def(def: &str) -> (Vec<String>, bool, Option<String>) {
+fn parse_index_def(def: &str) -> Result<(Vec<String>, bool, Option<String>), ExecutorError> {
     let unique = def.contains("CREATE UNIQUE INDEX");
 
     // Split off the optional WHERE clause before parsing columns
@@ -128,29 +128,47 @@ fn parse_index_def(def: &str) -> (Vec<String>, bool, Option<String>) {
         (def, None)
     };
 
-    let cols = if let Some(start) = col_part.find('(') {
+    let cols: Vec<String> = if let Some(start) = col_part.find('(') {
         let inner = &col_part[start + 1..];
         let end = inner.rfind(')').unwrap_or(inner.len());
-        inner[..end]
-            .split(',')
-            .map(|s| {
-                // Strip quotes, then drop trailing sort/opclass tokens:
-                // e.g. `"col" DESC`, `col varchar_pattern_ops`, `col NULLS FIRST`
-                let stripped = s.trim().trim_matches('"');
-                // Take only the first whitespace-delimited token as the column name
-                let col_name = stripped
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .trim_matches('"');
-                col_name.to_string()
-            })
-            .filter(|s| !s.is_empty())
-            .collect()
+        let inner = inner[..end].trim();
+        if inner.is_empty() {
+            return Err(ExecutorError::Fetch(format!(
+                "unsupported PostgreSQL index definition with empty column list: {def}"
+            )));
+        }
+        let mut cols = Vec::new();
+        for raw in inner.split(',') {
+            let stripped = raw.trim();
+            if stripped.starts_with('(') {
+                return Err(ExecutorError::Fetch(format!(
+                    "unsupported PostgreSQL expression index; model index expressions explicitly before introspecting: {def}"
+                )));
+            }
+            // Strip quotes, then drop trailing sort/opclass tokens:
+            // e.g. `"col" DESC`, `col varchar_pattern_ops`, `col NULLS FIRST`
+            let stripped = stripped.trim_matches('"');
+            let col_name = stripped
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_matches('"');
+            if !col_name.is_empty() {
+                cols.push(col_name.to_string());
+            }
+        }
+        cols
     } else {
-        vec![]
+        return Err(ExecutorError::Fetch(format!(
+            "unsupported PostgreSQL index definition without a column list: {def}"
+        )));
     };
-    (cols, unique, predicate)
+    if cols.is_empty() {
+        return Err(ExecutorError::Fetch(format!(
+            "unsupported PostgreSQL index definition with no simple columns: {def}"
+        )));
+    }
+    Ok((cols, unique, predicate))
 }
 
 // Decodes the tgtype bitmask from pg_trigger into timing, events, and scope.
@@ -214,7 +232,6 @@ impl Introspectable for PostgresExecutor {
                     let table_name: String = row
                         .try_get(0)
                         .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                    let key = table_name.clone();
 
                     let mut table = Table {
                         name: table_name.clone(),
@@ -373,7 +390,7 @@ impl Introspectable for PostgresExecutor {
                         let from_col: String = fkr
                             .try_get(1)
                             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let _ref_schema: String = fkr
+                        let ref_schema: String = fkr
                             .try_get(2)
                             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                         let ref_table: String = fkr
@@ -385,7 +402,7 @@ impl Introspectable for PostgresExecutor {
                         table.foreign_keys.push(ForeignKey {
                             name: fk_name,
                             from_column: from_col,
-                            to_table: ref_table,
+                            to_table: schema_qualified_key(&ref_table, Some(&ref_schema)),
                             to_column: ref_col,
                         });
                     }
@@ -396,6 +413,7 @@ impl Introspectable for PostgresExecutor {
                          JOIN information_schema.key_column_usage kcu \
                            ON tc.constraint_name = kcu.constraint_name \
                            AND tc.table_schema = kcu.table_schema \
+                           AND tc.table_name = kcu.table_name \
                          WHERE tc.table_schema = $1 AND tc.table_name = $2 \
                          AND tc.constraint_type = 'UNIQUE' \
                          ORDER BY tc.constraint_name, kcu.ordinal_position",
@@ -422,15 +440,14 @@ impl Introspectable for PostgresExecutor {
                     }
 
                     let ck_rows = sqlx::query(
-                        "SELECT tc.constraint_name, cc.check_clause \
-                         FROM information_schema.table_constraints tc \
-                         JOIN information_schema.check_constraints cc \
-                           ON tc.constraint_name = cc.constraint_name \
-                           AND tc.table_schema = cc.constraint_schema \
-                         WHERE tc.table_schema = $1 AND tc.table_name = $2 \
-                         AND tc.constraint_type = 'CHECK' \
-                         AND cc.check_clause NOT LIKE '%IS NOT NULL' \
-                         ORDER BY tc.constraint_name",
+                        "SELECT con.conname, pg_get_constraintdef(con.oid, true) \
+                         FROM pg_constraint con \
+                         JOIN pg_class rel ON rel.oid = con.conrelid \
+                         JOIN pg_namespace ns ON ns.oid = rel.relnamespace \
+                         WHERE con.contype = 'c' \
+                         AND ns.nspname = $1 AND rel.relname = $2 \
+                         AND pg_get_constraintdef(con.oid, true) NOT LIKE '%IS NOT NULL' \
+                         ORDER BY con.conname",
                     )
                     .bind(schema)
                     .bind(&table_name)
@@ -445,6 +462,11 @@ impl Introspectable for PostgresExecutor {
                         let expr: String = ckr
                             .try_get(1)
                             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let expr = expr
+                            .strip_prefix("CHECK (")
+                            .and_then(|s| s.strip_suffix(')'))
+                            .unwrap_or(&expr)
+                            .to_string();
                         table.constraints.push(Constraint::Check {
                             name: cname,
                             expression: expr,
@@ -480,7 +502,7 @@ impl Introspectable for PostgresExecutor {
                         let idx_def: String = idr
                             .try_get(1)
                             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let (cols, unique, predicate) = parse_index_def(&idx_def);
+                        let (cols, unique, predicate) = parse_index_def(&idx_def)?;
                         table.indexes.push(Index {
                             name: idx_name,
                             columns: cols,
@@ -533,7 +555,7 @@ impl Introspectable for PostgresExecutor {
                         });
                     }
 
-                    state.tables.insert(key, table);
+                    state.tables.insert(table.qualified_name(), table);
                 }
 
                 let view_rows = sqlx::query(
@@ -661,7 +683,7 @@ mod tests {
     #[test]
     fn parse_index_def_non_unique() {
         let def = "CREATE INDEX idx_users_email ON public.users USING btree (email)";
-        let (cols, unique, predicate) = parse_index_def(def);
+        let (cols, unique, predicate) = parse_index_def(def).unwrap();
         assert_eq!(cols, vec!["email"]);
         assert!(!unique);
         assert!(predicate.is_none());
@@ -672,19 +694,17 @@ mod tests {
     fn parse_index_def_unique_multi_col() {
         let def =
             r#"CREATE UNIQUE INDEX idx ON public.orders USING btree ("tenant_id", order_num)"#;
-        let (cols, unique, predicate) = parse_index_def(def);
+        let (cols, unique, predicate) = parse_index_def(def).unwrap();
         assert_eq!(cols, vec!["tenant_id", "order_num"]);
         assert!(unique);
         assert!(predicate.is_none());
     }
 
-    /// Verifies that an empty indexdef string returns no columns and non-unique.
+    /// Verifies that an empty indexdef string fails instead of producing lossy metadata.
     #[test]
     fn parse_index_def_empty() {
-        let (cols, unique, predicate) = parse_index_def("");
-        assert!(cols.is_empty());
-        assert!(!unique);
-        assert!(predicate.is_none());
+        let err = parse_index_def("").unwrap_err();
+        assert!(err.to_string().contains("without a column list"));
     }
 
     /// Verifies that a partial index has its WHERE predicate extracted and columns are clean.
@@ -692,7 +712,7 @@ mod tests {
     fn parse_index_def_partial_index() {
         let def =
             "CREATE INDEX idx ON public.tasks USING btree (status, ready_time) WHERE (status = 0)";
-        let (cols, unique, predicate) = parse_index_def(def);
+        let (cols, unique, predicate) = parse_index_def(def).unwrap();
         assert_eq!(cols, vec!["status", "ready_time"]);
         assert!(!unique);
         assert_eq!(predicate.as_deref(), Some("status = 0"));
@@ -703,7 +723,7 @@ mod tests {
     fn parse_index_def_strips_modifiers() {
         let def =
             "CREATE INDEX idx ON t USING btree (provider_id, created DESC) WHERE (deleted IS NULL)";
-        let (cols, _, predicate) = parse_index_def(def);
+        let (cols, _, predicate) = parse_index_def(def).unwrap();
         assert_eq!(cols, vec!["provider_id", "created"]);
         assert_eq!(predicate.as_deref(), Some("deleted IS NULL"));
     }
@@ -712,8 +732,15 @@ mod tests {
     #[test]
     fn parse_index_def_strips_opclass() {
         let def = "CREATE INDEX idx ON t USING btree (username varchar_pattern_ops)";
-        let (cols, _, _) = parse_index_def(def);
+        let (cols, _, _) = parse_index_def(def).unwrap();
         assert_eq!(cols, vec!["username"]);
+    }
+
+    #[test]
+    fn parse_index_def_rejects_expression_indexes() {
+        let def = "CREATE INDEX idx ON t USING btree ((lower(username)))";
+        let err = parse_index_def(def).unwrap_err();
+        assert!(err.to_string().contains("expression index"));
     }
 
     /// Verifies BEFORE INSERT ROW trigger decoding.
