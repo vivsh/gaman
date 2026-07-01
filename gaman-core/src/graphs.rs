@@ -16,7 +16,9 @@ pub enum GraphError {
     UnknownDependency { migration: String, dep: String },
     #[error("no migrations in graph")]
     Empty,
-    #[error("invalid migration id '{0}': only lowercase letters, digits, and underscores are allowed (namespaced ids like 'auth/0001_init' are set automatically by embedded children)")]
+    #[error(
+        "invalid migration id '{0}': only lowercase letters, digits, and underscores are allowed (namespaced ids like 'auth/0001_init' are set automatically by embedded children)"
+    )]
     InvalidId(String),
 }
 
@@ -52,7 +54,11 @@ impl MigrationGraph {
     /// Only lowercase letters, digits, and underscores are allowed.
     /// Called by Migrator before writing any new migration file.
     pub fn validate_id(id: &str) -> Result<(), GraphError> {
-        if id.is_empty() || !id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+        if id.is_empty()
+            || !id
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
             return Err(GraphError::InvalidId(id.to_string()));
         }
         Ok(())
@@ -173,7 +179,12 @@ impl MigrationGraph {
         }
         visited.insert(id);
         if let Some(node) = self.nodes.get(id) {
-            let mut deps: Vec<&str> = node.migration.dependencies.iter().map(String::as_str).collect();
+            let mut deps: Vec<&str> = node
+                .migration
+                .dependencies
+                .iter()
+                .map(String::as_str)
+                .collect();
             deps.sort();
             for dep in deps {
                 self.topo_visit(dep, visited, order);
@@ -220,8 +231,10 @@ mod tests {
         // 0001 → 0002 → 0003
         let mut g = MigrationGraph::new();
         g.add(migration("0001_initial", &[])).unwrap();
-        g.add(migration("0002_add_users", &["0001_initial"])).unwrap();
-        g.add(migration("0003_add_posts", &["0002_add_users"])).unwrap();
+        g.add(migration("0002_add_users", &["0001_initial"]))
+            .unwrap();
+        g.add(migration("0003_add_posts", &["0002_add_users"]))
+            .unwrap();
         g
     }
 
@@ -261,8 +274,10 @@ mod tests {
     fn branching_graph_has_two_heads() {
         let mut g = MigrationGraph::new();
         g.add(migration("0001_initial", &[])).unwrap();
-        g.add(migration("0002_branch_a", &["0001_initial"])).unwrap();
-        g.add(migration("0003_branch_b", &["0001_initial"])).unwrap();
+        g.add(migration("0002_branch_a", &["0001_initial"]))
+            .unwrap();
+        g.add(migration("0003_branch_b", &["0001_initial"]))
+            .unwrap();
         let mut heads = g.heads();
         heads.sort();
         assert_eq!(heads, vec!["0002_branch_a", "0003_branch_b"]);
@@ -279,8 +294,10 @@ mod tests {
     fn detect_conflict_err_for_branched_graph() {
         let mut g = MigrationGraph::new();
         g.add(migration("0001_initial", &[])).unwrap();
-        g.add(migration("0002_branch_a", &["0001_initial"])).unwrap();
-        g.add(migration("0003_branch_b", &["0001_initial"])).unwrap();
+        g.add(migration("0002_branch_a", &["0001_initial"]))
+            .unwrap();
+        g.add(migration("0003_branch_b", &["0001_initial"]))
+            .unwrap();
         assert!(matches!(g.detect_conflict(), Err(GraphError::Conflict)));
     }
 
@@ -297,7 +314,10 @@ mod tests {
         // A depends on B, B depends on A
         g.add(migration("A", &["B"])).unwrap();
         g.add(migration("B", &["A"])).unwrap();
-        assert!(matches!(g.validate_acyclic(), Err(GraphError::CycleDetected)));
+        assert!(matches!(
+            g.validate_acyclic(),
+            Err(GraphError::CycleDetected)
+        ));
     }
 
     /// validate_acyclic detects a longer cycle (A → B → C → A).
@@ -307,7 +327,10 @@ mod tests {
         g.add(migration("A", &["C"])).unwrap();
         g.add(migration("B", &["A"])).unwrap();
         g.add(migration("C", &["B"])).unwrap();
-        assert!(matches!(g.validate_acyclic(), Err(GraphError::CycleDetected)));
+        assert!(matches!(
+            g.validate_acyclic(),
+            Err(GraphError::CycleDetected)
+        ));
     }
 
     /// topological_order on a linear chain returns migrations in dependency order.
@@ -315,7 +338,10 @@ mod tests {
     fn topological_order_linear_chain() {
         let g = linear_graph();
         let order = g.topological_order().unwrap();
-        assert_eq!(order, vec!["0001_initial", "0002_add_users", "0003_add_posts"]);
+        assert_eq!(
+            order,
+            vec!["0001_initial", "0002_add_users", "0003_add_posts"]
+        );
     }
 
     /// topological_order is deterministic: dependencies always precede dependents.
@@ -337,7 +363,10 @@ mod tests {
         let mut g = MigrationGraph::new();
         g.add(migration("A", &["B"])).unwrap();
         g.add(migration("B", &["A"])).unwrap();
-        assert!(matches!(g.topological_order(), Err(GraphError::CycleDetected)));
+        assert!(matches!(
+            g.topological_order(),
+            Err(GraphError::CycleDetected)
+        ));
     }
 
     /// next_number returns 1 for an empty graph.
@@ -364,7 +393,9 @@ mod tests {
     /// create_merge_migration fails when there is only one head.
     #[test]
     fn create_merge_migration_requires_multiple_heads() {
-        let err = linear_graph().create_merge_migration("merge".to_string()).unwrap_err();
+        let err = linear_graph()
+            .create_merge_migration("merge".to_string())
+            .unwrap_err();
         assert!(matches!(err, GraphError::Empty));
     }
 
@@ -373,8 +404,10 @@ mod tests {
     fn create_merge_migration_depends_on_all_heads() {
         let mut g = MigrationGraph::new();
         g.add(migration("0001_initial", &[])).unwrap();
-        g.add(migration("0002_branch_a", &["0001_initial"])).unwrap();
-        g.add(migration("0003_branch_b", &["0001_initial"])).unwrap();
+        g.add(migration("0002_branch_a", &["0001_initial"]))
+            .unwrap();
+        g.add(migration("0003_branch_b", &["0001_initial"]))
+            .unwrap();
         let merge = g.create_merge_migration("0004_merge".to_string()).unwrap();
         assert_eq!(merge.id, "0004_merge");
         assert_eq!(merge.dependencies, vec!["0002_branch_a", "0003_branch_b"]);
@@ -394,17 +427,27 @@ mod tests {
     #[test]
     fn topological_order_stable_regardless_of_insertion_order() {
         let mut g1 = MigrationGraph::new();
-        g1.add(migration("0003_add_posts", &["0002_add_users"])).unwrap();
+        g1.add(migration("0003_add_posts", &["0002_add_users"]))
+            .unwrap();
         g1.add(migration("0001_initial", &[])).unwrap();
-        g1.add(migration("0002_add_users", &["0001_initial"])).unwrap();
+        g1.add(migration("0002_add_users", &["0001_initial"]))
+            .unwrap();
 
         let mut g2 = MigrationGraph::new();
         g2.add(migration("0001_initial", &[])).unwrap();
-        g2.add(migration("0002_add_users", &["0001_initial"])).unwrap();
-        g2.add(migration("0003_add_posts", &["0002_add_users"])).unwrap();
+        g2.add(migration("0002_add_users", &["0001_initial"]))
+            .unwrap();
+        g2.add(migration("0003_add_posts", &["0002_add_users"]))
+            .unwrap();
 
-        assert_eq!(g1.topological_order().unwrap(), g2.topological_order().unwrap());
-        assert_eq!(g1.topological_order().unwrap(), vec!["0001_initial", "0002_add_users", "0003_add_posts"]);
+        assert_eq!(
+            g1.topological_order().unwrap(),
+            g2.topological_order().unwrap()
+        );
+        assert_eq!(
+            g1.topological_order().unwrap(),
+            vec!["0001_initial", "0002_add_users", "0003_add_posts"]
+        );
     }
 
     /// Parallel branches are always ordered alphabetically (not by HashMap iteration).
@@ -412,14 +455,23 @@ mod tests {
     fn topological_order_parallel_branches_alphabetical() {
         let mut g = MigrationGraph::new();
         g.add(migration("0001_initial", &[])).unwrap();
-        g.add(migration("0003_feature_b", &["0001_initial"])).unwrap();
-        g.add(migration("0002_feature_a", &["0001_initial"])).unwrap();
-        g.add(migration("0004_merge", &["0002_feature_a", "0003_feature_b"])).unwrap();
+        g.add(migration("0003_feature_b", &["0001_initial"]))
+            .unwrap();
+        g.add(migration("0002_feature_a", &["0001_initial"]))
+            .unwrap();
+        g.add(migration(
+            "0004_merge",
+            &["0002_feature_a", "0003_feature_b"],
+        ))
+        .unwrap();
         let order = g.topological_order().unwrap();
         assert_eq!(order[0], "0001_initial");
         assert_eq!(order[3], "0004_merge");
         let pos = |id: &str| order.iter().position(|&s| s == id).unwrap();
-        assert!(pos("0002_feature_a") < pos("0003_feature_b"), "0002 should come before 0003 alphabetically");
+        assert!(
+            pos("0002_feature_a") < pos("0003_feature_b"),
+            "0002 should come before 0003 alphabetically"
+        );
         assert!(pos("0002_feature_a") < pos("0004_merge"));
         assert!(pos("0003_feature_b") < pos("0004_merge"));
     }
@@ -429,9 +481,15 @@ mod tests {
     fn topological_order_is_stable_across_calls() {
         let mut g = MigrationGraph::new();
         g.add(migration("0001_initial", &[])).unwrap();
-        g.add(migration("0003_z_feature", &["0001_initial"])).unwrap();
-        g.add(migration("0002_a_feature", &["0001_initial"])).unwrap();
-        g.add(migration("0004_merge", &["0002_a_feature", "0003_z_feature"])).unwrap();
+        g.add(migration("0003_z_feature", &["0001_initial"]))
+            .unwrap();
+        g.add(migration("0002_a_feature", &["0001_initial"]))
+            .unwrap();
+        g.add(migration(
+            "0004_merge",
+            &["0002_a_feature", "0003_z_feature"],
+        ))
+        .unwrap();
         let first = g.topological_order().unwrap();
         let second = g.topological_order().unwrap();
         assert_eq!(first, second);
@@ -444,8 +502,10 @@ mod tests {
     fn create_merge_migration_deps_are_always_sorted() {
         let mut g = MigrationGraph::new();
         g.add(migration("0001_initial", &[])).unwrap();
-        g.add(migration("0002_zzz_last", &["0001_initial"])).unwrap();
-        g.add(migration("0003_aaa_first", &["0001_initial"])).unwrap();
+        g.add(migration("0002_zzz_last", &["0001_initial"]))
+            .unwrap();
+        g.add(migration("0003_aaa_first", &["0001_initial"]))
+            .unwrap();
         let merge = g.create_merge_migration("0004_merge".to_string()).unwrap();
         assert_eq!(merge.dependencies, vec!["0002_zzz_last", "0003_aaa_first"]);
     }

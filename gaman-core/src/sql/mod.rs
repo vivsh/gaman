@@ -15,7 +15,7 @@ use sqlparser::parser::Parser;
 use table::parse_create_table;
 use util::{index_col_name, object_name_parts};
 
-use crate::states::{schema_qualified_key, EnumDef, ExtensionDef, Index, Schema, ViewDef};
+use crate::states::{EnumDef, ExtensionDef, Index, Schema, ViewDef, schema_qualified_key};
 
 struct ParseContext {
     schema: Schema,
@@ -37,6 +37,7 @@ impl ParseContext {
                 None => return Err(SqlParseError::UnknownTable { table: table_name }),
             }
         }
+        self.schema.normalize();
         Ok(self.schema)
     }
 }
@@ -51,6 +52,7 @@ pub fn parse_sql(sql: &str) -> Result<Schema, SqlParseError> {
     ctx.finish()
 }
 
+#[cfg(feature = "fs")]
 pub fn parse_sql_file(path: &std::path::Path) -> Result<Schema, SqlParseError> {
     let sql = std::fs::read_to_string(path).map_err(|e| SqlParseError::Io {
         path: path.display().to_string(),
@@ -93,30 +95,46 @@ fn parse_statement(stmt: &Statement, ctx: &mut ParseContext) -> Result<(), SqlPa
         Statement::CreateView(cv) => {
             let (name, schema) = object_name_parts(&cv.name);
             let key = schema_qualified_key(&name, schema.as_deref());
-            ctx.schema.views.insert(key, ViewDef { name, schema, definition: cv.query.to_string() });
+            ctx.schema.views.insert(
+                key,
+                ViewDef {
+                    name,
+                    schema,
+                    definition: cv.query.to_string(),
+                },
+            );
         }
 
         Statement::CreateExtension(ce) => {
             let name = ce.name.value.clone();
             let schema = ce.schema.as_ref().map(|i| i.value.clone());
             let key = schema_qualified_key(&name, schema.as_deref());
-            ctx.schema.extensions.insert(key, ExtensionDef {
-                name,
-                schema,
-                version: ce.version.as_ref().map(|i| i.value.clone()),
-            });
+            ctx.schema.extensions.insert(
+                key,
+                ExtensionDef {
+                    name,
+                    schema,
+                    version: ce.version.as_ref().map(|i| i.value.clone()),
+                },
+            );
         }
 
-        Statement::CreateType { name, representation } => {
+        Statement::CreateType {
+            name,
+            representation,
+        } => {
             let (type_name, schema) = object_name_parts(name);
             let key = schema_qualified_key(&type_name, schema.as_deref());
             match representation {
                 Some(UserDefinedTypeRepresentation::Enum { labels }) => {
-                    ctx.schema.enums.insert(key, EnumDef {
-                        name: type_name,
-                        schema,
-                        values: labels.iter().map(|l| l.value.clone()).collect(),
-                    });
+                    ctx.schema.enums.insert(
+                        key,
+                        EnumDef {
+                            name: type_name,
+                            schema,
+                            values: labels.iter().map(|l| l.value.clone()).collect(),
+                        },
+                    );
                 }
                 other => {
                     return Err(SqlParseError::Unsupported {

@@ -1,9 +1,9 @@
+use darling::{FromDeriveInput, FromField, FromMeta, ast};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{format_ident, quote};
 use std::path::{Path, PathBuf};
 use syn::{LitStr, Type, parse_macro_input};
-use darling::{FromDeriveInput, FromField, ast};
 
 /// Embed `.yaml` migrations from a directory at compile time.
 /// Returns an `EmbeddedMigrations` value carrying both the compiled-in files and the absolute
@@ -13,8 +13,7 @@ pub fn embedded_migrations(input: TokenStream) -> TokenStream {
     let path_lit = parse_macro_input!(input as LitStr);
     let rel_path = path_lit.value();
 
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR not set");
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let dir = Path::new(&manifest_dir).join(&rel_path);
     let embedded_dir = absolute_dir(&dir);
 
@@ -71,6 +70,14 @@ struct IntoTableInput {
     name: Option<String>,
     #[darling(default)]
     schema: Option<String>,
+    #[darling(default)]
+    primary_key: Option<PrimaryKeyArgs>,
+}
+
+#[derive(Clone, FromMeta)]
+struct PrimaryKeyArgs {
+    name: String,
+    columns: Vec<LitStr>,
 }
 
 #[derive(FromField)]
@@ -136,21 +143,30 @@ pub fn derive_into_table(input: TokenStream) -> TokenStream {
         .name
         .unwrap_or_else(|| to_snake_case(&args.ident.to_string()));
 
-    let fields = args.data.take_struct().expect("only named structs supported");
+    let fields = args
+        .data
+        .take_struct()
+        .expect("only named structs supported");
 
     let mut pre_stmts: Vec<proc_macro2::TokenStream> = vec![];
     let mut col_stmts: Vec<proc_macro2::TokenStream> = vec![];
     let mut table_stmts: Vec<proc_macro2::TokenStream> = vec![];
+    let mut column_names: Vec<String> = vec![];
+    let mut field_primary_key_columns: Vec<String> = vec![];
 
     for (i, field) in fields.iter().enumerate() {
         if field.skip {
             continue;
         }
 
-        let col_name = field
-            .name
-            .clone()
-            .unwrap_or_else(|| field.ident.as_ref().map(|id| id.to_string()).unwrap_or_default());
+        let col_name = field.name.clone().unwrap_or_else(|| {
+            field
+                .ident
+                .as_ref()
+                .map(|id| id.to_string())
+                .unwrap_or_default()
+        });
+        column_names.push(col_name.clone());
 
         let field_ty = &field.ty;
         let desc_var = format_ident!("__gaman_col_{}", i);
@@ -185,6 +201,7 @@ pub fn derive_into_table(input: TokenStream) -> TokenStream {
         }
 
         if field.primary_key {
+            field_primary_key_columns.push(col_name.clone());
             closure_stmts.push(quote! { let c = c.primary_key(); });
         }
 
@@ -235,6 +252,36 @@ pub fn derive_into_table(input: TokenStream) -> TokenStream {
                 c
             })
         });
+    }
+
+    if let Some(primary_key) = args.primary_key.clone() {
+        let primary_key_columns: Vec<String> =
+            primary_key.columns.iter().map(LitStr::value).collect();
+        let mut explicit_columns = primary_key_columns.clone();
+        let mut flagged_columns = field_primary_key_columns.clone();
+        explicit_columns.sort();
+        flagged_columns.sort();
+        if !flagged_columns.is_empty() && explicit_columns != flagged_columns {
+            return syn::Error::new_spanned(
+                &args.ident,
+                "table primary_key columns conflict with #[column(primary_key)] fields",
+            )
+            .to_compile_error()
+            .into();
+        }
+        for column in &primary_key_columns {
+            if !column_names.iter().any(|name| name == column) {
+                return syn::Error::new_spanned(
+                    &args.ident,
+                    format!("table primary_key references unknown column '{column}'"),
+                )
+                .to_compile_error()
+                .into();
+            }
+        }
+        let name = primary_key.name;
+        let columns = primary_key.columns;
+        table_stmts.push(quote! { .primary_key(#name, &[#(#columns),*]) });
     }
 
     let schema_stmt = if let Some(ref schema) = args.schema {

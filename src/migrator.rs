@@ -227,11 +227,7 @@ impl Migrator {
     ) -> Result<Schema, MigratorError> {
         let first_graph_position = migrations
             .iter()
-            .filter_map(|migration| {
-                self.ordered_ids
-                    .iter()
-                    .position(|id| id == &migration.id)
-            })
+            .filter_map(|migration| self.ordered_ids.iter().position(|id| id == &migration.id))
             .min();
 
         match first_graph_position {
@@ -771,6 +767,7 @@ impl Migrator {
         let mut replay = self.replay()?;
         replay.normalize();
         scope_tables_for_verify(&mut replay, schema);
+        scope_opaque_objects_for_verify(&mut replay, schema);
         normalize_state_types(&mut replay, &dialect);
 
         let mut live = executor
@@ -779,17 +776,11 @@ impl Migrator {
             .map_err(MigratorError::Executor)?;
         live.normalize();
         scope_tables_for_verify(&mut live, schema);
+        scope_opaque_objects_for_verify(&mut live, schema);
         normalize_state_types(&mut live, &dialect);
 
-        // Strip objects whose catalog representation does not match replay closely enough.
-        live.views.clear();
-        replay.views.clear();
-        live.functions.clear();
-        replay.functions.clear();
-        live.extensions.clear();
-        replay.extensions.clear();
-        live.enums.clear();
-        replay.enums.clear();
+        strip_opaque_source_for_verify(&mut replay);
+        strip_opaque_source_for_verify(&mut live);
 
         Ok(self.diff.diff(&replay, &live, &dialect)?)
     }
@@ -845,6 +836,7 @@ fn op_entity_label(op: &Operation) -> Option<&str> {
         Operation::CreateEnum { enum_def } | Operation::DropEnum { enum_def } => {
             Some(&enum_def.name)
         }
+        Operation::RenameEnumValue { enum_name, .. } => Some(enum_name),
         Operation::AlterEnum { new, .. } => Some(&new.name),
         Operation::Statement { .. } | Operation::Invoke { .. } => None,
     }
@@ -931,6 +923,14 @@ fn compute_deps(
             | Operation::AlterEnum { new: enum_def, .. } => {
                 vec![(EntityKind::Enum, enum_def.qualified_name())]
             }
+            Operation::RenameEnumValue {
+                enum_name, schema, ..
+            } => {
+                vec![(
+                    EntityKind::Enum,
+                    gaman_core::schema::schema_qualified_key(enum_name, schema.as_deref()),
+                )]
+            }
             Operation::CreateFunction { function }
             | Operation::DropFunction { function }
             | Operation::AlterFunction { new: function, .. } => {
@@ -998,6 +998,75 @@ fn scope_tables_for_verify(state: &mut Schema, schema: &str) {
         .collect();
 }
 
+fn scope_opaque_objects_for_verify(state: &mut Schema, schema: &str) {
+    let views = std::mem::take(&mut state.views);
+    state.views = views
+        .into_values()
+        .filter_map(|mut view| match view.schema.as_deref() {
+            None => Some(view),
+            Some(current) if current == schema || (schema == "public" && current == "public") => {
+                view.schema = None;
+                Some(view)
+            }
+            _ => None,
+        })
+        .map(|view| (view.qualified_name(), view))
+        .collect();
+
+    let functions = std::mem::take(&mut state.functions);
+    state.functions = functions
+        .into_values()
+        .filter_map(|mut function| match function.schema.as_deref() {
+            None => Some(function),
+            Some(current) if current == schema || (schema == "public" && current == "public") => {
+                function.schema = None;
+                Some(function)
+            }
+            _ => None,
+        })
+        .map(|function| {
+            let key = function_verify_key(&function);
+            (key, function)
+        })
+        .collect();
+
+    let extensions = std::mem::take(&mut state.extensions);
+    state.extensions = extensions
+        .into_values()
+        .filter_map(|mut extension| match extension.schema.as_deref() {
+            None => Some(extension),
+            Some(current) if current == schema || (schema == "public" && current == "public") => {
+                extension.schema = None;
+                Some(extension)
+            }
+            _ => None,
+        })
+        .map(|extension| (extension.qualified_name(), extension))
+        .collect();
+
+    let enums = std::mem::take(&mut state.enums);
+    state.enums = enums
+        .into_values()
+        .filter_map(|mut enum_def| match enum_def.schema.as_deref() {
+            None => Some(enum_def),
+            Some(current) if current == schema || (schema == "public" && current == "public") => {
+                enum_def.schema = None;
+                Some(enum_def)
+            }
+            _ => None,
+        })
+        .map(|enum_def| (enum_def.qualified_name(), enum_def))
+        .collect();
+}
+
+fn function_verify_key(function: &crate::states::FunctionDef) -> String {
+    if function.arguments.is_empty() {
+        function.qualified_name()
+    } else {
+        format!("{}({})", function.qualified_name(), function.arguments)
+    }
+}
+
 fn scope_table_references(table: &mut crate::states::Table, schema: &str) {
     let prefix = format!("{schema}.");
     for fk in &mut table.foreign_keys {
@@ -1023,6 +1092,21 @@ fn normalize_state_types(state: &mut Schema, dialect: &crate::dialects::Dialect)
     }
 }
 
+fn strip_opaque_source_for_verify(state: &mut Schema) {
+    for function in state.functions.values_mut() {
+        function.body.clear();
+    }
+    for view in state.views.values_mut() {
+        view.definition.clear();
+    }
+    for table in state.tables.values_mut() {
+        for trigger in &mut table.triggers {
+            trigger.body = None;
+            trigger.when = None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -1034,7 +1118,10 @@ mod tests {
     use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
     use crate::executor::{BoxFuture, Introspectable};
     use crate::operations::Operation;
-    use crate::states::{Column, ForeignKey, Schema, Table};
+    use crate::states::{
+        Column, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Schema, Table, TriggerDef,
+        TriggerEvent, TriggerScope, TriggerTiming, Volatility,
+    };
 
     #[derive(Default)]
     struct MockSource {
@@ -1105,6 +1192,7 @@ mod tests {
         Table {
             name: name.to_string(),
             schema: None,
+            primary_key: None,
             columns: cols.iter().map(|c| simple_column(c)).collect(),
             foreign_keys: vec![],
             indexes: vec![],
@@ -1119,6 +1207,32 @@ mod tests {
             s.tables.insert(t.name.clone(), t.clone());
         }
         s
+    }
+
+    fn verify_function(name: &str) -> FunctionDef {
+        FunctionDef {
+            name: name.to_string(),
+            schema: None,
+            arguments: String::new(),
+            returns: "integer".to_string(),
+            language: "sql".to_string(),
+            body: "SELECT 1".to_string(),
+            volatility: Volatility::Volatile,
+            security_definer: false,
+        }
+    }
+
+    fn verify_trigger(name: &str, function_name: &str) -> TriggerDef {
+        TriggerDef {
+            name: Some(name.to_string()),
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Insert],
+            scope: TriggerScope::Row,
+            function_name: Some(function_name.to_string()),
+            when: None,
+            body: None,
+            language: None,
+        }
     }
 
     fn migration_with_ops(id: &str, deps: &[&str], ops: Vec<Operation>) -> Migration {
@@ -1331,7 +1445,10 @@ mod tests {
         )]);
         let mut ex = FailingExecutor::new("FAIL");
 
-        let err = m.migrate_with(&mut ex, None, None, false).await.unwrap_err();
+        let err = m
+            .migrate_with(&mut ex, None, None, false)
+            .await
+            .unwrap_err();
 
         assert!(err.to_string().contains("forced failure"));
         assert_eq!(ex.lock_count, 0, "lock must be released after failure");
@@ -1350,10 +1467,16 @@ mod tests {
         let mut ex = FailingExecutor::new("never");
         ex.applied = vec!["0009_missing".to_string()];
 
-        let err = m.migrate_with(&mut ex, None, None, false).await.unwrap_err();
+        let err = m
+            .migrate_with(&mut ex, None, None, false)
+            .await
+            .unwrap_err();
 
         assert!(err.to_string().contains("not present locally"));
-        assert_eq!(ex.lock_count, 0, "lock must be released after validation failure");
+        assert_eq!(
+            ex.lock_count, 0,
+            "lock must be released after validation failure"
+        );
     }
 
     #[tokio::test]
@@ -1370,11 +1493,17 @@ mod tests {
         let m = migrator_from(vec![migration]);
         let mut ex = FailingExecutor::new("FAIL");
 
-        let err = m.migrate_with(&mut ex, None, None, false).await.unwrap_err();
+        let err = m
+            .migrate_with(&mut ex, None, None, false)
+            .await
+            .unwrap_err();
 
         assert!(err.to_string().contains("forced failure"));
         assert_eq!(ex.lock_count, 0, "lock must be released after failure");
-        assert_eq!(ex.rollback_count, 0, "non-atomic failure should not roll back");
+        assert_eq!(
+            ex.rollback_count, 0,
+            "non-atomic failure should not roll back"
+        );
     }
     // we build the Migrator manually to keep a reference to the inner saved vec.
     fn migrator_with_source(migrations: Vec<Migration>) -> (Migrator, Arc<MockSourceShared>) {
@@ -1715,9 +1844,7 @@ mod tests {
                 Operation::CreateTable {
                     table: simple_table("users", &["id"]),
                 },
-                Operation::CreateTable {
-                    table: posts,
-                },
+                Operation::CreateTable { table: posts },
             ],
         )]);
 
@@ -1742,13 +1869,208 @@ mod tests {
         assert!(drift.is_empty(), "expected no drift, got: {drift:?}");
     }
 
-    /// Validates that passing a current state with two primary key columns returns a Config error.
+    #[tokio::test]
+    async fn verify_ignores_function_body_only_drift() {
+        let function = verify_function("compute");
+        let migrator = migrator_from(vec![migration_with_ops(
+            "0001_create_function",
+            &[],
+            vec![Operation::CreateFunction {
+                function: function.clone(),
+            }],
+        )]);
+
+        let mut live = Schema::default();
+        let mut live_function = function;
+        live_function.body = "SELECT 2".to_string();
+        live.functions
+            .insert(live_function.name.clone(), live_function);
+        let mut executor = InspectingExecutor { live };
+
+        let drift = migrator
+            .verify_with(&mut executor, "public")
+            .await
+            .expect("verify should succeed");
+
+        assert!(drift.is_empty(), "expected no drift, got: {drift:?}");
+    }
+
+    #[tokio::test]
+    async fn verify_detects_function_signature_drift() {
+        let function = verify_function("compute");
+        let migrator = migrator_from(vec![migration_with_ops(
+            "0001_create_function",
+            &[],
+            vec![Operation::CreateFunction {
+                function: function.clone(),
+            }],
+        )]);
+
+        let mut live = Schema::default();
+        let mut live_function = function;
+        live_function.returns = "text".to_string();
+        live.functions
+            .insert(live_function.name.clone(), live_function);
+        let mut executor = InspectingExecutor { live };
+
+        let drift = migrator
+            .verify_with(&mut executor, "public")
+            .await
+            .expect("verify should succeed");
+
+        assert!(
+            matches!(drift.as_slice(), [Operation::AlterFunction { .. }]),
+            "expected function signature drift, got: {drift:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_ignores_trigger_body_only_drift() {
+        let mut table = simple_table("events", &["id"]);
+        let mut trigger = verify_trigger("events_audit_trg", "audit_fn");
+        trigger.body = Some("SELECT 1".to_string());
+        table.triggers.push(trigger);
+        let migrator = migrator_from(vec![migration_with_ops(
+            "0001_create_table",
+            &[],
+            vec![Operation::CreateTable {
+                table: table.clone(),
+            }],
+        )]);
+
+        let mut live_table = table;
+        live_table.triggers[0].body = Some("SELECT 2".to_string());
+        let live = state_with_tables(&[live_table]);
+        let mut executor = InspectingExecutor { live };
+
+        let drift = migrator
+            .verify_with(&mut executor, "public")
+            .await
+            .expect("verify should succeed");
+
+        assert!(drift.is_empty(), "expected no drift, got: {drift:?}");
+    }
+
+    #[tokio::test]
+    async fn verify_detects_trigger_wiring_drift() {
+        let mut table = simple_table("events", &["id"]);
+        table
+            .triggers
+            .push(verify_trigger("events_audit_trg", "audit_fn"));
+        let migrator = migrator_from(vec![migration_with_ops(
+            "0001_create_table",
+            &[],
+            vec![Operation::CreateTable {
+                table: table.clone(),
+            }],
+        )]);
+
+        let mut live_table = table;
+        live_table.triggers[0].function_name = Some("other_fn".to_string());
+        let live = state_with_tables(&[live_table]);
+        let mut executor = InspectingExecutor { live };
+
+        let drift = migrator
+            .verify_with(&mut executor, "public")
+            .await
+            .expect("verify should succeed");
+
+        assert!(
+            matches!(drift.as_slice(), [Operation::AlterTrigger { .. }]),
+            "expected trigger wiring drift, got: {drift:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_detects_enum_label_drift() {
+        let enum_def = EnumDef {
+            name: "status".to_string(),
+            schema: None,
+            values: vec!["pending".to_string(), "done".to_string()],
+        };
+        let migrator = migrator_from(vec![migration_with_ops(
+            "0001_create_enum",
+            &[],
+            vec![Operation::CreateEnum {
+                enum_def: enum_def.clone(),
+            }],
+        )]);
+
+        let mut live = Schema::default();
+        live.enums.insert(
+            enum_def.name.clone(),
+            EnumDef {
+                values: vec!["pending".to_string(), "failed".to_string()],
+                ..enum_def
+            },
+        );
+        let mut executor = InspectingExecutor { live };
+
+        let drift = migrator
+            .verify_with(&mut executor, "public")
+            .await
+            .expect("verify should succeed");
+
+        assert!(
+            drift
+                .iter()
+                .any(|op| matches!(op, Operation::DropEnum { .. }))
+                && drift
+                    .iter()
+                    .any(|op| matches!(op, Operation::CreateEnum { .. })),
+            "expected enum label drift, got: {drift:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_detects_extension_version_drift() {
+        let extension = ExtensionDef {
+            name: "pgcrypto".to_string(),
+            schema: None,
+            version: Some("1.0".to_string()),
+        };
+        let migrator = migrator_from(vec![migration_with_ops(
+            "0001_create_extension",
+            &[],
+            vec![Operation::CreateExtension {
+                extension: extension.clone(),
+            }],
+        )]);
+
+        let mut live = Schema::default();
+        live.extensions.insert(
+            extension.name.clone(),
+            ExtensionDef {
+                version: Some("1.1".to_string()),
+                ..extension
+            },
+        );
+        let mut executor = InspectingExecutor { live };
+
+        let drift = migrator
+            .verify_with(&mut executor, "public")
+            .await
+            .expect("verify should succeed");
+
+        assert!(
+            drift
+                .iter()
+                .any(|op| matches!(op, Operation::DropExtension { .. }))
+                && drift
+                    .iter()
+                    .any(|op| matches!(op, Operation::CreateExtension { .. })),
+            "expected extension version drift, got: {drift:?}"
+        );
+    }
+
+    /// Validates that composite primary key columns generate a canonical table primary key.
     #[test]
-    fn make_migrations_rejects_multiple_pk_columns() {
+    fn make_migrations_accepts_composite_pk_columns() {
         let m = migrator_from(vec![]);
         let table = Table {
             name: "users".to_string(),
             schema: None,
+            primary_key: None,
             columns: vec![
                 Column {
                     name: "id".to_string(),
@@ -1774,10 +2096,16 @@ mod tests {
         };
         let mut current = Schema::default();
         current.tables.insert("users".to_string(), table);
-        let err = m
-            .make_migrations(Some("bad".into()), current, false, &[])
-            .unwrap_err();
-        assert!(matches!(err, MigratorError::Config(_)));
+        let migration = m
+            .make_migrations(Some("composite_pk".into()), current, true, &[])
+            .unwrap()
+            .expect("migration");
+        let Operation::CreateTable { table } = &migration.operations[0] else {
+            panic!("expected create table");
+        };
+        let pk = table.primary_key.as_ref().expect("primary key");
+        assert_eq!(pk.name, "users_pkey");
+        assert_eq!(pk.columns, ["id", "alt_id"]);
     }
 
     /// Validates that save() is called exactly once when dry_run is false.
@@ -1828,6 +2156,7 @@ mod tests {
         let table = Table {
             name: "posts".into(),
             schema: None,
+            primary_key: None,
             columns: vec![simple_column("id")],
             foreign_keys: vec![ForeignKey {
                 name: "posts_user_id_fk".into(),
@@ -1858,6 +2187,7 @@ mod tests {
         let posts = Table {
             name: "posts".into(),
             schema: None,
+            primary_key: None,
             columns: vec![simple_column("id")],
             foreign_keys: vec![ForeignKey {
                 name: "posts_user_id_fk".into(),
@@ -1949,6 +2279,7 @@ mod tests {
         let table = Table {
             name: "users".into(),
             schema: None,
+            primary_key: None,
             columns: vec![
                 Column {
                     name: "id".into(),
@@ -2032,6 +2363,7 @@ mod tests {
         Table {
             name: name.to_string(),
             schema: None,
+            primary_key: None,
             columns: vec![simple_column("id")],
             foreign_keys: vec![ForeignKey {
                 name: format!("{name}_{fk_to}_fkey"),
@@ -2176,6 +2508,7 @@ mod tests {
             Table {
                 name: "subscriptions".to_string(),
                 schema: None,
+                primary_key: None,
                 columns: vec![simple_column("id")],
                 foreign_keys: vec![
                     ForeignKey {

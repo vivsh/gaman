@@ -152,6 +152,10 @@ fn quote_ident(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 
+fn quote_literal(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
 fn quote_table_name(name: &str) -> String {
     if let Some((schema, table)) = name.split_once('.') {
         format!("{}.{}", quote_ident(schema), quote_ident(table))
@@ -193,6 +197,57 @@ fn quoted_columns(columns: &[String]) -> String {
         .map(|column| quote_ident(column))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn values_are_subsequence(old: &[String], new: &[String]) -> bool {
+    let mut new_iter = new.iter();
+    old.iter()
+        .all(|old_value| new_iter.by_ref().any(|new_value| new_value == old_value))
+}
+
+fn add_enum_value_statements(old: &[String], new: &[String], type_name: &str) -> Vec<String> {
+    let mut current = old.to_vec();
+    let mut statements = Vec::new();
+
+    for (target_index, value) in new.iter().enumerate() {
+        if current.contains(value) {
+            continue;
+        }
+
+        let previous = new[..target_index]
+            .iter()
+            .rev()
+            .find(|candidate| current.contains(candidate));
+        let clause = if let Some(previous) = previous {
+            let current_index = current
+                .iter()
+                .position(|candidate| candidate == previous)
+                .expect("previous enum value exists");
+            current.insert(current_index + 1, value.clone());
+            format!(" AFTER {}", quote_literal(previous))
+        } else if let Some(next) = new[target_index + 1..]
+            .iter()
+            .find(|candidate| current.contains(candidate))
+        {
+            let current_index = current
+                .iter()
+                .position(|candidate| candidate == next)
+                .expect("next enum value exists");
+            current.insert(current_index, value.clone());
+            format!(" BEFORE {}", quote_literal(next))
+        } else {
+            current.push(value.clone());
+            String::new()
+        };
+
+        statements.push(format!(
+            "ALTER TYPE {type_name} ADD VALUE {}{}",
+            quote_literal(value),
+            clause,
+        ));
+    }
+
+    statements
 }
 
 fn foreign_key_clause(foreign_key: &ForeignKey) -> String {
@@ -237,7 +292,15 @@ fn drop_index_sql(table_name: &str, index_name: &str, concurrent: bool) -> Strin
 pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
     let stmts = match op {
         Operation::CreateTable { table } => {
-            let mut parts: Vec<String> = table.columns.iter().map(col_def).collect();
+            let render_inline_pk = table.primary_key.is_none();
+            let mut parts: Vec<String> = table
+                .columns
+                .iter()
+                .map(|column| col_def_with_primary_key(column, render_inline_pk))
+                .collect();
+            if let Some(pk) = &table.primary_key {
+                parts.push(primary_key_def(&pk.name, &pk.columns));
+            }
             for fk in &table.foreign_keys {
                 parts.push(foreign_key_clause(fk));
             }
@@ -447,11 +510,7 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             vec![format!("DROP EXTENSION {}", quote_ident(&extension.name))]
         }
         Operation::CreateEnum { enum_def } => {
-            let values: Vec<String> = enum_def
-                .values
-                .iter()
-                .map(|v| format!("'{}'", v.replace('\'', "''")))
-                .collect();
+            let values: Vec<String> = enum_def.values.iter().map(|v| quote_literal(v)).collect();
             let name = qualified_name(&enum_def.name, enum_def.schema.as_deref());
             vec![format!(
                 "CREATE TYPE {name} AS ENUM ({})",
@@ -462,15 +521,61 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             let name = qualified_name(&enum_def.name, enum_def.schema.as_deref());
             vec![format!("DROP TYPE {name}")]
         }
+        Operation::RenameEnumValue {
+            enum_name,
+            schema,
+            old_value,
+            new_value,
+        } => {
+            let name = qualified_name(enum_name, schema.as_deref());
+            vec![format!(
+                "ALTER TYPE {name} RENAME VALUE {} TO {}",
+                quote_literal(old_value),
+                quote_literal(new_value),
+            )]
+        }
         Operation::AlterEnum { old, new } => {
-            let name = qualified_name(&new.name, new.schema.as_deref());
-            let old_set: std::collections::HashSet<&str> =
-                old.values.iter().map(|v| v.as_str()).collect();
-            new.values
-                .iter()
-                .filter(|v| !old_set.contains(v.as_str()))
-                .map(|v| format!("ALTER TYPE {name} ADD VALUE '{}'", v.replace('\'', "''")))
-                .collect()
+            if old.name != new.name || old.schema != new.schema {
+                return Err(super::DialectError::Unsupported(
+                    "alter_enum".into(),
+                    "PostgreSQL enum type renames are not modeled; use raw SQL".into(),
+                ));
+            }
+            if old.values.len() <= new.values.len()
+                && values_are_subsequence(&old.values, &new.values)
+            {
+                let name = qualified_name(&new.name, new.schema.as_deref());
+                add_enum_value_statements(&old.values, &new.values, &name)
+            } else if old.values.len() == new.values.len() {
+                let removed: Vec<&String> = old
+                    .values
+                    .iter()
+                    .filter(|v| !new.values.contains(v))
+                    .collect();
+                let added: Vec<&String> = new
+                    .values
+                    .iter()
+                    .filter(|v| !old.values.contains(v))
+                    .collect();
+                if removed.len() == 1 && added.len() == 1 {
+                    let name = qualified_name(&new.name, new.schema.as_deref());
+                    vec![format!(
+                        "ALTER TYPE {name} RENAME VALUE {} TO {}",
+                        quote_literal(removed[0]),
+                        quote_literal(added[0]),
+                    )]
+                } else {
+                    return Err(super::DialectError::Unsupported(
+                        "alter_enum".into(),
+                        "PostgreSQL enum alterations support append-only additions or one-for-one value renames".into(),
+                    ));
+                }
+            } else {
+                return Err(super::DialectError::Unsupported(
+                    "alter_enum".into(),
+                    "PostgreSQL cannot remove enum values; use a rename decision or raw SQL".into(),
+                ));
+            }
         }
     };
     Ok(stmts)
@@ -511,12 +616,16 @@ pub fn create_tracking_table_sql() -> Vec<String> {
 }
 
 pub fn col_def(c: &Column) -> String {
+    col_def_with_primary_key(c, true)
+}
+
+fn col_def_with_primary_key(c: &Column, render_primary_key: bool) -> String {
     let mut s = format!("{} {}", quote_ident(&c.name), c.col_type);
     if let Some(ref expr) = c.generated {
         s.push_str(&format!(" GENERATED ALWAYS AS ({expr}) STORED"));
         return s;
     }
-    if c.primary_key {
+    if render_primary_key && c.primary_key {
         s.push_str(" PRIMARY KEY");
     } else if !c.nullable {
         s.push_str(" NOT NULL");
@@ -525,6 +634,15 @@ pub fn col_def(c: &Column) -> String {
         s.push_str(&format!(" DEFAULT {default}"));
     }
     s
+}
+
+fn primary_key_def(name: &str, columns: &[String]) -> String {
+    let cols: Vec<String> = columns.iter().map(|c| quote_ident(c)).collect();
+    format!(
+        "CONSTRAINT {} PRIMARY KEY ({})",
+        quote_ident(name),
+        cols.join(", ")
+    )
 }
 
 fn alter_column_statements(
@@ -687,7 +805,7 @@ EXECUTE FUNCTION {}()",
 mod tests {
     use super::*;
     use crate::operations::Operation;
-    use crate::states::{Column, ForeignKey, Index, Table};
+    use crate::states::{Column, EnumDef, ForeignKey, Index, PrimaryKey, Table};
 
     fn col(name: &str, t: &str) -> Column {
         Column {
@@ -715,11 +833,20 @@ mod tests {
         Table {
             name: name.to_string(),
             schema: None,
+            primary_key: None,
             columns: vec![],
             foreign_keys: vec![],
             indexes: vec![],
             constraints: vec![],
             triggers: vec![],
+        }
+    }
+
+    fn enum_def(values: &[&str]) -> EnumDef {
+        EnumDef {
+            name: "status".to_string(),
+            schema: None,
+            values: values.iter().map(|value| value.to_string()).collect(),
         }
     }
 
@@ -752,6 +879,7 @@ mod tests {
         let table = Table {
             name: "users".to_string(),
             schema: None,
+            primary_key: None,
             columns: vec![col("id", "serial"), col("name", "text")],
             foreign_keys: vec![],
             indexes: vec![],
@@ -770,10 +898,36 @@ mod tests {
     }
 
     #[test]
+    fn create_table_composite_primary_key() {
+        let table = Table {
+            name: "order_lines".to_string(),
+            schema: None,
+            primary_key: Some(PrimaryKey {
+                name: "order_lines_identity".to_string(),
+                columns: vec!["tenant_id".to_string(), "order_id".to_string()],
+            }),
+            columns: vec![col("order_id", "bigint"), col("tenant_id", "bigint")],
+            foreign_keys: vec![],
+            indexes: vec![],
+            constraints: vec![],
+            triggers: vec![],
+        };
+
+        let sql = operation_to_sql(&Operation::CreateTable { table }).unwrap();
+
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0].contains(
+            "CONSTRAINT \"order_lines_identity\" PRIMARY KEY (\"tenant_id\", \"order_id\")"
+        ));
+        assert!(!sql[0].contains("\"tenant_id\" bigint PRIMARY KEY"));
+    }
+
+    #[test]
     fn create_table_reserved_word_name() {
         let table = Table {
             name: "order".to_string(),
             schema: None,
+            primary_key: None,
             columns: vec![col("id", "serial")],
             foreign_keys: vec![],
             indexes: vec![],
@@ -1046,7 +1200,10 @@ mod tests {
             concurrent: true,
         })
         .unwrap();
-        assert_eq!(sql, vec!["DROP INDEX CONCURRENTLY \"app\".\"users_email_idx\""]);
+        assert_eq!(
+            sql,
+            vec!["DROP INDEX CONCURRENTLY \"app\".\"users_email_idx\""]
+        );
     }
 
     #[test]
@@ -1068,6 +1225,60 @@ mod tests {
             "got: {}",
             sqls[1]
         );
+    }
+
+    #[test]
+    fn alter_enum_append_only_adds_values() {
+        let sql = operation_to_sql(&Operation::AlterEnum {
+            old: enum_def(&["draft", "published"]),
+            new: enum_def(&["draft", "published", "archived"]),
+        })
+        .unwrap();
+        assert_eq!(
+            sql,
+            vec!["ALTER TYPE \"status\" ADD VALUE 'archived' AFTER 'published'"]
+        );
+    }
+
+    #[test]
+    fn alter_enum_inserted_value_uses_before_or_after() {
+        let sql = operation_to_sql(&Operation::AlterEnum {
+            old: enum_def(&["draft", "published"]),
+            new: enum_def(&["queued", "draft", "review", "published"]),
+        })
+        .unwrap();
+        assert_eq!(
+            sql,
+            vec![
+                "ALTER TYPE \"status\" ADD VALUE 'queued' BEFORE 'draft'",
+                "ALTER TYPE \"status\" ADD VALUE 'review' AFTER 'draft'",
+            ]
+        );
+    }
+
+    #[test]
+    fn rename_enum_value_sql() {
+        let sql = operation_to_sql(&Operation::RenameEnumValue {
+            enum_name: "status".to_string(),
+            schema: Some("app".to_string()),
+            old_value: "live".to_string(),
+            new_value: "published".to_string(),
+        })
+        .unwrap();
+        assert_eq!(
+            sql,
+            vec!["ALTER TYPE \"app\".\"status\" RENAME VALUE 'live' TO 'published'"]
+        );
+    }
+
+    #[test]
+    fn alter_enum_value_removal_is_unsupported() {
+        let err = operation_to_sql(&Operation::AlterEnum {
+            old: enum_def(&["draft", "published", "archived"]),
+            new: enum_def(&["draft", "published"]),
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("cannot remove enum values"));
     }
 
     fn basic_function(name: &str) -> crate::states::FunctionDef {
@@ -1153,7 +1364,10 @@ mod tests {
         assert!(create_sql[0].starts_with("CREATE OR REPLACE FUNCTION \"app\".\"process\"("));
 
         let drop_sql = operation_to_sql(&Operation::DropFunction { function: f }).unwrap();
-        assert_eq!(drop_sql, vec!["DROP FUNCTION \"app\".\"process\"(user_id integer)"]);
+        assert_eq!(
+            drop_sql,
+            vec!["DROP FUNCTION \"app\".\"process\"(user_id integer)"]
+        );
     }
 
     /// AlterFunction with same arguments produces a single CREATE OR REPLACE.

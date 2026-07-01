@@ -1,59 +1,132 @@
+#[cfg(all(not(feature = "native"), not(feature = "offline")))]
+compile_error!("enable either the 'offline' feature or a native feature set");
+
+#[cfg(all(feature = "offline", not(feature = "native")))]
+pub use gaman_core::*;
+
+#[cfg(all(feature = "offline", not(feature = "native")))]
+pub mod core {
+    pub use gaman_core::dialects::{Dialect, DialectError};
+    pub use gaman_core::disambiguator::{
+        Answer, Clarification, ClarificationKind, Decision, PromptEngine, Severity,
+    };
+    pub use gaman_core::graphs::{GraphError, MigrationGraph, MigrationNode};
+    pub use gaman_core::{EmbeddedMigrations, Migration, OfflineError, OfflinePlanner};
+}
+
+#[cfg(all(feature = "macros", not(feature = "native")))]
+pub use gaman_macros::{IntoTable, embedded_migrations};
+
+#[cfg(feature = "native")]
 pub(crate) mod adapters;
-pub mod sql;
+#[cfg(feature = "cli")]
 pub mod cli;
-pub(crate) mod column_type;
-pub(crate) mod engine;
+#[cfg(feature = "native")]
 pub(crate) mod conf;
-pub(crate) mod dialects;
-pub(crate) mod environment;
-pub(crate) mod diff;
+#[cfg(feature = "native")]
 #[allow(dead_code)]
 pub(crate) mod diff_legacy;
-pub(crate) mod disambiguator;
+#[cfg(feature = "cli")]
+pub(crate) mod engine;
+#[cfg(feature = "db")]
+pub(crate) mod environment;
+#[cfg(feature = "db")]
 pub(crate) mod executor;
-pub(crate) mod graphs;
+#[cfg(feature = "db")]
 pub(crate) mod migrator;
-pub(crate) mod migrations;
-pub(crate) mod operations;
+#[cfg(feature = "cli")]
 pub(crate) mod prompter;
-pub(crate) mod states;
+
+#[cfg(feature = "native")]
+pub(crate) mod dialects {
+    pub use gaman_core::dialects::*;
+}
+
+#[cfg(feature = "native")]
+pub(crate) mod diff {
+    pub use gaman_core::diff::*;
+}
+
+#[cfg(feature = "native")]
+pub(crate) mod disambiguator {
+    pub use gaman_core::disambiguator::*;
+}
+
+#[cfg(feature = "native")]
+pub(crate) mod graphs {
+    pub use gaman_core::graphs::*;
+}
+
+#[cfg(feature = "native")]
+pub(crate) mod migrations {
+    pub use gaman_core::migrations::*;
+}
+
+#[cfg(feature = "native")]
+pub(crate) mod operations {
+    pub use gaman_core::operations::*;
+}
+
+#[cfg(feature = "native")]
+pub mod sql {
+    pub use gaman_core::sql::*;
+}
+
+#[cfg(feature = "native")]
+pub(crate) mod states {
+    pub use gaman_core::states::*;
+
+    pub mod types {
+        pub use gaman_core::states::types::*;
+    }
+}
 
 // Everyday API.
-pub use gaman_macros::{IntoTable, embedded_migrations};
-pub use engine::{MigrationEngine, EngineError, EmbeddedMigrations};
+#[cfg(feature = "native")]
 pub use conf::{Config, TlsMode};
-pub use migrations::Migration;
+#[cfg(feature = "cli")]
+pub use engine::{EmbeddedMigrations, EngineError, MigrationEngine};
+#[cfg(feature = "native")]
+pub use gaman_core::Migration;
+#[cfg(all(feature = "native", feature = "macros"))]
+pub use gaman_macros::{IntoTable, embedded_migrations};
 
 /// Schema types and builders.
+#[cfg(feature = "native")]
 pub mod schema {
-    pub use crate::states::{
-        Schema, Table, Column, FunctionDef, TriggerDef, ViewDef, ExtensionDef, EnumDef,
-        Index, Constraint, ForeignKey, ColumnRef,
-        Volatility, TriggerTiming, TriggerEvent, TriggerScope,
-        SchemaBuilder, TableBuilder, ColumnBuilder, IntoTable, IntoSchema,
-        ReplayError, SchemaLoadError,
-        is_volatile, schema_qualified_key,
+    pub use gaman_core::column_type::{ColumnDesc, ColumnType};
+    pub use gaman_core::operations::Operation;
+    pub use gaman_core::sql::SqlParseError;
+    pub use gaman_core::states::{
+        Column, ColumnBuilder, ColumnRef, Constraint, EnumDef, ExtensionDef, ForeignKey,
+        FunctionDef, Index, IntoSchema, IntoTable, PrimaryKey, ReplayError, Schema, SchemaBuilder,
+        SchemaLoadError, Table, TableBuilder, TriggerDef, TriggerEvent, TriggerScope,
+        TriggerTiming, ViewDef, Volatility, is_volatile, schema_qualified_key,
     };
-    pub use crate::column_type::{ColumnDesc, ColumnType};
-    pub use crate::operations::Operation;
-    pub use crate::sql::SqlParseError;
 }
 
 /// Lower-level APIs for custom executors, sources, and integration work.
+#[cfg(feature = "native")]
 pub mod core {
-    pub use crate::migrator::{Migrator, MigratorError};
-    pub use crate::executor::{
-        Executor, ExecutorError, BoxFuture, Invoker, InvokerError, Introspectable,
-        SubprocessInvoker,
-    };
+    pub use crate::adapters::{AdapterError, MigrationSource, VecAdapter, YamlAdapter};
+    #[cfg(feature = "db")]
+    pub use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
     #[cfg(feature = "postgres")]
     pub use crate::executor::PostgresExecutor;
     #[cfg(feature = "sqlite")]
     pub use crate::executor::SqliteExecutor;
-    pub use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
-    pub use crate::adapters::{MigrationSource, AdapterError, YamlAdapter, VecAdapter};
-    pub use crate::graphs::{MigrationGraph, MigrationNode, GraphError};
-    pub use crate::dialects::{Dialect, DialectError};
-    pub use crate::disambiguator::{Answer, Clarification, ClarificationKind, Decision, PromptEngine, Severity};
+    #[cfg(feature = "db")]
+    pub use crate::executor::{
+        BoxFuture, Executor, ExecutorError, Introspectable, Invoker, InvokerError,
+        SubprocessInvoker,
+    };
+    #[cfg(feature = "db")]
+    pub use crate::migrator::{Migrator, MigratorError};
+    #[cfg(feature = "cli")]
     pub use crate::prompter::CliPromptEngine;
+    pub use gaman_core::dialects::{Dialect, DialectError};
+    pub use gaman_core::disambiguator::{
+        Answer, Clarification, ClarificationKind, Decision, PromptEngine, Severity,
+    };
+    pub use gaman_core::graphs::{GraphError, MigrationGraph, MigrationNode};
 }

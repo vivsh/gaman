@@ -26,6 +26,14 @@ pub struct Migration {
 }
 
 impl Migration {
+    pub fn from_yaml_str(s: &str) -> Result<Self, serde_yaml::Error> {
+        serde_yaml::from_str(s)
+    }
+
+    pub fn to_yaml_string(&self) -> Result<String, serde_yaml::Error> {
+        serde_yaml::to_string(self)
+    }
+
     /// Returns the set of top-level entities touched by this migration.
     /// Includes FK target tables so callers can detect cross-namespace references.
     pub fn get_entities(&self) -> HashSet<(EntityKind, String)> {
@@ -38,8 +46,15 @@ impl Migration {
                         out.insert((EntityKind::Table, fk.to_table.clone()));
                     }
                 }
-                Operation::AddForeignKey { table_name, foreign_key }
-                | Operation::DropForeignKey { table_name, foreign_key, .. } => {
+                Operation::AddForeignKey {
+                    table_name,
+                    foreign_key,
+                }
+                | Operation::DropForeignKey {
+                    table_name,
+                    foreign_key,
+                    ..
+                } => {
                     out.insert((EntityKind::Table, table_name.clone()));
                     out.insert((EntityKind::Table, foreign_key.to_table.clone()));
                 }
@@ -47,6 +62,14 @@ impl Migration {
                 | Operation::DropEnum { enum_def }
                 | Operation::AlterEnum { new: enum_def, .. } => {
                     out.insert((EntityKind::Enum, enum_def.qualified_name()));
+                }
+                Operation::RenameEnumValue {
+                    enum_name, schema, ..
+                } => {
+                    out.insert((
+                        EntityKind::Enum,
+                        crate::states::schema_qualified_key(enum_name, schema.as_deref()),
+                    ));
                 }
                 Operation::CreateFunction { function }
                 | Operation::DropFunction { function }

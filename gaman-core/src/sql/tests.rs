@@ -1,7 +1,10 @@
-use super::{parse_sql, SqlParseError};
+use super::{SqlParseError, parse_sql};
 use crate::states::{Constraint, Schema, Volatility};
+#[cfg(feature = "fs")]
 use std::io::Write;
+#[cfg(feature = "fs")]
 use tempfile::NamedTempFile;
+#[cfg(feature = "fs")]
 use tempfile::TempDir;
 
 // Helpers for SQL parser tests.
@@ -69,7 +72,28 @@ fn test_table_level_primary_key() {
         PRIMARY KEY (id)
     );";
     let schema = parse_sql(sql).unwrap();
+    let table = table(&schema, "orders");
+    let pk = table.primary_key.as_ref().expect("primary key");
+    assert_eq!(pk.name, "orders_pkey");
+    assert_eq!(pk.columns, ["id"]);
     assert!(col(&schema, "orders", "id").primary_key);
+}
+
+#[test]
+fn test_named_composite_primary_key_preserves_order() {
+    let sql = "CREATE TABLE order_lines (
+        order_id bigint,
+        tenant_id bigint,
+        CONSTRAINT order_lines_identity PRIMARY KEY (tenant_id, order_id)
+    );";
+    let schema = parse_sql(sql).unwrap();
+    let table = table(&schema, "order_lines");
+    let pk = table.primary_key.as_ref().expect("primary key");
+    assert_eq!(pk.name, "order_lines_identity");
+    assert_eq!(pk.columns, ["tenant_id", "order_id"]);
+    assert_eq!(table.primary_key_column_names(), ["tenant_id", "order_id"]);
+    assert!(col(&schema, "order_lines", "tenant_id").primary_key);
+    assert!(col(&schema, "order_lines", "order_id").primary_key);
 }
 
 /// Parses an inline column-level FOREIGN KEY reference.
@@ -353,6 +377,7 @@ fn test_duplicate_table_is_error() {
 
 /// `Schema::load()` dispatches to the SQL parser for `.sql` files.
 #[test]
+#[cfg(feature = "fs")]
 fn test_schema_load_sql_file() {
     let mut f = NamedTempFile::with_suffix(".sql").unwrap();
     write!(
@@ -366,6 +391,7 @@ fn test_schema_load_sql_file() {
 
 /// `Schema::from_dir()` picks up both `.yaml` and `.sql` files in a directory.
 #[test]
+#[cfg(feature = "fs")]
 fn test_from_dir_mixed_yaml_and_sql() {
     let dir = TempDir::new().unwrap();
 
@@ -396,6 +422,7 @@ fn test_from_dir_mixed_yaml_and_sql() {
 /// `Schema::from_dir()` returns an error when the same table name appears in
 /// two different files.
 #[test]
+#[cfg(feature = "fs")]
 fn test_from_dir_duplicate_table_error() {
     let dir = TempDir::new().unwrap();
 
@@ -404,11 +431,7 @@ fn test_from_dir_duplicate_table_error() {
         "CREATE TABLE things (id bigserial PRIMARY KEY);",
     )
     .unwrap();
-    std::fs::write(
-        dir.path().join("b.sql"),
-        "CREATE TABLE things (name text);",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("b.sql"), "CREATE TABLE things (name text);").unwrap();
 
     let err = Schema::from_dir(dir.path()).unwrap_err();
     // Either SqlParseError::DuplicateTable (same file) or SchemaLoadError::Merge (cross-file)
@@ -452,5 +475,8 @@ fn test_function_argument_modes() {
     let schema = parse_sql(sql).unwrap();
     let f = &schema.functions["compute"];
     assert!(f.arguments.contains("IN"), "expected IN mode in arguments");
-    assert!(f.arguments.contains("OUT"), "expected OUT mode in arguments");
+    assert!(
+        f.arguments.contains("OUT"),
+        "expected OUT mode in arguments"
+    );
 }

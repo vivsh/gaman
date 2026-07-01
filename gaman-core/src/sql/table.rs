@@ -2,7 +2,7 @@ use sqlparser::ast::{ColumnOption, CreateTable, TableConstraint};
 
 use super::error::SqlParseError;
 use super::util::{data_type_to_str, index_col_name, object_name_parts};
-use crate::states::{Column, Constraint, ForeignKey, Table, schema_qualified_key};
+use crate::states::{Column, Constraint, ForeignKey, PrimaryKey, Table, schema_qualified_key};
 
 pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), SqlParseError> {
     let (name, schema) = object_name_parts(&ct.name);
@@ -11,6 +11,7 @@ pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), Sq
     let mut table = Table {
         name: name.clone(),
         schema,
+        primary_key: None,
         columns: Vec::new(),
         foreign_keys: Vec::new(),
         indexes: Vec::new(),
@@ -98,6 +99,15 @@ fn apply_table_constraint(tc: &TableConstraint, table_name: &str, table: &mut Ta
     match tc {
         TableConstraint::PrimaryKey(pk) => {
             let pk_cols: Vec<String> = pk.columns.iter().map(|ic| index_col_name(ic)).collect();
+            let pk_name = pk
+                .name
+                .as_ref()
+                .map(|name| name.value.clone())
+                .unwrap_or_else(|| Table::pk_constraint_name_for(table_name));
+            table.primary_key = Some(PrimaryKey {
+                name: pk_name,
+                columns: pk_cols.clone(),
+            });
             for col in table.columns.iter_mut() {
                 if pk_cols.contains(&col.name) {
                     col.primary_key = true;

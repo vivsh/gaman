@@ -15,7 +15,10 @@ pub trait ColumnType {
 
 impl<T: ColumnType> ColumnType for Option<T> {
     fn column_desc(dialect: &Dialect) -> ColumnDesc {
-        ColumnDesc { nullable: true, ..T::column_desc(dialect) }
+        ColumnDesc {
+            nullable: true,
+            ..T::column_desc(dialect)
+        }
     }
 }
 

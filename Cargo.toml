@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "gaman-macros"]
+members = [".", "gaman-core", "gaman-macros"]
 resolver = "2"
 
 [package]
@@ -15,22 +15,79 @@ keywords = ["migrations", "postgresql", "database", "schema", "cli"]
 categories = ["database", "command-line-utilities"]
 exclude = [".env", "output.txt", "tests/", ".github/"]
 
+[[bin]]
+name = "gaman"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[[example]]
+name = "embedded_migrate"
+path = "examples/embedded_migrate.rs"
+required-features = ["cli"]
+
+[[example]]
+name = "embedded_structs"
+path = "examples/embedded_structs.rs"
+required-features = ["cli"]
+
+[[example]]
+name = "embedded_yaml"
+path = "examples/embedded_yaml.rs"
+required-features = ["cli"]
+
+[[test]]
+name = "derive_into_table"
+path = "tests/derive_into_table.rs"
+required-features = ["macros"]
+
+[[test]]
+name = "embedded_migrations"
+path = "tests/embedded_migrations.rs"
+required-features = ["cli"]
+
+[[test]]
+name = "offline"
+path = "tests/offline.rs"
+required-features = ["native"]
+
+[[test]]
+name = "postgres"
+path = "tests/postgres.rs"
+required-features = ["postgres"]
+
+[[test]]
+name = "sqlite_dialect"
+path = "tests/sqlite_dialect.rs"
+required-features = ["sqlite"]
+
+[[test]]
+name = "yaml_adapter"
+path = "tests/yaml_adapter.rs"
+required-features = ["native"]
+
 [features]
-default = ["postgres"]
-postgres = ["sqlx/postgres"]
-sqlite = ["sqlx/sqlite"]
+default = ["native", "cli", "postgres", "macros"]
+offline = ["dep:gaman-core"]
+offline-sqlite = ["offline", "gaman-core/sqlite"]
+macros = ["dep:gaman-macros"]
+native = ["dep:gaman-core", "dep:serde", "dep:serde_yaml", "dep:thiserror"]
+fs = ["native", "gaman-core/fs"]
+db = ["native", "dep:sqlx", "dep:tokio"]
+cli = ["fs", "db", "dep:argh", "dep:dotenvy", "macros"]
+postgres = ["db", "sqlx/postgres"]
+sqlite = ["db", "sqlx/sqlite", "gaman-core/sqlite"]
+mysql = ["db", "sqlx/mysql"]
 
 [dependencies]
-argh = "0.1.19"
-dotenvy = "0.15.7"
-gaman-macros = { version = "0.3.18", path = "gaman-macros" }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-native-tls"] }
-tokio = { version = "1", features = ["rt", "macros"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-serde_yaml = "0.9.34"
-sqlparser = "0.61.0"
-thiserror = "2.0.18"
+argh = { version = "0.1.19", optional = true }
+dotenvy = { version = "0.15.7", optional = true }
+gaman-core = { version = "0.3.18", path = "gaman-core", optional = true, default-features = false }
+gaman-macros = { version = "0.3.18", path = "gaman-macros", optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-native-tls"], optional = true }
+tokio = { version = "1", features = ["rt", "macros"], optional = true }
+serde = { version = "1.0.228", features = ["derive"], optional = true }
+serde_yaml = { version = "0.9.34", optional = true }
+thiserror = { version = "2.0.18", optional = true }
 
 [dev-dependencies]
 proptest = "1"

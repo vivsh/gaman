@@ -76,6 +76,14 @@ fn foreign_key_clause(foreign_key: &crate::states::ForeignKey) -> Result<String,
 }
 
 fn col_def(c: &Column, for_add_column: bool) -> Result<String, DialectError> {
+    col_def_with_primary_key(c, for_add_column, true)
+}
+
+fn col_def_with_primary_key(
+    c: &Column,
+    for_add_column: bool,
+    render_primary_key: bool,
+) -> Result<String, DialectError> {
     if for_add_column {
         if c.primary_key {
             return Err(unsupported(
@@ -96,7 +104,7 @@ fn col_def(c: &Column, for_add_column: bool) -> Result<String, DialectError> {
         s.push_str(&format!(" GENERATED ALWAYS AS ({expr}) STORED"));
         return Ok(s);
     }
-    if c.primary_key {
+    if render_primary_key && c.primary_key {
         s.push_str(" PRIMARY KEY");
     } else if !c.nullable {
         s.push_str(" NOT NULL");
@@ -111,11 +119,23 @@ fn col_def(c: &Column, for_add_column: bool) -> Result<String, DialectError> {
 }
 
 fn create_table_sql(table: &Table, name: &str) -> Result<String, DialectError> {
+    let inline_pk = match &table.primary_key {
+        None => true,
+        Some(pk) => {
+            pk.columns.len() == 1
+                && (pk.name == table.pk_constraint_name() || name.starts_with("__gaman_rebuild_"))
+        }
+    };
     let mut parts: Vec<String> = table
         .columns
         .iter()
-        .map(|c| col_def(c, false))
+        .map(|c| col_def_with_primary_key(c, false, inline_pk))
         .collect::<Result<_, _>>()?;
+    if let Some(pk) = &table.primary_key
+        && !inline_pk
+    {
+        parts.push(primary_key_def(&pk.name, &pk.columns));
+    }
     for fk in &table.foreign_keys {
         parts.push(foreign_key_clause(fk)?);
     }
@@ -129,7 +149,23 @@ fn create_table_sql(table: &Table, name: &str) -> Result<String, DialectError> {
     ))
 }
 
-fn create_index_sql(index: &Index, table_name: &str, concurrent: bool) -> Result<String, DialectError> {
+fn primary_key_def(name: &str, columns: &[String]) -> String {
+    if name.is_empty() {
+        format!("PRIMARY KEY ({})", quoted_columns(columns))
+    } else {
+        format!(
+            "CONSTRAINT {} PRIMARY KEY ({})",
+            quote_ident(name),
+            quoted_columns(columns)
+        )
+    }
+}
+
+fn create_index_sql(
+    index: &Index,
+    table_name: &str,
+    concurrent: bool,
+) -> Result<String, DialectError> {
     if concurrent {
         return Err(unsupported(
             "add_index",
@@ -235,7 +271,10 @@ fn rebuild_table_sql(
     for index in &after.indexes {
         stmts.push(create_index_sql(index, &after.name, false)?);
     }
-    stmts.push(format!("DROP TABLE IF EXISTS temp.{}", quote_ident(&fk_check_name)));
+    stmts.push(format!(
+        "DROP TABLE IF EXISTS temp.{}",
+        quote_ident(&fk_check_name)
+    ));
     stmts.push(format!(
         r#"CREATE TEMP TABLE {} ("violation" integer CHECK ("violation" = 0))"#,
         quote_ident(&fk_check_name)
@@ -262,9 +301,17 @@ fn copy_mapping(
     let mut columns = Vec::new();
     let mut expressions = Vec::new();
 
-    for target in after.columns.iter().filter(|column| column.generated.is_none()) {
+    for target in after
+        .columns
+        .iter()
+        .filter(|column| column.generated.is_none())
+    {
         columns.push(target.name.clone());
-        match before.columns.iter().find(|column| column.name == target.name) {
+        match before
+            .columns
+            .iter()
+            .find(|column| column.name == target.name)
+        {
             Some(source) => expressions.push(copy_expr(source, target, ops)?),
             None => expressions.push(new_column_expr(target)?),
         }
@@ -278,11 +325,12 @@ fn copy_mapping(
 
 fn copy_expr(source: &Column, target: &Column, ops: &[Operation]) -> Result<String, DialectError> {
     let alter = ops.iter().find_map(|op| match op {
-        Operation::AlterColumn { old, new, cast_expr, .. }
-            if old.name == source.name && new.name == target.name =>
-        {
-            Some(cast_expr.as_deref())
-        }
+        Operation::AlterColumn {
+            old,
+            new,
+            cast_expr,
+            ..
+        } if old.name == source.name && new.name == target.name => Some(cast_expr.as_deref()),
         _ => None,
     });
 
@@ -468,7 +516,8 @@ fn identifier_tokens(sql: &str) -> Vec<String> {
             let mut ident = String::new();
             while let Some((_, next)) = chars.next() {
                 if next == close {
-                    if close != ']' && matches!(chars.peek(), Some((_, escaped)) if *escaped == close)
+                    if close != ']'
+                        && matches!(chars.peek(), Some((_, escaped)) if *escaped == close)
                     {
                         ident.push(next);
                         chars.next();
@@ -518,10 +567,15 @@ fn is_ident_continue(ch: char) -> bool {
 
 fn pk_signature(table: &Table) -> Vec<(&str, &str)> {
     table
-        .columns
-        .iter()
-        .filter(|column| column.primary_key)
-        .map(|column| (column.name.as_str(), normalize_type(&column.col_type)))
+        .primary_key_column_names()
+        .into_iter()
+        .filter_map(|name| {
+            table
+                .columns
+                .iter()
+                .find(|column| column.name == name)
+                .map(|column| (column.name.as_str(), normalize_type(&column.col_type)))
+        })
         .collect()
 }
 
@@ -588,7 +642,9 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             }
             Ok(stmts)
         }
-        Operation::DropTable { table } => Ok(vec![format!("DROP TABLE {}", qualified_table(table)?)]),
+        Operation::DropTable { table } => {
+            Ok(vec![format!("DROP TABLE {}", qualified_table(table)?)])
+        }
         Operation::RenameTable { old_name, new_name } => Ok(vec![format!(
             "ALTER TABLE {} RENAME TO {}",
             quote_table_name(old_name)?,
@@ -647,6 +703,7 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
         | Operation::DropExtension { .. }
         | Operation::CreateEnum { .. }
         | Operation::DropEnum { .. }
+        | Operation::RenameEnumValue { .. }
         | Operation::AlterEnum { .. }
         | Operation::Invoke { .. } => Err(unsupported(
             op.type_name(),

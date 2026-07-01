@@ -3,16 +3,20 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use thiserror::Error;
 
 use crate::dialects::Dialect;
+use crate::opaque::{opaque_option_sources_equal, opaque_sources_equal};
 use crate::operations::Operation;
 use crate::states::{
-    Column, EnumDef, ExtensionDef, FunctionDef,
-    Schema, Table, ViewDef,
+    Column, EnumDef, ExtensionDef, FunctionDef, Schema, Table, TriggerDef, ViewDef,
 };
 
 #[derive(Debug, Error)]
 pub enum DiffError {
     #[error("dependency cycle detected among operations — this is a bug in the diff engine")]
     DependencyCycle,
+    #[error(
+        "primary key changes on existing table '{0}' are not generated automatically; use an explicit SQL statement migration"
+    )]
+    PrimaryKeyMutation(String),
 }
 
 // Walk the schema maps directly. The BTreeMap keys are the canonical identity
@@ -21,10 +25,27 @@ pub enum DiffError {
 pub fn generate_diff(current: &Schema, previous: &Schema) -> Vec<Operation> {
     let mut ops: Vec<Operation> = Vec::new();
 
-    diff_map(&current.extensions, &previous.extensions, &mut ops, diff_extension);
+    diff_map(
+        &current.extensions,
+        &previous.extensions,
+        &mut ops,
+        diff_extension,
+    );
     diff_map(&current.enums, &previous.enums, &mut ops, diff_enum);
-    diff_map(&current.functions, &previous.functions, &mut ops, diff_function);
-    diff_map(&current.views, &previous.views, &mut ops, diff_view);
+    diff_map_with_eq(
+        &current.functions,
+        &previous.functions,
+        &mut ops,
+        function_equal,
+        diff_function,
+    );
+    diff_map_with_eq(
+        &current.views,
+        &previous.views,
+        &mut ops,
+        view_equal,
+        diff_view,
+    );
     diff_map(&current.tables, &previous.tables, &mut ops, diff_table);
 
     ops
@@ -50,13 +71,48 @@ fn diff_map<T: PartialEq>(
     }
 }
 
-fn diff_extension(curr: Option<&ExtensionDef>, prev: Option<&ExtensionDef>, ops: &mut Vec<Operation>) {
+fn diff_map_with_eq<T>(
+    current: &std::collections::BTreeMap<String, T>,
+    previous: &std::collections::BTreeMap<String, T>,
+    ops: &mut Vec<Operation>,
+    equal: fn(&T, &T) -> bool,
+    handler: fn(Option<&T>, Option<&T>, &mut Vec<Operation>),
+) {
+    for (key, curr_val) in current {
+        match previous.get(key) {
+            None => handler(Some(curr_val), None, ops),
+            Some(prev_val) if !equal(curr_val, prev_val) => {
+                handler(Some(curr_val), Some(prev_val), ops)
+            }
+            _ => {}
+        }
+    }
+    for (key, prev_val) in previous {
+        if !current.contains_key(key) {
+            handler(None, Some(prev_val), ops);
+        }
+    }
+}
+
+fn diff_extension(
+    curr: Option<&ExtensionDef>,
+    prev: Option<&ExtensionDef>,
+    ops: &mut Vec<Operation>,
+) {
     match (curr, prev) {
-        (Some(c), None) => ops.push(Operation::CreateExtension { extension: c.clone() }),
-        (None, Some(p)) => ops.push(Operation::DropExtension { extension: p.clone() }),
+        (Some(c), None) => ops.push(Operation::CreateExtension {
+            extension: c.clone(),
+        }),
+        (None, Some(p)) => ops.push(Operation::DropExtension {
+            extension: p.clone(),
+        }),
         (Some(c), Some(p)) => {
-            ops.push(Operation::DropExtension { extension: p.clone() });
-            ops.push(Operation::CreateExtension { extension: c.clone() });
+            ops.push(Operation::DropExtension {
+                extension: p.clone(),
+            });
+            ops.push(Operation::CreateExtension {
+                extension: c.clone(),
+            });
         }
         _ => {}
     }
@@ -64,28 +120,52 @@ fn diff_extension(curr: Option<&ExtensionDef>, prev: Option<&ExtensionDef>, ops:
 
 fn diff_enum(curr: Option<&EnumDef>, prev: Option<&EnumDef>, ops: &mut Vec<Operation>) {
     match (curr, prev) {
-        (Some(c), None) => ops.push(Operation::CreateEnum { enum_def: c.clone() }),
-        (None, Some(p)) => ops.push(Operation::DropEnum { enum_def: p.clone() }),
+        (Some(c), None) => ops.push(Operation::CreateEnum {
+            enum_def: c.clone(),
+        }),
+        (None, Some(p)) => ops.push(Operation::DropEnum {
+            enum_def: p.clone(),
+        }),
         (Some(c), Some(p)) => {
             let old_set: HashSet<&str> = p.values.iter().map(|v| v.as_str()).collect();
             let new_set: HashSet<&str> = c.values.iter().map(|v| v.as_str()).collect();
-            if old_set.is_subset(&new_set) && p.values == c.values[..p.values.len()] {
-                ops.push(Operation::AlterEnum { old: p.clone(), new: c.clone() });
+            if old_set.is_subset(&new_set) && values_are_subsequence(&p.values, &c.values) {
+                ops.push(Operation::AlterEnum {
+                    old: p.clone(),
+                    new: c.clone(),
+                });
             } else {
-                ops.push(Operation::DropEnum { enum_def: p.clone() });
-                ops.push(Operation::CreateEnum { enum_def: c.clone() });
+                ops.push(Operation::DropEnum {
+                    enum_def: p.clone(),
+                });
+                ops.push(Operation::CreateEnum {
+                    enum_def: c.clone(),
+                });
             }
         }
         _ => {}
     }
 }
 
+fn values_are_subsequence(old: &[String], new: &[String]) -> bool {
+    let mut new_iter = new.iter();
+    old.iter()
+        .all(|old_value| new_iter.by_ref().any(|new_value| new_value == old_value))
+}
+
 fn diff_function(curr: Option<&FunctionDef>, prev: Option<&FunctionDef>, ops: &mut Vec<Operation>) {
     match (curr, prev) {
-        (Some(c), None) => ops.push(Operation::CreateFunction { function: c.clone() }),
-        (None, Some(p)) => ops.push(Operation::DropFunction { function: p.clone() }),
+        (Some(c), None) => ops.push(Operation::CreateFunction {
+            function: c.clone(),
+        }),
+        (None, Some(p)) => ops.push(Operation::DropFunction {
+            function: p.clone(),
+        }),
         (Some(c), Some(p)) => {
-            ops.push(Operation::AlterFunction { old: p.clone(), new: c.clone() });
+            ops.push(Operation::AlterFunction {
+                old: p.clone(),
+                new: c.clone(),
+            });
         }
         _ => {}
     }
@@ -96,7 +176,10 @@ fn diff_view(curr: Option<&ViewDef>, prev: Option<&ViewDef>, ops: &mut Vec<Opera
         (Some(c), None) => ops.push(Operation::CreateView { view: c.clone() }),
         (None, Some(p)) => ops.push(Operation::DropView { view: p.clone() }),
         (Some(c), Some(p)) => {
-            ops.push(Operation::ReplaceView { old: p.clone(), new: c.clone() });
+            ops.push(Operation::ReplaceView {
+                old: p.clone(),
+                new: c.clone(),
+            });
         }
         _ => {}
     }
@@ -114,90 +197,171 @@ fn diff_table(curr: Option<&Table>, prev: Option<&Table>, ops: &mut Vec<Operatio
 fn diff_table_children(prev: &Table, curr: &Table, ops: &mut Vec<Operation>) {
     let table_name = curr.qualified_name();
 
-    for change in diff_by_name(&prev.columns, &curr.columns, |c| c.name.as_str()) {
+    for change in diff_by_name(
+        &prev.columns,
+        &curr.columns,
+        |c| c.name.as_str(),
+        PartialEq::eq,
+    ) {
         match change {
             SubChange::Removed(col) => ops.push(Operation::DropColumn {
-                table_name: table_name.clone(), column: col.clone(), cascade: false,
+                table_name: table_name.clone(),
+                column: col.clone(),
+                cascade: false,
             }),
             SubChange::Added(col) => ops.push(Operation::AddColumn {
-                table_name: table_name.clone(), column: col.clone(),
+                table_name: table_name.clone(),
+                column: col.clone(),
             }),
             SubChange::Modified(old, new) => ops.push(Operation::AlterColumn {
-                table_name: table_name.clone(), old: old.clone(), new: new.clone(), cast_expr: None,
+                table_name: table_name.clone(),
+                old: old.clone(),
+                new: new.clone(),
+                cast_expr: None,
             }),
         }
     }
 
-    for change in diff_by_name(&prev.foreign_keys, &curr.foreign_keys, |fk| fk.name.as_str()) {
+    for change in diff_by_name(
+        &prev.foreign_keys,
+        &curr.foreign_keys,
+        |fk| fk.name.as_str(),
+        PartialEq::eq,
+    ) {
         match change {
             SubChange::Removed(fk) => ops.push(Operation::DropForeignKey {
-                table_name: table_name.clone(), foreign_key: fk.clone(), cascade: false,
+                table_name: table_name.clone(),
+                foreign_key: fk.clone(),
+                cascade: false,
             }),
             SubChange::Added(fk) => ops.push(Operation::AddForeignKey {
-                table_name: table_name.clone(), foreign_key: fk.clone(),
+                table_name: table_name.clone(),
+                foreign_key: fk.clone(),
             }),
             SubChange::Modified(old, new) => {
                 ops.push(Operation::DropForeignKey {
-                    table_name: table_name.clone(), foreign_key: old.clone(), cascade: false,
+                    table_name: table_name.clone(),
+                    foreign_key: old.clone(),
+                    cascade: false,
                 });
                 ops.push(Operation::AddForeignKey {
-                    table_name: table_name.clone(), foreign_key: new.clone(),
+                    table_name: table_name.clone(),
+                    foreign_key: new.clone(),
                 });
             }
         }
     }
 
-    for change in diff_by_name(&prev.indexes, &curr.indexes, |i| i.name.as_str()) {
+    for change in diff_by_name(
+        &prev.indexes,
+        &curr.indexes,
+        |i| i.name.as_str(),
+        PartialEq::eq,
+    ) {
         match change {
             SubChange::Removed(idx) => ops.push(Operation::DropIndex {
-                table_name: table_name.clone(), index: idx.clone(), concurrent: false,
+                table_name: table_name.clone(),
+                index: idx.clone(),
+                concurrent: false,
             }),
             SubChange::Added(idx) => ops.push(Operation::AddIndex {
-                table_name: table_name.clone(), index: idx.clone(), concurrent: false,
+                table_name: table_name.clone(),
+                index: idx.clone(),
+                concurrent: false,
             }),
             SubChange::Modified(old, new) => {
                 ops.push(Operation::DropIndex {
-                    table_name: table_name.clone(), index: old.clone(), concurrent: false,
+                    table_name: table_name.clone(),
+                    index: old.clone(),
+                    concurrent: false,
                 });
                 ops.push(Operation::AddIndex {
-                    table_name: table_name.clone(), index: new.clone(), concurrent: false,
+                    table_name: table_name.clone(),
+                    index: new.clone(),
+                    concurrent: false,
                 });
             }
         }
     }
 
-    for change in diff_by_name(&prev.constraints, &curr.constraints, |c| c.name()) {
+    for change in diff_by_name(
+        &prev.constraints,
+        &curr.constraints,
+        |c| c.name(),
+        PartialEq::eq,
+    ) {
         match change {
             SubChange::Removed(con) => ops.push(Operation::DropConstraint {
-                table_name: table_name.clone(), constraint: con.clone(),
+                table_name: table_name.clone(),
+                constraint: con.clone(),
             }),
             SubChange::Added(con) => ops.push(Operation::AddConstraint {
-                table_name: table_name.clone(), constraint: con.clone(),
+                table_name: table_name.clone(),
+                constraint: con.clone(),
             }),
             SubChange::Modified(old, new) => {
                 ops.push(Operation::DropConstraint {
-                    table_name: table_name.clone(), constraint: old.clone(),
+                    table_name: table_name.clone(),
+                    constraint: old.clone(),
                 });
                 ops.push(Operation::AddConstraint {
-                    table_name: table_name.clone(), constraint: new.clone(),
+                    table_name: table_name.clone(),
+                    constraint: new.clone(),
                 });
             }
         }
     }
 
-    for change in diff_by_name(&prev.triggers, &curr.triggers, |t| t.name.as_deref().unwrap_or("")) {
+    for change in diff_by_name(
+        &prev.triggers,
+        &curr.triggers,
+        |t| t.name.as_deref().unwrap_or(""),
+        trigger_equal,
+    ) {
         match change {
             SubChange::Removed(trg) => ops.push(Operation::DropTrigger {
-                table_name: table_name.clone(), trigger: trg.clone(),
+                table_name: table_name.clone(),
+                trigger: trg.clone(),
             }),
             SubChange::Added(trg) => ops.push(Operation::CreateTrigger {
-                table_name: table_name.clone(), trigger: trg.clone(),
+                table_name: table_name.clone(),
+                trigger: trg.clone(),
             }),
             SubChange::Modified(old, new) => ops.push(Operation::AlterTrigger {
-                table_name: table_name.clone(), old: old.clone(), new: new.clone(),
+                table_name: table_name.clone(),
+                old: old.clone(),
+                new: new.clone(),
             }),
         }
     }
+}
+
+fn function_equal(left: &FunctionDef, right: &FunctionDef) -> bool {
+    left.name == right.name
+        && left.schema == right.schema
+        && left.arguments == right.arguments
+        && left.returns == right.returns
+        && left.language == right.language
+        && left.volatility == right.volatility
+        && left.security_definer == right.security_definer
+        && opaque_sources_equal(&left.body, &right.body)
+}
+
+fn view_equal(left: &ViewDef, right: &ViewDef) -> bool {
+    left.name == right.name
+        && left.schema == right.schema
+        && opaque_sources_equal(&left.definition, &right.definition)
+}
+
+fn trigger_equal(left: &TriggerDef, right: &TriggerDef) -> bool {
+    left.name == right.name
+        && left.timing == right.timing
+        && left.events == right.events
+        && left.scope == right.scope
+        && left.function_name == right.function_name
+        && opaque_option_sources_equal(&left.when, &right.when)
+        && opaque_option_sources_equal(&left.body, &right.body)
+        && left.language == right.language
 }
 
 enum SubChange<'a, T> {
@@ -206,10 +370,11 @@ enum SubChange<'a, T> {
     Modified(&'a T, &'a T),
 }
 
-fn diff_by_name<'a, T: PartialEq>(
+fn diff_by_name<'a, T>(
     prev: &'a [T],
     curr: &'a [T],
     name_fn: impl Fn(&T) -> &str,
+    equal: fn(&T, &T) -> bool,
 ) -> Vec<SubChange<'a, T>> {
     let prev_map: HashMap<&str, &T> = prev.iter().map(|v| (name_fn(v), v)).collect();
     let curr_map: HashMap<&str, &T> = curr.iter().map(|v| (name_fn(v), v)).collect();
@@ -223,7 +388,9 @@ fn diff_by_name<'a, T: PartialEq>(
     for (&name, &curr_val) in &curr_map {
         match prev_map.get(name) {
             None => changes.push(SubChange::Added(curr_val)),
-            Some(&prev_val) if prev_val != curr_val => changes.push(SubChange::Modified(prev_val, curr_val)),
+            Some(&prev_val) if !equal(prev_val, curr_val) => {
+                changes.push(SubChange::Modified(prev_val, curr_val))
+            }
             _ => {}
         }
     }
@@ -234,7 +401,8 @@ fn diff_by_name<'a, T: PartialEq>(
 // referencing it, that trigger is not detected by the detection pass (the
 // trigger node is identical in both states). We inject the DropTrigger here.
 fn inject_orphan_triggers(ops: Vec<Operation>, previous: &Schema) -> Vec<Operation> {
-    let dropped_fns: HashSet<String> = ops.iter()
+    let dropped_fns: HashSet<String> = ops
+        .iter()
         .filter_map(|op| match op {
             Operation::DropFunction { function } => Some(function.qualified_name()),
             _ => None,
@@ -245,18 +413,24 @@ fn inject_orphan_triggers(ops: Vec<Operation>, previous: &Schema) -> Vec<Operati
         return ops;
     }
 
-    let dropped_tables: HashSet<String> = ops.iter()
+    let dropped_tables: HashSet<String> = ops
+        .iter()
         .filter_map(|op| match op {
             Operation::DropTable { table } => Some(table.qualified_name()),
             _ => None,
         })
         .collect();
 
-    let existing_drop_keys: HashSet<String> = ops.iter()
+    let existing_drop_keys: HashSet<String> = ops
+        .iter()
         .filter_map(|op| match op {
-            Operation::DropTrigger { table_name, trigger } => {
-                trigger.name.as_deref().map(|n| format!("{}:{}", table_name, n))
-            }
+            Operation::DropTrigger {
+                table_name,
+                trigger,
+            } => trigger
+                .name
+                .as_deref()
+                .map(|n| format!("{}:{}", table_name, n)),
             _ => None,
         })
         .collect();
@@ -267,12 +441,16 @@ fn inject_orphan_triggers(ops: Vec<Operation>, previous: &Schema) -> Vec<Operati
             continue;
         }
         for trg in &table.triggers {
-            let references_dropped = trg.function_name.as_deref()
+            let references_dropped = trg
+                .function_name
+                .as_deref()
                 .map_or(false, |f| dropped_fns.contains(f));
             if !references_dropped {
                 continue;
             }
-            let key = trg.name.as_deref()
+            let key = trg
+                .name
+                .as_deref()
                 .map(|n| format!("{}:{}", table_name, n))
                 .unwrap_or_default();
             if !existing_drop_keys.contains(&key) {
@@ -295,35 +473,46 @@ fn inject_orphan_triggers(ops: Vec<Operation>, previous: &Schema) -> Vec<Operati
 // Limitation: enum references inside SQL (defaults, check constraints, function
 // bodies, view definitions) cannot be tracked without parsing SQL.
 fn inject_enum_column_casts(ops: Vec<Operation>, previous: &Schema) -> Vec<Operation> {
-    let dropped_enums: HashSet<&str> = ops.iter()
+    let dropped_enums: HashSet<&str> = ops
+        .iter()
         .filter_map(|op| match op {
             Operation::DropEnum { enum_def } => Some(enum_def.name.as_str()),
             _ => None,
         })
         .collect();
-    let created_enums: HashSet<&str> = ops.iter()
+    let created_enums: HashSet<&str> = ops
+        .iter()
         .filter_map(|op| match op {
             Operation::CreateEnum { enum_def } => Some(enum_def.name.as_str()),
             _ => None,
         })
         .collect();
 
-    let recreated: HashSet<&str> = dropped_enums.intersection(&created_enums).copied().collect();
+    let recreated: HashSet<&str> = dropped_enums
+        .intersection(&created_enums)
+        .copied()
+        .collect();
     if recreated.is_empty() {
         return ops;
     }
 
-    let dropped_tables: HashSet<String> = ops.iter()
+    let dropped_tables: HashSet<String> = ops
+        .iter()
         .filter_map(|op| match op {
             Operation::DropTable { table } => Some(table.qualified_name()),
             _ => None,
         })
         .collect();
 
-    let touched_columns: HashSet<(&str, &str)> = ops.iter()
+    let touched_columns: HashSet<(&str, &str)> = ops
+        .iter()
         .filter_map(|op| match op {
-            Operation::DropColumn { table_name, column, .. } => Some((table_name.as_str(), column.name.as_str())),
-            Operation::AlterColumn { table_name, old, .. } => Some((table_name.as_str(), old.name.as_str())),
+            Operation::DropColumn {
+                table_name, column, ..
+            } => Some((table_name.as_str(), column.name.as_str())),
+            Operation::AlterColumn {
+                table_name, old, ..
+            } => Some((table_name.as_str(), old.name.as_str())),
             _ => None,
         })
         .collect();
@@ -386,16 +575,29 @@ fn decompose(ops: Vec<Operation>) -> Vec<Operation> {
                 let tname = table.name.clone();
                 result.push(Operation::CreateTable { table });
                 for fk in fks {
-                    result.push(Operation::AddForeignKey { table_name: tname.clone(), foreign_key: fk });
+                    result.push(Operation::AddForeignKey {
+                        table_name: tname.clone(),
+                        foreign_key: fk,
+                    });
                 }
                 for idx in indexes {
-                    result.push(Operation::AddIndex { table_name: tname.clone(), index: idx, concurrent: false });
+                    result.push(Operation::AddIndex {
+                        table_name: tname.clone(),
+                        index: idx,
+                        concurrent: false,
+                    });
                 }
                 for con in constraints {
-                    result.push(Operation::AddConstraint { table_name: tname.clone(), constraint: con });
+                    result.push(Operation::AddConstraint {
+                        table_name: tname.clone(),
+                        constraint: con,
+                    });
                 }
                 for trg in triggers {
-                    result.push(Operation::CreateTrigger { table_name: tname.clone(), trigger: trg });
+                    result.push(Operation::CreateTrigger {
+                        table_name: tname.clone(),
+                        trigger: trg,
+                    });
                 }
             }
             Operation::DropTable { mut table } => {
@@ -405,16 +607,30 @@ fn decompose(ops: Vec<Operation>) -> Vec<Operation> {
                 let triggers = std::mem::take(&mut table.triggers);
                 let tname = table.name.clone();
                 for trg in triggers {
-                    result.push(Operation::DropTrigger { table_name: tname.clone(), trigger: trg });
+                    result.push(Operation::DropTrigger {
+                        table_name: tname.clone(),
+                        trigger: trg,
+                    });
                 }
                 for con in constraints {
-                    result.push(Operation::DropConstraint { table_name: tname.clone(), constraint: con });
+                    result.push(Operation::DropConstraint {
+                        table_name: tname.clone(),
+                        constraint: con,
+                    });
                 }
                 for idx in indexes {
-                    result.push(Operation::DropIndex { table_name: tname.clone(), index: idx, concurrent: false });
+                    result.push(Operation::DropIndex {
+                        table_name: tname.clone(),
+                        index: idx,
+                        concurrent: false,
+                    });
                 }
                 for fk in fks {
-                    result.push(Operation::DropForeignKey { table_name: tname.clone(), foreign_key: fk, cascade: false });
+                    result.push(Operation::DropForeignKey {
+                        table_name: tname.clone(),
+                        foreign_key: fk,
+                        cascade: false,
+                    });
                 }
                 result.push(Operation::DropTable { table });
             }
@@ -439,7 +655,8 @@ fn fk_can_be_inlined(
 }
 
 fn merge_operations(ops: Vec<Operation>, dialect: &Dialect) -> Vec<Operation> {
-    let tables_being_created: HashSet<String> = ops.iter()
+    let tables_being_created: HashSet<String> = ops
+        .iter()
         .filter_map(|op| match op {
             Operation::CreateTable { table } => Some(table.qualified_name()),
             _ => None,
@@ -450,10 +667,12 @@ fn merge_operations(ops: Vec<Operation>, dialect: &Dialect) -> Vec<Operation> {
     let mut created_tables: HashMap<String, usize> = HashMap::new();
     for op in ops {
         let merged = match &op {
-            Operation::AddForeignKey { table_name, foreign_key }
-                if created_tables.contains_key(table_name)
-                    && dialect.should_merge(table_name, &op)
-                    && fk_can_be_inlined(&foreign_key.to_table, table_name, &tables_being_created) =>
+            Operation::AddForeignKey {
+                table_name,
+                foreign_key,
+            } if created_tables.contains_key(table_name)
+                && dialect.should_merge(table_name, &op)
+                && fk_can_be_inlined(&foreign_key.to_table, table_name, &tables_being_created) =>
             {
                 let idx = created_tables[table_name];
                 if let Operation::CreateTable { ref mut table } = result[idx] {
@@ -461,8 +680,10 @@ fn merge_operations(ops: Vec<Operation>, dialect: &Dialect) -> Vec<Operation> {
                 }
                 true
             }
-            Operation::AddIndex { table_name, index, .. }
-                if created_tables.contains_key(table_name) && dialect.should_merge(table_name, &op) =>
+            Operation::AddIndex {
+                table_name, index, ..
+            } if created_tables.contains_key(table_name)
+                && dialect.should_merge(table_name, &op) =>
             {
                 let idx = created_tables[table_name];
                 if let Operation::CreateTable { ref mut table } = result[idx] {
@@ -470,8 +691,11 @@ fn merge_operations(ops: Vec<Operation>, dialect: &Dialect) -> Vec<Operation> {
                 }
                 true
             }
-            Operation::AddConstraint { table_name, constraint }
-                if created_tables.contains_key(table_name) && dialect.should_merge(table_name, &op) =>
+            Operation::AddConstraint {
+                table_name,
+                constraint,
+            } if created_tables.contains_key(table_name)
+                && dialect.should_merge(table_name, &op) =>
             {
                 let idx = created_tables[table_name];
                 if let Operation::CreateTable { ref mut table } = result[idx] {
@@ -479,8 +703,11 @@ fn merge_operations(ops: Vec<Operation>, dialect: &Dialect) -> Vec<Operation> {
                 }
                 true
             }
-            Operation::CreateTrigger { table_name, trigger }
-                if created_tables.contains_key(table_name) && dialect.should_merge(table_name, &op) =>
+            Operation::CreateTrigger {
+                table_name,
+                trigger,
+            } if created_tables.contains_key(table_name)
+                && dialect.should_merge(table_name, &op) =>
             {
                 let idx = created_tables[table_name];
                 if let Operation::CreateTable { ref mut table } = result[idx] {
@@ -542,7 +769,8 @@ pub fn sort_operations(ops: Vec<Operation>) -> Result<Vec<Operation>, DiffError>
     }
 
     let mut slots: Vec<Option<Operation>> = ops.into_iter().map(Some).collect();
-    let result = sorted_indices.into_iter()
+    let result = sorted_indices
+        .into_iter()
         .map(|i| slots[i].take().expect("index used twice"))
         .collect();
     Ok(result)
@@ -550,32 +778,34 @@ pub fn sort_operations(ops: Vec<Operation>) -> Result<Vec<Operation>, DiffError>
 
 fn tiebreak_priority(op: &Operation) -> (u8, u8) {
     match op {
-        Operation::CreateExtension { .. }                           => (0, 0),
-        Operation::CreateEnum { .. } | Operation::AlterEnum { .. }  => (1, 0),
-        Operation::DropView { .. }                                  => (2, 0),
-        Operation::ReplaceView { .. }                               => (11, 0),
-        Operation::DropTable { .. }                                 => (4, 0),
+        Operation::CreateExtension { .. } => (0, 0),
+        Operation::CreateEnum { .. }
+        | Operation::RenameEnumValue { .. }
+        | Operation::AlterEnum { .. } => (1, 0),
+        Operation::DropView { .. } => (2, 0),
+        Operation::ReplaceView { .. } => (11, 0),
+        Operation::DropTable { .. } => (4, 0),
         Operation::CreateFunction { .. } | Operation::AlterFunction { .. } => (5, 0),
-        Operation::CreateTable { .. }                               => (6, 0),
-        Operation::DropTrigger { .. }      => (8, 0),
-        Operation::DropConstraint { .. }   => (8, 1),
-        Operation::DropIndex { .. }        => (8, 2),
-        Operation::DropForeignKey { .. }   => (8, 3),
-        Operation::DropColumn { .. }       => (8, 4),
-        Operation::AlterColumn { .. }      => (8, 5),
-        Operation::AddColumn { .. }        => (8, 6),
-        Operation::AddForeignKey { .. }    => (8, 7),
-        Operation::AddIndex { .. }         => (8, 8),
-        Operation::AddConstraint { .. }    => (8, 9),
+        Operation::CreateTable { .. } => (6, 0),
+        Operation::DropTrigger { .. } => (8, 0),
+        Operation::DropConstraint { .. } => (8, 1),
+        Operation::DropIndex { .. } => (8, 2),
+        Operation::DropForeignKey { .. } => (8, 3),
+        Operation::DropColumn { .. } => (8, 4),
+        Operation::AlterColumn { .. } => (8, 5),
+        Operation::AddColumn { .. } => (8, 6),
+        Operation::AddForeignKey { .. } => (8, 7),
+        Operation::AddIndex { .. } => (8, 8),
+        Operation::AddConstraint { .. } => (8, 9),
         Operation::CreateTrigger { .. } | Operation::AlterTrigger { .. } => (8, 10),
-        Operation::DropFunction { .. }     => (10, 0),
-        Operation::CreateView { .. }       => (11, 0),
-        Operation::DropEnum { .. }         => (12, 0),
-        Operation::DropExtension { .. }    => (13, 0),
+        Operation::DropFunction { .. } => (10, 0),
+        Operation::CreateView { .. } => (11, 0),
+        Operation::DropEnum { .. } => (12, 0),
+        Operation::DropExtension { .. } => (13, 0),
         Operation::Statement { .. }
         | Operation::Invoke { .. }
         | Operation::RenameTable { .. }
-        | Operation::RenameColumn { .. }   => (8, 5),
+        | Operation::RenameColumn { .. } => (8, 5),
     }
 }
 
@@ -609,8 +839,12 @@ fn build_dependency_edges(ops: &[Operation], adj: &mut [Vec<usize>], in_deg: &mu
 
     let resolve_create = |dep: &Dep| -> Vec<usize> {
         match &dep.name {
-            Some(name) => create_idx.get(&(dep.kind, name.as_str())).cloned().unwrap_or_default(),
-            None => create_idx.iter()
+            Some(name) => create_idx
+                .get(&(dep.kind, name.as_str()))
+                .cloned()
+                .unwrap_or_default(),
+            None => create_idx
+                .iter()
                 .filter(|((k, _), _)| *k == dep.kind)
                 .flat_map(|(_, v)| v.iter().copied())
                 .collect(),
@@ -619,8 +853,12 @@ fn build_dependency_edges(ops: &[Operation], adj: &mut [Vec<usize>], in_deg: &mu
 
     let resolve_drop = |dep: &Dep| -> Vec<usize> {
         match &dep.name {
-            Some(name) => drop_idx.get(&(dep.kind, name.as_str())).cloned().unwrap_or_default(),
-            None => drop_idx.iter()
+            Some(name) => drop_idx
+                .get(&(dep.kind, name.as_str()))
+                .cloned()
+                .unwrap_or_default(),
+            None => drop_idx
+                .iter()
                 .filter(|((k, _), _)| *k == dep.kind)
                 .flat_map(|(_, v)| v.iter().copied())
                 .collect(),
@@ -658,7 +896,9 @@ fn build_dependency_edges(ops: &[Operation], adj: &mut [Vec<usize>], in_deg: &mu
     for indices in by_table.values() {
         for &a in indices {
             for &b in indices {
-                if a == b { continue; }
+                if a == b {
+                    continue;
+                }
                 let (_, spa) = tiebreak_priority(&ops[a]);
                 let (_, spb) = tiebreak_priority(&ops[b]);
                 if spa < spb {
@@ -678,11 +918,17 @@ impl DiffEngine {
         Self
     }
 
-    pub fn diff(&self, current: &Schema, previous: &Schema, dialect: &Dialect) -> Result<Vec<Operation>, DiffError> {
+    pub fn diff(
+        &self,
+        current: &Schema,
+        previous: &Schema,
+        dialect: &Dialect,
+    ) -> Result<Vec<Operation>, DiffError> {
         let mut current = current.clone();
         let mut previous = previous.clone();
         current.canonicalize(dialect);
         previous.canonicalize(dialect);
+        reject_primary_key_mutations(&current, &previous)?;
 
         let raw_ops = generate_diff(&current, &previous);
         let ops = inject_orphan_triggers(raw_ops, &previous);
@@ -693,6 +939,18 @@ impl DiffEngine {
     }
 }
 
+fn reject_primary_key_mutations(current: &Schema, previous: &Schema) -> Result<(), DiffError> {
+    for (name, current_table) in &current.tables {
+        let Some(previous_table) = previous.tables.get(name) else {
+            continue;
+        };
+        if current_table.primary_key != previous_table.primary_key {
+            return Err(DiffError::PrimaryKeyMutation(name.clone()));
+        }
+    }
+    Ok(())
+}
+
 impl Default for DiffEngine {
     fn default() -> Self {
         Self::new()
@@ -700,5 +958,4 @@ impl Default for DiffEngine {
 }
 
 #[cfg(test)]
-#[path = "test_diff.rs"]
 mod test_diff;

@@ -169,6 +169,8 @@ pub struct Table {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_key: Option<PrimaryKey>,
     pub columns: Vec<Column>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub foreign_keys: Vec<ForeignKey>,
@@ -192,6 +194,37 @@ impl Table {
     pub fn pk_constraint_name_for(table_name: &str) -> String {
         format!("{}_pkey", table_name)
     }
+
+    pub fn primary_key_column_names(&self) -> Vec<&str> {
+        match &self.primary_key {
+            Some(pk) => pk.columns.iter().map(String::as_str).collect(),
+            None => self
+                .columns
+                .iter()
+                .filter(|column| column.primary_key)
+                .map(|column| column.name.as_str())
+                .collect(),
+        }
+    }
+
+    pub fn primary_key_columns(&self) -> Vec<&Column> {
+        self.primary_key_column_names()
+            .into_iter()
+            .filter_map(|name| self.columns.iter().find(|column| column.name == name))
+            .collect()
+    }
+
+    pub fn is_primary_key_column(&self, name: &str) -> bool {
+        self.primary_key_column_names()
+            .into_iter()
+            .any(|column| column == name)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrimaryKey {
+    pub name: String,
+    pub columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

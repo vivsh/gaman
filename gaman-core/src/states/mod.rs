@@ -1,17 +1,17 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::dialects::Dialect;
 use crate::operations::Operation;
 
+pub mod builder;
 pub mod errors;
 pub mod types;
-pub mod builder;
 
+pub use builder::*;
 pub use errors::*;
 pub use types::*;
-pub use builder::*;
 
 #[cfg(test)]
 mod tests;
@@ -40,11 +40,12 @@ impl Schema {
             if table.name.is_empty() {
                 table.name = table_name.clone();
             }
+            normalize_table_primary_key(table);
             for col in table.columns.iter_mut() {
                 if let Some(r) = col.references.take() {
-                    let fk_name = r.name.unwrap_or_else(|| {
-                        format!("{}_{}_fkey", table_name, col.name)
-                    });
+                    let fk_name = r
+                        .name
+                        .unwrap_or_else(|| format!("{}_{}_fkey", table_name, col.name));
                     table.foreign_keys.push(ForeignKey {
                         name: fk_name,
                         from_column: col.name.clone(),
@@ -61,40 +62,57 @@ impl Schema {
             }
             for trigger in table.triggers.iter_mut() {
                 if trigger.name.is_none() {
-                    let mut event_parts: Vec<&str> = trigger.events.iter().map(|e| match e {
-                        TriggerEvent::Insert => "insert",
-                        TriggerEvent::Update => "update",
-                        TriggerEvent::Delete => "delete",
-                        TriggerEvent::Truncate => "truncate",
-                    }).collect();
+                    let mut event_parts: Vec<&str> = trigger
+                        .events
+                        .iter()
+                        .map(|e| match e {
+                            TriggerEvent::Insert => "insert",
+                            TriggerEvent::Update => "update",
+                            TriggerEvent::Delete => "delete",
+                            TriggerEvent::Truncate => "truncate",
+                        })
+                        .collect();
                     event_parts.sort_unstable();
                     let timing_part = match trigger.timing {
                         TriggerTiming::Before => "before",
                         TriggerTiming::After => "after",
                         TriggerTiming::InsteadOf => "instead_of",
                     };
-                    trigger.name = Some(format!("{}_{}_{}_trg", table_name, event_parts.join("_"), timing_part));
+                    trigger.name = Some(format!(
+                        "{}_{}_{}_trg",
+                        table_name,
+                        event_parts.join("_"),
+                        timing_part
+                    ));
                 }
                 if let Some(body) = trigger.body.take() {
                     let trigger_name = trigger.name.as_deref().unwrap();
                     let fn_name = format!("{}_fn", trigger_name);
-                    let lang = trigger.language.take().unwrap_or_else(|| "plpgsql".to_string());
+                    let lang = trigger
+                        .language
+                        .take()
+                        .unwrap_or_else(|| "plpgsql".to_string());
                     trigger.function_name = Some(fn_name.clone());
-                    new_functions.push((fn_name.clone(), FunctionDef {
-                        name: fn_name,
-                        schema: None,
-                        arguments: String::new(),
-                        returns: "trigger".to_string(),
-                        language: lang,
-                        body,
-                        volatility: Volatility::Volatile,
-                        security_definer: false,
-                    }));
+                    new_functions.push((
+                        fn_name.clone(),
+                        FunctionDef {
+                            name: fn_name,
+                            schema: None,
+                            arguments: String::new(),
+                            returns: "trigger".to_string(),
+                            language: lang,
+                            body,
+                            volatility: Volatility::Volatile,
+                            security_definer: false,
+                        },
+                    ));
                 }
             }
         }
         for (key, func) in self.functions.iter_mut() {
-            func.name = key.clone();
+            if func.name.is_empty() {
+                func.name = key.clone();
+            }
         }
         for (key, func) in new_functions {
             self.functions.insert(key, func);
@@ -107,6 +125,7 @@ impl Schema {
         Ok(state)
     }
 
+    #[cfg(feature = "fs")]
     pub fn from_yaml_file(path: &std::path::Path) -> Result<Self, SchemaLoadError> {
         let raw = std::fs::read_to_string(path)
             .map_err(|e| SchemaLoadError::Io(path.display().to_string(), e))?;
@@ -123,10 +142,12 @@ impl Schema {
         Ok(crate::sql::parse_sql(s)?)
     }
 
+    #[cfg(feature = "fs")]
     pub fn from_sql_file(path: &std::path::Path) -> Result<Self, SchemaLoadError> {
         Ok(crate::sql::parse_sql_file(path)?)
     }
 
+    #[cfg(feature = "fs")]
     pub fn from_yaml_dir(dir: &std::path::Path) -> Result<Self, SchemaLoadError> {
         let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
             .map_err(|e| SchemaLoadError::Io(dir.display().to_string(), e))?
@@ -152,6 +173,7 @@ impl Schema {
         Ok(merged)
     }
 
+    #[cfg(feature = "fs")]
     pub fn from_dir(dir: &std::path::Path) -> Result<Self, SchemaLoadError> {
         let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
             .map_err(|e| SchemaLoadError::Io(dir.display().to_string(), e))?
@@ -194,6 +216,7 @@ impl Schema {
         Ok(merged)
     }
 
+    #[cfg(feature = "fs")]
     pub fn from_file(path: &std::path::Path) -> Result<Self, SchemaLoadError> {
         if path.is_dir() {
             Self::from_dir(path)
@@ -223,15 +246,12 @@ impl Schema {
     pub fn validate(&self) -> Result<(), String> {
         for (name, table) in &self.tables {
             if table.name.is_empty() {
-                return Err(format!("table with key '{name}' has an empty name — omit `name:` to inherit the key, or set it explicitly"));
-            }
-            let pk_count = table.columns.iter().filter(|c| c.primary_key).count();
-            if pk_count > 1 {
                 return Err(format!(
-                    "table '{name}' has {pk_count} primary key columns; only one is allowed"
+                    "table with key '{name}' has an empty name — omit `name:` to inherit the key, or set it explicitly"
                 ));
             }
-            let mut seen = std::collections::HashSet::new();
+            validate_table_primary_key(name, table)?;
+            let mut seen = HashSet::new();
             for col in &table.columns {
                 if !seen.insert(col.name.as_str()) {
                     return Err(format!(
@@ -243,9 +263,7 @@ impl Schema {
             for trigger in &table.triggers {
                 if trigger.events.is_empty() {
                     let tname = trigger.name.as_deref().unwrap_or("<unnamed>");
-                    return Err(format!(
-                        "trigger '{tname}' on table '{name}' has no events"
-                    ));
+                    return Err(format!("trigger '{tname}' on table '{name}' has no events"));
                 }
                 if trigger.function_name.is_none() {
                     let tname = trigger.name.as_deref().unwrap_or("<unnamed>");
@@ -270,6 +288,7 @@ impl Schema {
                     col.col_type = normalized.to_string();
                 }
             }
+            normalize_table_primary_key(table);
         }
         self.normalize_schemas();
     }
@@ -291,10 +310,7 @@ impl Schema {
             }
         }
 
-        fn rekey<T>(
-            map: &mut BTreeMap<String, T>,
-            key_fn: impl Fn(&T) -> String,
-        ) {
+        fn rekey<T>(map: &mut BTreeMap<String, T>, key_fn: impl Fn(&T) -> String) {
             let stale: Vec<String> = map
                 .iter()
                 .filter(|(k, v)| **k != key_fn(v))
@@ -344,10 +360,9 @@ impl Schema {
                 if self.tables.contains_key(&key) {
                     return Err(ReplayError::TableAlreadyExists(key));
                 }
-                if table.columns.iter().filter(|c| c.primary_key).count() > 1 {
-                    return Err(ReplayError::MultiplePrimaryKeys(key));
-                }
-                self.tables.insert(key, table.clone());
+                let mut table = table.clone();
+                normalize_table_primary_key(&mut table);
+                self.tables.insert(key, table);
             }
 
             Operation::DropTable { table } => {
@@ -358,9 +373,10 @@ impl Schema {
             }
 
             Operation::RenameTable { old_name, new_name } => {
-                let table = self.tables.remove(old_name).ok_or_else(|| {
-                    ReplayError::TableNotFound(old_name.clone())
-                })?;
+                let table = self
+                    .tables
+                    .remove(old_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(old_name.clone()))?;
                 if self.tables.contains_key(new_name) {
                     return Err(ReplayError::RenameTargetExists {
                         old: old_name.clone(),
@@ -373,61 +389,110 @@ impl Schema {
             }
 
             Operation::AddColumn { table_name, column } => {
-                let table = self.tables.get_mut(table_name).ok_or_else(|| {
-                    ReplayError::TableNotFound(table_name.clone())
-                })?;
+                let table = self
+                    .tables
+                    .get_mut(table_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(table_name.clone()))?;
                 if table.columns.iter().any(|c| c.name == column.name) {
                     return Err(ReplayError::ColumnAlreadyExists {
                         table: table_name.clone(),
                         column: column.name.clone(),
                     });
                 }
-                if column.primary_key && table.columns.iter().any(|c| c.primary_key) {
-                    return Err(ReplayError::MultiplePrimaryKeys(table_name.clone()));
+                if column.primary_key {
+                    return Err(ReplayError::PrimaryKeyMutation(table_name.clone()));
                 }
                 table.columns.push(column.clone());
+                normalize_table_primary_key(table);
             }
 
-            Operation::DropColumn { table_name, column, .. } => {
-                let table = self.tables.get_mut(table_name).ok_or_else(|| {
-                    ReplayError::TableNotFound(table_name.clone())
-                })?;
-                let pos = table.columns.iter().position(|c| c.name == column.name).ok_or_else(|| {
-                    ReplayError::ColumnNotFound { table: table_name.clone(), column: column.name.clone() }
-                })?;
-                table.columns.remove(pos);
-            }
-
-            Operation::RenameColumn { table_name, old_name, new_name } => {
-                let table = self.tables.get_mut(table_name).ok_or_else(|| {
-                    ReplayError::TableNotFound(table_name.clone())
-                })?;
-                let col = table.columns.iter_mut().find(|c| &c.name == old_name).ok_or_else(|| {
-                    ReplayError::ColumnNotFound { table: table_name.clone(), column: old_name.clone() }
-                })?;
-                col.name = new_name.clone();
-            }
-
-            Operation::AlterColumn { table_name, old, new, .. } => {
-                let table = self.tables.get_mut(table_name).ok_or_else(|| {
-                    ReplayError::TableNotFound(table_name.clone())
-                })?;
-                if new.primary_key && !old.primary_key
-                    && table.columns.iter().filter(|c| c.name != old.name).any(|c| c.primary_key)
-                {
-                    return Err(ReplayError::MultiplePrimaryKeys(table_name.clone()));
+            Operation::DropColumn {
+                table_name, column, ..
+            } => {
+                let table = self
+                    .tables
+                    .get_mut(table_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(table_name.clone()))?;
+                let pos = table
+                    .columns
+                    .iter()
+                    .position(|c| c.name == column.name)
+                    .ok_or_else(|| ReplayError::ColumnNotFound {
+                        table: table_name.clone(),
+                        column: column.name.clone(),
+                    })?;
+                if table.is_primary_key_column(&column.name) {
+                    return Err(ReplayError::PrimaryKeyMutation(table_name.clone()));
                 }
-                let col = table.columns.iter_mut().find(|c| c.name == old.name).ok_or_else(|| {
-                    ReplayError::ColumnNotFound { table: table_name.clone(), column: old.name.clone() }
-                })?;
-                *col = new.clone();
+                table.columns.remove(pos);
+                normalize_table_primary_key(table);
             }
 
-            Operation::AddForeignKey { table_name, foreign_key } => {
-                let table = self.tables.get_mut(table_name).ok_or_else(|| {
-                    ReplayError::TableNotFound(table_name.clone())
-                })?;
-                if table.foreign_keys.iter().any(|fk| fk.name == foreign_key.name) {
+            Operation::RenameColumn {
+                table_name,
+                old_name,
+                new_name,
+            } => {
+                let table = self
+                    .tables
+                    .get_mut(table_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(table_name.clone()))?;
+                if table.is_primary_key_column(old_name) {
+                    return Err(ReplayError::PrimaryKeyMutation(table_name.clone()));
+                }
+                let col = table
+                    .columns
+                    .iter_mut()
+                    .find(|c| &c.name == old_name)
+                    .ok_or_else(|| ReplayError::ColumnNotFound {
+                        table: table_name.clone(),
+                        column: old_name.clone(),
+                    })?;
+                col.name = new_name.clone();
+                normalize_table_primary_key(table);
+            }
+
+            Operation::AlterColumn {
+                table_name,
+                old,
+                new,
+                ..
+            } => {
+                let table = self
+                    .tables
+                    .get_mut(table_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(table_name.clone()))?;
+                if old.primary_key != new.primary_key {
+                    return Err(ReplayError::PrimaryKeyMutation(table_name.clone()));
+                }
+                if table.is_primary_key_column(&old.name) && new.nullable {
+                    return Err(ReplayError::PrimaryKeyMutation(table_name.clone()));
+                }
+                let col = table
+                    .columns
+                    .iter_mut()
+                    .find(|c| c.name == old.name)
+                    .ok_or_else(|| ReplayError::ColumnNotFound {
+                        table: table_name.clone(),
+                        column: old.name.clone(),
+                    })?;
+                *col = new.clone();
+                normalize_table_primary_key(table);
+            }
+
+            Operation::AddForeignKey {
+                table_name,
+                foreign_key,
+            } => {
+                let table = self
+                    .tables
+                    .get_mut(table_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(table_name.clone()))?;
+                if table
+                    .foreign_keys
+                    .iter()
+                    .any(|fk| fk.name == foreign_key.name)
+                {
                     return Err(ReplayError::ForeignKeyAlreadyExists {
                         table: table_name.clone(),
                         fk: foreign_key.name.clone(),
@@ -436,20 +501,33 @@ impl Schema {
                 table.foreign_keys.push(foreign_key.clone());
             }
 
-            Operation::DropForeignKey { table_name, foreign_key, .. } => {
-                let table = self.tables.get_mut(table_name).ok_or_else(|| {
-                    ReplayError::TableNotFound(table_name.clone())
-                })?;
-                let pos = table.foreign_keys.iter().position(|fk| fk.name == foreign_key.name).ok_or_else(|| {
-                    ReplayError::ForeignKeyNotFound { table: table_name.clone(), fk: foreign_key.name.clone() }
-                })?;
+            Operation::DropForeignKey {
+                table_name,
+                foreign_key,
+                ..
+            } => {
+                let table = self
+                    .tables
+                    .get_mut(table_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(table_name.clone()))?;
+                let pos = table
+                    .foreign_keys
+                    .iter()
+                    .position(|fk| fk.name == foreign_key.name)
+                    .ok_or_else(|| ReplayError::ForeignKeyNotFound {
+                        table: table_name.clone(),
+                        fk: foreign_key.name.clone(),
+                    })?;
                 table.foreign_keys.remove(pos);
             }
 
-            Operation::AddIndex { table_name, index, .. } => {
-                let table = self.tables.get_mut(table_name).ok_or_else(|| {
-                    ReplayError::TableNotFound(table_name.clone())
-                })?;
+            Operation::AddIndex {
+                table_name, index, ..
+            } => {
+                let table = self
+                    .tables
+                    .get_mut(table_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(table_name.clone()))?;
                 if table.indexes.iter().any(|i| i.name == index.name) {
                     return Err(ReplayError::IndexAlreadyExists {
                         table: table_name.clone(),
@@ -459,37 +537,64 @@ impl Schema {
                 table.indexes.push(index.clone());
             }
 
-            Operation::DropIndex { table_name, index, .. } => {
-                let table = self.tables.get_mut(table_name).ok_or_else(|| {
-                    ReplayError::TableNotFound(table_name.clone())
-                })?;
-                let pos = table.indexes.iter().position(|i| i.name == index.name).ok_or_else(|| {
-                    ReplayError::IndexNotFound { table: table_name.clone(), index: index.name.clone() }
-                })?;
+            Operation::DropIndex {
+                table_name, index, ..
+            } => {
+                let table = self
+                    .tables
+                    .get_mut(table_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(table_name.clone()))?;
+                let pos = table
+                    .indexes
+                    .iter()
+                    .position(|i| i.name == index.name)
+                    .ok_or_else(|| ReplayError::IndexNotFound {
+                        table: table_name.clone(),
+                        index: index.name.clone(),
+                    })?;
                 table.indexes.remove(pos);
             }
 
-            Operation::AddConstraint { table_name, constraint } => {
-                let table = self.tables.get_mut(table_name).ok_or_else(|| {
-                    ReplayError::TableNotFound(table_name.clone())
-                })?;
-                if table.constraints.iter().any(|c| c.name() == constraint.name()) {
+            Operation::AddConstraint {
+                table_name,
+                constraint,
+            } => {
+                let table = self
+                    .tables
+                    .get_mut(table_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(table_name.clone()))?;
+                if table
+                    .constraints
+                    .iter()
+                    .any(|c| c.name() == constraint.name())
+                {
                     return Err(ReplayError::ConstraintAlreadyExists {
                         table: table_name.clone(),
                         constraint: constraint.name().to_string(),
                     });
                 }
                 table.constraints.push(constraint.clone());
+                normalize_table_primary_key(table);
             }
 
-            Operation::DropConstraint { table_name, constraint } => {
-                let table = self.tables.get_mut(table_name).ok_or_else(|| {
-                    ReplayError::TableNotFound(table_name.clone())
-                })?;
-                let pos = table.constraints.iter().position(|c| c.name() == constraint.name()).ok_or_else(|| {
-                    ReplayError::ConstraintNotFound { table: table_name.clone(), constraint: constraint.name().to_string() }
-                })?;
+            Operation::DropConstraint {
+                table_name,
+                constraint,
+            } => {
+                let table = self
+                    .tables
+                    .get_mut(table_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(table_name.clone()))?;
+                let pos = table
+                    .constraints
+                    .iter()
+                    .position(|c| c.name() == constraint.name())
+                    .ok_or_else(|| ReplayError::ConstraintNotFound {
+                        table: table_name.clone(),
+                        constraint: constraint.name().to_string(),
+                    })?;
                 table.constraints.remove(pos);
+                normalize_table_primary_key(table);
             }
 
             Operation::Statement { .. } | Operation::Invoke { .. } => {}
@@ -518,12 +623,20 @@ impl Schema {
                 self.functions.insert(new_key, new.clone());
             }
 
-            Operation::CreateTrigger { table_name, trigger } => {
-                let table = self.tables.get_mut(table_name).ok_or_else(|| {
-                    ReplayError::TableNotFound(table_name.clone())
-                })?;
+            Operation::CreateTrigger {
+                table_name,
+                trigger,
+            } => {
+                let table = self
+                    .tables
+                    .get_mut(table_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(table_name.clone()))?;
                 let tname = trigger.name.as_deref().unwrap_or("");
-                if table.triggers.iter().any(|t| t.name.as_deref() == Some(tname)) {
+                if table
+                    .triggers
+                    .iter()
+                    .any(|t| t.name.as_deref() == Some(tname))
+                {
                     return Err(ReplayError::TriggerAlreadyExists {
                         table: table_name.clone(),
                         trigger: tname.to_string(),
@@ -532,25 +645,44 @@ impl Schema {
                 table.triggers.push(trigger.clone());
             }
 
-            Operation::DropTrigger { table_name, trigger } => {
-                let table = self.tables.get_mut(table_name).ok_or_else(|| {
-                    ReplayError::TableNotFound(table_name.clone())
-                })?;
+            Operation::DropTrigger {
+                table_name,
+                trigger,
+            } => {
+                let table = self
+                    .tables
+                    .get_mut(table_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(table_name.clone()))?;
                 let tname = trigger.name.as_deref().unwrap_or("");
-                let pos = table.triggers.iter().position(|t| t.name.as_deref() == Some(tname)).ok_or_else(|| {
-                    ReplayError::TriggerNotFound { table: table_name.clone(), trigger: tname.to_string() }
-                })?;
+                let pos = table
+                    .triggers
+                    .iter()
+                    .position(|t| t.name.as_deref() == Some(tname))
+                    .ok_or_else(|| ReplayError::TriggerNotFound {
+                        table: table_name.clone(),
+                        trigger: tname.to_string(),
+                    })?;
                 table.triggers.remove(pos);
             }
 
-            Operation::AlterTrigger { table_name, old, new } => {
-                let table = self.tables.get_mut(table_name).ok_or_else(|| {
-                    ReplayError::TableNotFound(table_name.clone())
-                })?;
+            Operation::AlterTrigger {
+                table_name,
+                old,
+                new,
+            } => {
+                let table = self
+                    .tables
+                    .get_mut(table_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(table_name.clone()))?;
                 let tname = old.name.as_deref().unwrap_or("");
-                let pos = table.triggers.iter().position(|t| t.name.as_deref() == Some(tname)).ok_or_else(|| {
-                    ReplayError::TriggerNotFound { table: table_name.clone(), trigger: tname.to_string() }
-                })?;
+                let pos = table
+                    .triggers
+                    .iter()
+                    .position(|t| t.name.as_deref() == Some(tname))
+                    .ok_or_else(|| ReplayError::TriggerNotFound {
+                        table: table_name.clone(),
+                        trigger: tname.to_string(),
+                    })?;
                 table.triggers[pos] = new.clone();
             }
 
@@ -608,6 +740,25 @@ impl Schema {
                 }
             }
 
+            Operation::RenameEnumValue {
+                enum_name,
+                schema,
+                old_value,
+                new_value,
+            } => {
+                let key = schema_qualified_key(enum_name, schema.as_deref());
+                let enum_def = self
+                    .enums
+                    .get_mut(&key)
+                    .ok_or_else(|| ReplayError::EnumNotFound(key.clone()))?;
+                let value = enum_def
+                    .values
+                    .iter_mut()
+                    .find(|value| *value == old_value)
+                    .ok_or_else(|| ReplayError::EnumNotFound(format!("{key}.{old_value}")))?;
+                *value = new_value.clone();
+            }
+
             Operation::AlterEnum { old, new } => {
                 let old_key = old.qualified_name();
                 if self.enums.remove(&old_key).is_none() {
@@ -619,4 +770,115 @@ impl Schema {
         }
         Ok(())
     }
+}
+
+fn normalize_table_primary_key(table: &mut Table) {
+    let flagged: Vec<String> = table
+        .columns
+        .iter()
+        .filter(|column| column.primary_key)
+        .map(|column| column.name.clone())
+        .collect();
+
+    if table.primary_key.is_none() && !flagged.is_empty() {
+        table.primary_key = Some(PrimaryKey {
+            name: table.pk_constraint_name(),
+            columns: flagged.clone(),
+        });
+    }
+
+    let Some(pk) = &table.primary_key else {
+        return;
+    };
+
+    if !flagged.is_empty() && !same_string_set(&flagged, &pk.columns) {
+        return;
+    }
+
+    let pk_columns = pk.columns.clone();
+    for column in &mut table.columns {
+        column.primary_key = pk_columns.iter().any(|name| name == &column.name);
+        if column.primary_key {
+            column.nullable = false;
+        }
+    }
+}
+
+fn validate_table_primary_key(table_name: &str, table: &Table) -> Result<(), String> {
+    let flagged: Vec<&str> = table
+        .columns
+        .iter()
+        .filter(|column| column.primary_key)
+        .map(|column| column.name.as_str())
+        .collect();
+
+    let Some(pk) = &table.primary_key else {
+        return Ok(());
+    };
+
+    if pk.name.is_empty() {
+        return Err(format!(
+            "table '{table_name}' has a primary key with an empty name"
+        ));
+    }
+    if pk.columns.is_empty() {
+        return Err(format!(
+            "table '{table_name}' has a primary key with no columns"
+        ));
+    }
+
+    let mut pk_seen = HashSet::new();
+    for column in &pk.columns {
+        if !pk_seen.insert(column.as_str()) {
+            return Err(format!(
+                "table '{table_name}' primary key '{}' repeats column '{column}'",
+                pk.name
+            ));
+        }
+        if !table
+            .columns
+            .iter()
+            .any(|candidate| candidate.name == *column)
+        {
+            return Err(format!(
+                "table '{table_name}' primary key '{}' references unknown column '{column}'",
+                pk.name
+            ));
+        }
+    }
+
+    if !flagged.is_empty()
+        && !same_str_set(
+            &flagged,
+            &pk.columns.iter().map(String::as_str).collect::<Vec<_>>(),
+        )
+    {
+        return Err(format!(
+            "table '{table_name}' primary key column flags conflict with explicit primary_key '{}'",
+            pk.name
+        ));
+    }
+
+    for column in table.primary_key_columns() {
+        if column.nullable {
+            return Err(format!(
+                "table '{table_name}' primary key column '{}' must be non-null",
+                column.name
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn same_string_set(left: &[String], right: &[String]) -> bool {
+    let left: HashSet<&str> = left.iter().map(String::as_str).collect();
+    let right: HashSet<&str> = right.iter().map(String::as_str).collect();
+    left == right
+}
+
+fn same_str_set(left: &[&str], right: &[&str]) -> bool {
+    let left: HashSet<&str> = left.iter().copied().collect();
+    let right: HashSet<&str> = right.iter().copied().collect();
+    left == right
 }

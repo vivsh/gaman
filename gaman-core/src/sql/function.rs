@@ -4,7 +4,7 @@ use sqlparser::ast::{
 
 use super::error::SqlParseError;
 use super::util::{data_type_to_str, extract_string_literal, object_name_parts};
-use crate::states::{schema_qualified_key, FunctionDef, Volatility};
+use crate::states::{FunctionDef, Volatility, schema_qualified_key};
 
 pub(super) fn parse_create_function(
     cf: &CreateFunction,
@@ -19,7 +19,11 @@ pub(super) fn parse_create_function(
         .unwrap_or(&[])
         .iter()
         .map(|arg| {
-            let mode = arg.mode.as_ref().map(|m| format!("{} ", m)).unwrap_or_default();
+            let mode = arg
+                .mode
+                .as_ref()
+                .map(|m| format!("{} ", m))
+                .unwrap_or_default();
             let name = arg
                 .name
                 .as_ref()

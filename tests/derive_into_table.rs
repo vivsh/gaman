@@ -1,6 +1,6 @@
+use gaman::IntoTable;
 use gaman::core::Dialect;
 use gaman::schema::{Constraint, Table};
-use gaman::IntoTable;
 
 #[allow(dead_code)]
 #[derive(IntoTable)]
@@ -18,6 +18,30 @@ struct User {
     external_id: String,
 }
 
+#[allow(dead_code)]
+#[derive(IntoTable)]
+#[table(name = "order_lines")]
+struct OrderLine {
+    #[column(primary_key)]
+    order_id: i64,
+    #[column(primary_key)]
+    tenant_id: i64,
+    note: String,
+}
+
+#[allow(dead_code)]
+#[derive(IntoTable)]
+#[table(
+    name = "explicit_order_lines",
+    primary_key(name = "order_lines_identity", columns("tenant_id", "order_id"))
+)]
+struct ExplicitOrderLine {
+    #[column(primary_key)]
+    order_id: i64,
+    #[column(primary_key)]
+    tenant_id: i64,
+}
+
 fn table<T: gaman::schema::IntoTable>() -> Table {
     T::into_table(&Dialect::Postgres)
 }
@@ -27,14 +51,17 @@ fn derive_into_table_emits_column_indexes_and_unique_constraints() {
     let users = table::<User>();
 
     assert_eq!(users.indexes.len(), 2);
-    assert!(users
-        .indexes
-        .iter()
-        .any(|i| { i.name == "users_username_idx" && i.columns == ["username"] && !i.unique }));
-    assert!(users
-        .indexes
-        .iter()
-        .any(|i| { i.name == "users_handle_lookup_idx" && i.columns == ["handle"] && !i.unique }));
+    assert!(
+        users
+            .indexes
+            .iter()
+            .any(|i| { i.name == "users_username_idx" && i.columns == ["username"] && !i.unique })
+    );
+    assert!(
+        users.indexes.iter().any(|i| {
+            i.name == "users_handle_lookup_idx" && i.columns == ["handle"] && !i.unique
+        })
+    );
 
     assert_eq!(users.constraints.len(), 2);
     assert!(
@@ -49,4 +76,38 @@ fn derive_into_table_emits_column_indexes_and_unique_constraints() {
             .iter()
             .any(|c| matches!(c, Constraint::Unique { name, columns } if name == "users_external_id_key" && columns == &["external_id"]))
     );
+}
+
+#[test]
+fn derive_into_table_allows_composite_primary_key_fields() {
+    let table = table::<OrderLine>();
+    let pk = table.primary_key.expect("primary key");
+
+    assert_eq!(pk.name, "order_lines_pkey");
+    assert_eq!(pk.columns, ["order_id", "tenant_id"]);
+    assert!(
+        table
+            .columns
+            .iter()
+            .find(|c| c.name == "order_id")
+            .unwrap()
+            .primary_key
+    );
+    assert!(
+        table
+            .columns
+            .iter()
+            .find(|c| c.name == "tenant_id")
+            .unwrap()
+            .primary_key
+    );
+}
+
+#[test]
+fn derive_into_table_uses_explicit_primary_key_order_and_name() {
+    let table = table::<ExplicitOrderLine>();
+    let pk = table.primary_key.expect("primary key");
+
+    assert_eq!(pk.name, "order_lines_identity");
+    assert_eq!(pk.columns, ["tenant_id", "order_id"]);
 }

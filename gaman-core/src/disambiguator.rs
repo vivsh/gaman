@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::operations::Operation;
-use crate::states::{Column, Table};
+use crate::states::{Column, EnumDef, Table};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -23,6 +23,11 @@ pub enum ClarificationKind {
     },
     RenameColumn {
         table: String,
+        old: String,
+        candidates: Vec<String>,
+    },
+    RenameEnumValue {
+        enum_name: String,
         old: String,
         candidates: Vec<String>,
     },
@@ -160,12 +165,41 @@ fn tables_structurally_similar(a: &Table, b: &Table) -> bool {
     overlap * 2 > min_len
 }
 
+fn enum_after_value_rename(old: &EnumDef, old_value: &str, new_value: &str) -> EnumDef {
+    let mut renamed = old.clone();
+    for value in &mut renamed.values {
+        if value == old_value {
+            *value = new_value.to_string();
+            break;
+        }
+    }
+    renamed
+}
+
+fn enum_rename_leaves_safe_additions(
+    old: &EnumDef,
+    new: &EnumDef,
+    old_value: &str,
+    new_value: &str,
+) -> bool {
+    let renamed = enum_after_value_rename(old, old_value, new_value);
+    values_are_subsequence(&renamed.values, &new.values)
+}
+
+fn values_are_subsequence(old: &[String], new: &[String]) -> bool {
+    let mut new_iter = new.iter();
+    old.iter()
+        .all(|old_value| new_iter.by_ref().any(|new_value| new_value == old_value))
+}
+
 fn all_clarifications_raw(ops: &[Operation]) -> Vec<Clarification> {
     let mut result = Vec::new();
     let mut dropped_cols: HashMap<&str, Vec<&Column>> = HashMap::new();
     let mut added_cols: HashMap<&str, Vec<&Column>> = HashMap::new();
     let mut dropped_tables: Vec<&Table> = Vec::new();
     let mut created_tables: Vec<&Table> = Vec::new();
+    let mut dropped_enums: HashMap<String, &EnumDef> = HashMap::new();
+    let mut created_enums: HashMap<String, &EnumDef> = HashMap::new();
 
     for op in ops {
         match op {
@@ -185,6 +219,12 @@ fn all_clarifications_raw(ops: &[Operation]) -> Vec<Clarification> {
             }
             Operation::DropTable { table } => dropped_tables.push(table),
             Operation::CreateTable { table } => created_tables.push(table),
+            Operation::DropEnum { enum_def } => {
+                dropped_enums.insert(enum_def.qualified_name(), enum_def);
+            }
+            Operation::CreateEnum { enum_def } => {
+                created_enums.insert(enum_def.qualified_name(), enum_def);
+            }
             _ => {}
         }
     }
@@ -248,6 +288,52 @@ fn all_clarifications_raw(ops: &[Operation]) -> Vec<Clarification> {
         }
     }
 
+    let mut enum_keys: Vec<String> = dropped_enums
+        .keys()
+        .filter(|key| created_enums.contains_key(*key))
+        .cloned()
+        .collect();
+    enum_keys.sort();
+
+    for key in enum_keys {
+        let old_enum = dropped_enums[&key];
+        let new_enum = created_enums[&key];
+        let old_values: HashSet<&str> = old_enum.values.iter().map(|v| v.as_str()).collect();
+        let mut removed: Vec<&String> = old_enum
+            .values
+            .iter()
+            .filter(|value| !new_enum.values.contains(value))
+            .collect();
+        removed.sort();
+        let added: Vec<&String> = new_enum
+            .values
+            .iter()
+            .filter(|value| !old_values.contains(value.as_str()))
+            .collect();
+
+        for old_value in removed {
+            let mut candidates: Vec<String> = added
+                .iter()
+                .filter(|new_value| {
+                    enum_rename_leaves_safe_additions(old_enum, new_enum, old_value, new_value)
+                })
+                .map(|value| (*value).clone())
+                .collect();
+            candidates.sort();
+            if !candidates.is_empty() {
+                result.push(Clarification {
+                    id: format!("rename_enum_value:{}:{}", key, old_value),
+                    severity: Severity::Warning,
+                    kind: ClarificationKind::RenameEnumValue {
+                        enum_name: key.clone(),
+                        old: old_value.clone(),
+                        candidates,
+                    },
+                });
+            }
+        }
+    }
+
     for op in ops {
         match op {
             Operation::AddColumn { table_name, column }
@@ -302,27 +388,54 @@ fn all_clarifications_raw(ops: &[Operation]) -> Vec<Clarification> {
 
 fn gather_clarifications(ops: &[Operation], decisions: &[Decision]) -> Vec<Clarification> {
     let raw = all_clarifications_raw(ops);
+    let raw_map: HashMap<&str, &Clarification> = raw.iter().map(|c| (c.id.as_str(), c)).collect();
     let decided_ids: HashSet<&str> = decisions
         .iter()
         .map(|d| d.clarification_id.as_str())
         .collect();
-    let claimed: HashSet<&str> = decisions
-        .iter()
-        .filter_map(|d| {
-            if let Answer::RenameTo(name) = &d.answer {
-                Some(name.as_str())
-            } else {
-                None
+    let mut claimed_columns: HashSet<(String, String)> = HashSet::new();
+    let mut claimed_tables: HashSet<String> = HashSet::new();
+    let mut claimed_enum_values: HashSet<(String, String)> = HashSet::new();
+
+    for decision in decisions {
+        if let Answer::RenameTo(name) = &decision.answer
+            && let Some(clar) = raw_map.get(decision.clarification_id.as_str())
+        {
+            match &clar.kind {
+                ClarificationKind::RenameColumn { table, .. } => {
+                    claimed_columns.insert((table.clone(), name.clone()));
+                }
+                ClarificationKind::RenameTable { .. } => {
+                    claimed_tables.insert(name.clone());
+                }
+                ClarificationKind::RenameEnumValue { enum_name, .. } => {
+                    claimed_enum_values.insert((enum_name.clone(), name.clone()));
+                }
+                _ => {}
             }
-        })
-        .collect();
+        }
+    }
 
     raw.into_iter()
         .filter(|c| !decided_ids.contains(c.id.as_str()))
         .filter_map(|mut c| match &mut c.kind {
-            ClarificationKind::RenameColumn { candidates, .. }
-            | ClarificationKind::RenameTable { candidates, .. } => {
-                candidates.retain(|n| !claimed.contains(n.as_str()));
+            ClarificationKind::RenameColumn {
+                table, candidates, ..
+            } => {
+                candidates.retain(|n| !claimed_columns.contains(&(table.clone(), n.clone())));
+                if candidates.is_empty() { None } else { Some(c) }
+            }
+            ClarificationKind::RenameTable { candidates, .. } => {
+                candidates.retain(|n| !claimed_tables.contains(n));
+                if candidates.is_empty() { None } else { Some(c) }
+            }
+            ClarificationKind::RenameEnumValue {
+                enum_name,
+                candidates,
+                ..
+            } => {
+                candidates
+                    .retain(|n| !claimed_enum_values.contains(&(enum_name.clone(), n.clone())));
                 if candidates.is_empty() { None } else { Some(c) }
             }
             _ => Some(c),
@@ -350,6 +463,15 @@ fn validate_answer(clar: &Clarification, answer: &Answer) -> Result<(), Disambig
             }
         }
         (ClarificationKind::RenameTable { .. }, Answer::RenameNo) => {}
+        (ClarificationKind::RenameEnumValue { candidates, .. }, Answer::RenameTo(name)) => {
+            if !candidates.contains(name) {
+                return Err(DisambiguatorError::InvalidCandidate {
+                    id: clar.id.clone(),
+                    chosen: name.clone(),
+                });
+            }
+        }
+        (ClarificationKind::RenameEnumValue { .. }, Answer::RenameNo) => {}
         (ClarificationKind::NotNullAdd { .. }, Answer::NotNullDefault(_))
         | (ClarificationKind::NotNullAdd { .. }, Answer::NotNullNullable)
         | (ClarificationKind::NotNullAdd { .. }, Answer::NotNullManual) => {}
@@ -392,26 +514,39 @@ fn apply_decisions(
     let mut rename_col_targets: HashSet<(&str, &str)> = HashSet::new();
     let mut table_renames: HashMap<&str, &str> = HashMap::new();
     let mut rename_table_targets: HashSet<&str> = HashSet::new();
+    let mut enum_value_renames: HashMap<(&str, &str), &str> = HashMap::new();
+    let mut enum_create_by_key: HashMap<String, &EnumDef> = HashMap::new();
+
+    for op in ops {
+        if let Operation::CreateEnum { enum_def } = op {
+            enum_create_by_key.insert(enum_def.qualified_name(), enum_def);
+        }
+    }
 
     for decision in decisions {
-        if let Answer::RenameTo(new_name) = &decision.answer {
-            if let Some(clar) = clar_map.get(decision.clarification_id.as_str()) {
-                match &clar.kind {
-                    ClarificationKind::RenameColumn { table, old, .. } => {
-                        col_renames.insert((table.as_str(), old.as_str()), new_name.as_str());
-                        rename_col_targets.insert((table.as_str(), new_name.as_str()));
-                    }
-                    ClarificationKind::RenameTable { old, .. } => {
-                        table_renames.insert(old.as_str(), new_name.as_str());
-                        rename_table_targets.insert(new_name.as_str());
-                    }
-                    _ => {}
+        if let Answer::RenameTo(new_name) = &decision.answer
+            && let Some(clar) = clar_map.get(decision.clarification_id.as_str())
+        {
+            match &clar.kind {
+                ClarificationKind::RenameColumn { table, old, .. } => {
+                    col_renames.insert((table.as_str(), old.as_str()), new_name.as_str());
+                    rename_col_targets.insert((table.as_str(), new_name.as_str()));
                 }
+                ClarificationKind::RenameTable { old, .. } => {
+                    table_renames.insert(old.as_str(), new_name.as_str());
+                    rename_table_targets.insert(new_name.as_str());
+                }
+                ClarificationKind::RenameEnumValue { enum_name, old, .. } => {
+                    enum_value_renames
+                        .insert((enum_name.as_str(), old.as_str()), new_name.as_str());
+                }
+                _ => {}
             }
         }
     }
 
     let mut result = Vec::with_capacity(ops.len());
+    let mut replaced_enums: HashSet<String> = HashSet::new();
 
     for op in ops {
         match op {
@@ -512,6 +647,48 @@ fn apply_decisions(
                     cast_expr: cast,
                 });
             }
+            Operation::DropEnum { enum_def } => {
+                let key = enum_def.qualified_name();
+                let mut renamed = enum_def.clone();
+                let mut emitted_rename = false;
+
+                for value in &enum_def.values {
+                    if let Some(new_value) = enum_value_renames.get(&(key.as_str(), value.as_str()))
+                    {
+                        result.push(Operation::RenameEnumValue {
+                            enum_name: enum_def.name.clone(),
+                            schema: enum_def.schema.clone(),
+                            old_value: value.clone(),
+                            new_value: (*new_value).to_string(),
+                        });
+                        for renamed_value in &mut renamed.values {
+                            if renamed_value == value {
+                                *renamed_value = (*new_value).to_string();
+                                break;
+                            }
+                        }
+                        emitted_rename = true;
+                    }
+                }
+
+                if emitted_rename {
+                    if let Some(new_enum) = enum_create_by_key.get(&key) {
+                        if renamed != **new_enum {
+                            result.push(Operation::AlterEnum {
+                                old: renamed,
+                                new: (*new_enum).clone(),
+                            });
+                        }
+                        replaced_enums.insert(key);
+                    } else {
+                        result.push(Operation::DropEnum { enum_def: renamed });
+                    }
+                } else {
+                    result.push(op.clone());
+                }
+            }
+            Operation::CreateEnum { enum_def }
+                if replaced_enums.contains(&enum_def.qualified_name()) => {}
             _ => result.push(op.clone()),
         }
     }
@@ -534,6 +711,14 @@ mod tests {
             references: None,
             check: None,
             generated: None,
+        }
+    }
+
+    fn enum_def(values: &[&str]) -> EnumDef {
+        EnumDef {
+            name: "status".to_string(),
+            schema: None,
+            values: values.iter().map(|value| value.to_string()).collect(),
         }
     }
 
@@ -631,6 +816,71 @@ mod tests {
         ];
         let clar = get_clarifications(&ops);
         assert!(clar.is_empty());
+    }
+
+    #[test]
+    fn test_enum_value_rename_candidate() {
+        let ops = vec![
+            Operation::DropEnum {
+                enum_def: enum_def(&["draft", "live"]),
+            },
+            Operation::CreateEnum {
+                enum_def: enum_def(&["draft", "published"]),
+            },
+        ];
+        let clar = get_clarifications(&ops);
+        assert_eq!(clar.len(), 1);
+        assert_eq!(clar[0].id, "rename_enum_value:status:live");
+        assert_eq!(clar[0].severity, Severity::Warning);
+        match &clar[0].kind {
+            ClarificationKind::RenameEnumValue {
+                enum_name,
+                old,
+                candidates,
+            } => {
+                assert_eq!(enum_name, "status");
+                assert_eq!(old, "live");
+                assert_eq!(candidates, &["published"]);
+            }
+            _ => panic!("expected RenameEnumValue"),
+        }
+    }
+
+    #[test]
+    fn test_enum_value_rename_decision_rewrites_drop_create() {
+        let ops = vec![
+            Operation::DropEnum {
+                enum_def: enum_def(&["draft", "live"]),
+            },
+            Operation::CreateEnum {
+                enum_def: enum_def(&["draft", "published", "archived"]),
+            },
+        ];
+        let d = Disambiguator;
+        let resolved = match d
+            .process(
+                &ops,
+                &[decision(
+                    "rename_enum_value:status:live",
+                    Answer::RenameTo("published".to_string()),
+                )],
+            )
+            .unwrap()
+        {
+            DisambiguationResult::Resolved(ops) => ops,
+            DisambiguationResult::NeedsInput(c) => panic!("unexpected clarification: {c:?}"),
+        };
+        assert_eq!(resolved.len(), 2);
+        assert!(matches!(
+            &resolved[0],
+            Operation::RenameEnumValue {
+                enum_name,
+                old_value,
+                new_value,
+                ..
+            } if enum_name == "status" && old_value == "live" && new_value == "published"
+        ));
+        assert!(matches!(&resolved[1], Operation::AlterEnum { .. }));
     }
 
     /// Verifies that adding a NOT NULL column with no default produces a Fatal NotNullAdd clarification.

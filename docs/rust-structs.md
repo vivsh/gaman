@@ -25,6 +25,7 @@ Use table attributes when the default mapping from struct name to table name is 
 
 - `#[table(name = "...")]` overrides the default snake_case table name.
 - `#[table(schema = "...")]` sets a non-public schema for dialects that support schemas. SQLite rejects schema-qualified objects.
+- `#[table(primary_key(name = "...", columns("a", "b")))]` sets an explicit primary-key constraint name and ordered column list. Use this when the primary-key order should differ from struct field order or the constraint name must be preserved.
 
 ## Column attributes
 
@@ -45,7 +46,7 @@ If you do not specify `type = "..."`, Gaman uses the `ColumnType` trait for the 
 
 ### Constraints and defaults
 
-- `#[column(primary_key)]` marks the column as the primary key.
+- `#[column(primary_key)]` marks the column as part of the primary key. Mark multiple fields to create a composite primary key in struct field order.
 - `#[column(index)]` adds a single-column index named `{table}_{column}_idx`.
 - `#[column(index_name = "idx_name")]` adds a single-column index with an explicit name.
 - `#[column(unique)]` adds a single-column unique constraint named `{table}_{column}_key`.

@@ -76,18 +76,24 @@ impl DiffEngine {
         // (same name, same body), so diff_table won't generate a DropTrigger for it.
         // We detect these orphaned triggers here and prepend their DropTrigger ops before
         // fn_drops so they are removed before the function disappears.
-        let dropped_fns: HashSet<&str> = fn_drops.iter()
+        let dropped_fns: HashSet<&str> = fn_drops
+            .iter()
             .filter_map(|op| match op {
                 Operation::DropFunction { function } => Some(function.name.as_str()),
                 _ => None,
             })
             .collect();
         let dropped_table_names: HashSet<&str> = drops.iter().map(|t| t.name.as_str()).collect();
-        let existing_drop_trigger_keys: HashSet<String> = changes.iter()
+        let existing_drop_trigger_keys: HashSet<String> = changes
+            .iter()
             .filter_map(|op| match op {
-                Operation::DropTrigger { table_name, trigger } => {
-                    trigger.name.as_deref().map(|n| format!("{}:{}", table_name, n))
-                }
+                Operation::DropTrigger {
+                    table_name,
+                    trigger,
+                } => trigger
+                    .name
+                    .as_deref()
+                    .map(|n| format!("{}:{}", table_name, n)),
                 _ => None,
             })
             .collect();
@@ -98,8 +104,14 @@ impl DiffEngine {
                     continue; // table is being dropped; its triggers vanish with it
                 }
                 for trigger in &table.triggers {
-                    if trigger.function_name.as_deref().map_or(false, |f| dropped_fns.contains(f)) {
-                        let key = trigger.name.as_deref()
+                    if trigger
+                        .function_name
+                        .as_deref()
+                        .map_or(false, |f| dropped_fns.contains(f))
+                    {
+                        let key = trigger
+                            .name
+                            .as_deref()
                             .map(|n| format!("{}:{}", table_name, n))
                             .unwrap_or_default();
                         if !existing_drop_trigger_keys.contains(&key) {
@@ -158,19 +170,39 @@ fn diff_table(name: &str, prev: &Table, curr: &Table, ops: &mut Vec<Operation>) 
     // Without these, each iter().any() scan is O(n×m) across all entities.
     // curr_cols is not needed: drop-side uses curr_cols, add-side uses prev_cols;
     // we iterate curr.columns directly for the add/alter pass.
-    let prev_cols: HashMap<&str, &Column> = prev.columns.iter().map(|c| (c.name.as_str(), c)).collect();
-    let curr_cols: HashMap<&str, &Column> = curr.columns.iter().map(|c| (c.name.as_str(), c)).collect();
-    let prev_fks: HashMap<&str, &ForeignKey> = prev.foreign_keys.iter().map(|fk| (fk.name.as_str(), fk)).collect();
-    let curr_fks: HashMap<&str, &ForeignKey> = curr.foreign_keys.iter().map(|fk| (fk.name.as_str(), fk)).collect();
-    let prev_idxs: HashMap<&str, &Index> = prev.indexes.iter().map(|i| (i.name.as_str(), i)).collect();
-    let curr_idxs: HashMap<&str, &Index> = curr.indexes.iter().map(|i| (i.name.as_str(), i)).collect();
-    let prev_cons: HashMap<&str, &Constraint> = prev.constraints.iter().map(|c| (c.name(), c)).collect();
-    let curr_cons: HashMap<&str, &Constraint> = curr.constraints.iter().map(|c| (c.name(), c)).collect();
+    let prev_cols: HashMap<&str, &Column> =
+        prev.columns.iter().map(|c| (c.name.as_str(), c)).collect();
+    let curr_cols: HashMap<&str, &Column> =
+        curr.columns.iter().map(|c| (c.name.as_str(), c)).collect();
+    let prev_fks: HashMap<&str, &ForeignKey> = prev
+        .foreign_keys
+        .iter()
+        .map(|fk| (fk.name.as_str(), fk))
+        .collect();
+    let curr_fks: HashMap<&str, &ForeignKey> = curr
+        .foreign_keys
+        .iter()
+        .map(|fk| (fk.name.as_str(), fk))
+        .collect();
+    let prev_idxs: HashMap<&str, &Index> =
+        prev.indexes.iter().map(|i| (i.name.as_str(), i)).collect();
+    let curr_idxs: HashMap<&str, &Index> =
+        curr.indexes.iter().map(|i| (i.name.as_str(), i)).collect();
+    let prev_cons: HashMap<&str, &Constraint> =
+        prev.constraints.iter().map(|c| (c.name(), c)).collect();
+    let curr_cons: HashMap<&str, &Constraint> =
+        curr.constraints.iter().map(|c| (c.name(), c)).collect();
 
-    let prev_trgs: HashMap<&str, &TriggerDef> = prev.triggers.iter()
-        .filter_map(|t| t.name.as_deref().map(|n| (n, t))).collect();
-    let curr_trgs: HashMap<&str, &TriggerDef> = curr.triggers.iter()
-        .filter_map(|t| t.name.as_deref().map(|n| (n, t))).collect();
+    let prev_trgs: HashMap<&str, &TriggerDef> = prev
+        .triggers
+        .iter()
+        .filter_map(|t| t.name.as_deref().map(|n| (n, t)))
+        .collect();
+    let curr_trgs: HashMap<&str, &TriggerDef> = curr
+        .triggers
+        .iter()
+        .filter_map(|t| t.name.as_deref().map(|n| (n, t)))
+        .collect();
 
     // --- removals: triggers first (may reference columns/constraints via WHEN),
     //     then constraints, indexes, FKs, columns ---
@@ -178,27 +210,45 @@ fn diff_table(name: &str, prev: &Table, curr: &Table, ops: &mut Vec<Operation>) 
     for t in &prev.triggers {
         let tname = t.name.as_deref().unwrap_or("");
         if !curr_trgs.contains_key(tname) {
-            ops.push(Operation::DropTrigger { table_name: name.to_string(), trigger: t.clone() });
+            ops.push(Operation::DropTrigger {
+                table_name: name.to_string(),
+                trigger: t.clone(),
+            });
         }
     }
     for c in &prev.constraints {
         if curr_cons.get(c.name()) != Some(&c) {
-            ops.push(Operation::DropConstraint { table_name: name.to_string(), constraint: c.clone() });
+            ops.push(Operation::DropConstraint {
+                table_name: name.to_string(),
+                constraint: c.clone(),
+            });
         }
     }
     for i in &prev.indexes {
         if curr_idxs.get(i.name.as_str()) != Some(&i) {
-            ops.push(Operation::DropIndex { table_name: name.to_string(), index: i.clone(), concurrent: false });
+            ops.push(Operation::DropIndex {
+                table_name: name.to_string(),
+                index: i.clone(),
+                concurrent: false,
+            });
         }
     }
     for fk in &prev.foreign_keys {
         if curr_fks.get(fk.name.as_str()) != Some(&fk) {
-            ops.push(Operation::DropForeignKey { table_name: name.to_string(), foreign_key: fk.clone(), cascade: false });
+            ops.push(Operation::DropForeignKey {
+                table_name: name.to_string(),
+                foreign_key: fk.clone(),
+                cascade: false,
+            });
         }
     }
     for col in &prev.columns {
         if !curr_cols.contains_key(col.name.as_str()) {
-            ops.push(Operation::DropColumn { table_name: name.to_string(), column: col.clone(), cascade: false });
+            ops.push(Operation::DropColumn {
+                table_name: name.to_string(),
+                column: col.clone(),
+                cascade: false,
+            });
         }
     }
 
@@ -206,7 +256,10 @@ fn diff_table(name: &str, prev: &Table, curr: &Table, ops: &mut Vec<Operation>) 
 
     for col in &curr.columns {
         match prev_cols.get(col.name.as_str()) {
-            None => ops.push(Operation::AddColumn { table_name: name.to_string(), column: col.clone() }),
+            None => ops.push(Operation::AddColumn {
+                table_name: name.to_string(),
+                column: col.clone(),
+            }),
             Some(old) if *old != col => ops.push(Operation::AlterColumn {
                 table_name: name.to_string(),
                 old: (*old).clone(),
@@ -218,23 +271,36 @@ fn diff_table(name: &str, prev: &Table, curr: &Table, ops: &mut Vec<Operation>) 
     }
     for fk in &curr.foreign_keys {
         if prev_fks.get(fk.name.as_str()) != Some(&fk) {
-            ops.push(Operation::AddForeignKey { table_name: name.to_string(), foreign_key: fk.clone() });
+            ops.push(Operation::AddForeignKey {
+                table_name: name.to_string(),
+                foreign_key: fk.clone(),
+            });
         }
     }
     for i in &curr.indexes {
         if prev_idxs.get(i.name.as_str()) != Some(&i) {
-            ops.push(Operation::AddIndex { table_name: name.to_string(), index: i.clone(), concurrent: false });
+            ops.push(Operation::AddIndex {
+                table_name: name.to_string(),
+                index: i.clone(),
+                concurrent: false,
+            });
         }
     }
     for c in &curr.constraints {
         if prev_cons.get(c.name()) != Some(&c) {
-            ops.push(Operation::AddConstraint { table_name: name.to_string(), constraint: c.clone() });
+            ops.push(Operation::AddConstraint {
+                table_name: name.to_string(),
+                constraint: c.clone(),
+            });
         }
     }
     for t in &curr.triggers {
         let tname = t.name.as_deref().unwrap_or("");
         match prev_trgs.get(tname) {
-            None => ops.push(Operation::CreateTrigger { table_name: name.to_string(), trigger: t.clone() }),
+            None => ops.push(Operation::CreateTrigger {
+                table_name: name.to_string(),
+                trigger: t.clone(),
+            }),
             Some(old) if *old != t => ops.push(Operation::AlterTrigger {
                 table_name: name.to_string(),
                 old: (*old).clone(),
@@ -255,26 +321,37 @@ fn diff_functions(current: &Schema, previous: &Schema) -> (Vec<Operation>, Vec<O
             (None, None) => break,
             (Some(_), None) => {
                 let (_, f) = prev_iter.next().unwrap();
-                drops.push(Operation::DropFunction { function: f.clone() });
+                drops.push(Operation::DropFunction {
+                    function: f.clone(),
+                });
             }
             (None, Some(_)) => {
                 let (_, f) = curr_iter.next().unwrap();
-                creates.push(Operation::CreateFunction { function: f.clone() });
+                creates.push(Operation::CreateFunction {
+                    function: f.clone(),
+                });
             }
             (Some((pk, _)), Some((ck, _))) => match pk.as_str().cmp(ck.as_str()) {
                 std::cmp::Ordering::Less => {
                     let (_, f) = prev_iter.next().unwrap();
-                    drops.push(Operation::DropFunction { function: f.clone() });
+                    drops.push(Operation::DropFunction {
+                        function: f.clone(),
+                    });
                 }
                 std::cmp::Ordering::Greater => {
                     let (_, f) = curr_iter.next().unwrap();
-                    creates.push(Operation::CreateFunction { function: f.clone() });
+                    creates.push(Operation::CreateFunction {
+                        function: f.clone(),
+                    });
                 }
                 std::cmp::Ordering::Equal => {
                     let (_, pf) = prev_iter.next().unwrap();
                     let (_, cf) = curr_iter.next().unwrap();
                     if pf != cf {
-                        creates.push(Operation::AlterFunction { old: pf.clone(), new: cf.clone() });
+                        creates.push(Operation::AlterFunction {
+                            old: pf.clone(),
+                            new: cf.clone(),
+                        });
                     }
                 }
             },
@@ -299,27 +376,39 @@ fn diff_extensions(current: &Schema, previous: &Schema) -> (Vec<Operation>, Vec<
             (None, None) => break,
             (Some(_), None) => {
                 let (_, e) = prev_iter.next().unwrap();
-                drops.push(Operation::DropExtension { extension: e.clone() });
+                drops.push(Operation::DropExtension {
+                    extension: e.clone(),
+                });
             }
             (None, Some(_)) => {
                 let (_, e) = curr_iter.next().unwrap();
-                creates.push(Operation::CreateExtension { extension: e.clone() });
+                creates.push(Operation::CreateExtension {
+                    extension: e.clone(),
+                });
             }
             (Some((pk, _)), Some((ck, _))) => match pk.as_str().cmp(ck.as_str()) {
                 std::cmp::Ordering::Less => {
                     let (_, e) = prev_iter.next().unwrap();
-                    drops.push(Operation::DropExtension { extension: e.clone() });
+                    drops.push(Operation::DropExtension {
+                        extension: e.clone(),
+                    });
                 }
                 std::cmp::Ordering::Greater => {
                     let (_, e) = curr_iter.next().unwrap();
-                    creates.push(Operation::CreateExtension { extension: e.clone() });
+                    creates.push(Operation::CreateExtension {
+                        extension: e.clone(),
+                    });
                 }
                 std::cmp::Ordering::Equal => {
                     let (_, pe) = prev_iter.next().unwrap();
                     let (_, ce) = curr_iter.next().unwrap();
                     if pe != ce {
-                        drops.push(Operation::DropExtension { extension: pe.clone() });
-                        creates.push(Operation::CreateExtension { extension: ce.clone() });
+                        drops.push(Operation::DropExtension {
+                            extension: pe.clone(),
+                        });
+                        creates.push(Operation::CreateExtension {
+                            extension: ce.clone(),
+                        });
                     }
                 }
             },
@@ -341,30 +430,45 @@ fn diff_enums(current: &Schema, previous: &Schema) -> (Vec<Operation>, Vec<Opera
             (None, None) => break,
             (Some(_), None) => {
                 let (_, e) = prev_iter.next().unwrap();
-                drops.push(Operation::DropEnum { enum_def: e.clone() });
+                drops.push(Operation::DropEnum {
+                    enum_def: e.clone(),
+                });
             }
             (None, Some(_)) => {
                 let (_, e) = curr_iter.next().unwrap();
-                creates.push(Operation::CreateEnum { enum_def: e.clone() });
+                creates.push(Operation::CreateEnum {
+                    enum_def: e.clone(),
+                });
             }
             (Some((pk, _)), Some((ck, _))) => match pk.as_str().cmp(ck.as_str()) {
                 std::cmp::Ordering::Less => {
                     let (_, e) = prev_iter.next().unwrap();
-                    drops.push(Operation::DropEnum { enum_def: e.clone() });
+                    drops.push(Operation::DropEnum {
+                        enum_def: e.clone(),
+                    });
                 }
                 std::cmp::Ordering::Greater => {
                     let (_, e) = curr_iter.next().unwrap();
-                    creates.push(Operation::CreateEnum { enum_def: e.clone() });
+                    creates.push(Operation::CreateEnum {
+                        enum_def: e.clone(),
+                    });
                 }
                 std::cmp::Ordering::Equal => {
                     let (_, pe) = prev_iter.next().unwrap();
                     let (_, ce) = curr_iter.next().unwrap();
                     if pe != ce {
                         if is_append_only(pe, ce) {
-                            creates.push(Operation::AlterEnum { old: pe.clone(), new: ce.clone() });
+                            creates.push(Operation::AlterEnum {
+                                old: pe.clone(),
+                                new: ce.clone(),
+                            });
                         } else {
-                            drops.push(Operation::DropEnum { enum_def: pe.clone() });
-                            creates.push(Operation::CreateEnum { enum_def: ce.clone() });
+                            drops.push(Operation::DropEnum {
+                                enum_def: pe.clone(),
+                            });
+                            creates.push(Operation::CreateEnum {
+                                enum_def: ce.clone(),
+                            });
                         }
                     }
                 }
@@ -415,7 +519,10 @@ fn diff_views(current: &Schema, previous: &Schema) -> (Vec<Operation>, Vec<Opera
                     let (_, pv) = prev_iter.next().unwrap();
                     let (_, cv) = curr_iter.next().unwrap();
                     if pv != cv {
-                        creates.push(Operation::ReplaceView { old: pv.clone(), new: cv.clone() });
+                        creates.push(Operation::ReplaceView {
+                            old: pv.clone(),
+                            new: cv.clone(),
+                        });
                     }
                 }
             },
@@ -442,7 +549,14 @@ fn drop_ordered(tables: Vec<&Table>) -> Vec<Operation> {
     sorted.sort_by_key(|t| t.name.as_str());
     for table in sorted {
         if colors.get(table.name.as_str()).copied().unwrap_or(0) == 0 {
-            fk_topo_visit(table, &by_name, &drop_set, &mut colors, &mut order, &mut cyclic);
+            fk_topo_visit(
+                table,
+                &by_name,
+                &drop_set,
+                &mut colors,
+                &mut order,
+                &mut cyclic,
+            );
         }
     }
     // order is create-order (dependencies first); reverse gives safe drop order.
@@ -453,7 +567,8 @@ fn drop_ordered(tables: Vec<&Table>) -> Vec<Operation> {
     for table in order.iter().rev() {
         for fk in &table.foreign_keys {
             // Self-referential FKs don't block drops — the row and FK vanish together.
-            if fk.to_table != table.name && cyclic.contains(&(table.name.clone(), fk.name.clone())) {
+            if fk.to_table != table.name && cyclic.contains(&(table.name.clone(), fk.name.clone()))
+            {
                 pre.push(Operation::DropForeignKey {
                     table_name: table.name.clone(),
                     foreign_key: fk.clone(),
@@ -461,14 +576,20 @@ fn drop_ordered(tables: Vec<&Table>) -> Vec<Operation> {
                 });
             }
         }
-        drops.push(Operation::DropTable { table: (*table).clone() });
+        drops.push(Operation::DropTable {
+            table: (*table).clone(),
+        });
     }
     pre.extend(drops);
     pre
 }
 
-fn fk_topo_sort<'a>(tables: Vec<&'a Table>, new_names: &HashSet<&str>) -> (Vec<Operation>, Vec<Operation>) {
-    let by_name: HashMap<&'a str, &'a Table> = tables.iter().map(|t| (t.name.as_str(), *t)).collect();
+fn fk_topo_sort<'a>(
+    tables: Vec<&'a Table>,
+    new_names: &HashSet<&str>,
+) -> (Vec<Operation>, Vec<Operation>) {
+    let by_name: HashMap<&'a str, &'a Table> =
+        tables.iter().map(|t| (t.name.as_str(), *t)).collect();
     let mut colors: HashMap<&'a str, u8> = HashMap::new(); // 0=unvisited, 1=in-stack, 2=done
     let mut order: Vec<&'a Table> = Vec::new();
     let mut cyclic: HashSet<(String, String)> = HashSet::new(); // (table_name, fk_name)
@@ -476,7 +597,14 @@ fn fk_topo_sort<'a>(tables: Vec<&'a Table>, new_names: &HashSet<&str>) -> (Vec<O
     sorted.sort_by_key(|t| t.name.as_str());
     for table in sorted {
         if colors.get(table.name.as_str()).copied().unwrap_or(0) == 0 {
-            fk_topo_visit(table, &by_name, new_names, &mut colors, &mut order, &mut cyclic);
+            fk_topo_visit(
+                table,
+                &by_name,
+                new_names,
+                &mut colors,
+                &mut order,
+                &mut cyclic,
+            );
         }
     }
     let mut creates: Vec<Operation> = Vec::with_capacity(order.len());
@@ -485,10 +613,13 @@ fn fk_topo_sort<'a>(tables: Vec<&'a Table>, new_names: &HashSet<&str>) -> (Vec<O
         let has_cyclic = cyclic.iter().any(|(t, _)| t == &table.name);
         if has_cyclic {
             let mut t = table.clone();
-            t.foreign_keys.retain(|fk| !cyclic.contains(&(table.name.clone(), fk.name.clone())));
+            t.foreign_keys
+                .retain(|fk| !cyclic.contains(&(table.name.clone(), fk.name.clone())));
             creates.push(Operation::CreateTable { table: t });
         } else {
-            creates.push(Operation::CreateTable { table: table.clone() });
+            creates.push(Operation::CreateTable {
+                table: table.clone(),
+            });
         }
         for fk in &table.foreign_keys {
             if cyclic.contains(&(table.name.clone(), fk.name.clone())) {
@@ -518,7 +649,9 @@ fn fk_topo_visit<'a>(
             cyclic.insert((table.name.to_string(), fk.name.to_string()));
         }
     }
-    let mut deps: Vec<(&str, &str)> = table.foreign_keys.iter()
+    let mut deps: Vec<(&str, &str)> = table
+        .foreign_keys
+        .iter()
         .filter(|fk| new_names.contains(fk.to_table.as_str()) && fk.to_table != table.name)
         .map(|fk| (fk.to_table.as_str(), fk.name.as_str()))
         .collect();
@@ -544,14 +677,26 @@ fn fk_topo_visit<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::states::{Column, Constraint, ForeignKey, FunctionDef, Index, Table, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming, ViewDef, Volatility};
+    use crate::states::{
+        Column, Constraint, ForeignKey, FunctionDef, Index, Table, TriggerDef, TriggerEvent,
+        TriggerScope, TriggerTiming, ViewDef, Volatility,
+    };
 
     fn engine() -> DiffEngine {
         DiffEngine::new()
     }
 
     fn empty_table(name: &str) -> Table {
-        Table { name: name.to_string(), schema: None, columns: vec![], foreign_keys: vec![], indexes: vec![], constraints: vec![], triggers: vec![] }
+        Table {
+            name: name.to_string(),
+            schema: None,
+            primary_key: None,
+            columns: vec![],
+            foreign_keys: vec![],
+            indexes: vec![],
+            constraints: vec![],
+            triggers: vec![],
+        }
     }
 
     fn basic_function(name: &str) -> FunctionDef {
@@ -581,7 +726,14 @@ mod tests {
     }
 
     fn text_col(name: &str) -> Column {
-        Column { name: name.to_string(), col_type: "text".to_string(), nullable: false, default: None, primary_key: false, ..Default::default() }
+        Column {
+            name: name.to_string(),
+            col_type: "text".to_string(),
+            nullable: false,
+            default: None,
+            primary_key: false,
+            ..Default::default()
+        }
     }
 
     fn state_with_table(t: Table) -> Schema {
@@ -623,8 +775,10 @@ mod tests {
     fn multiple_new_tables_sorted() {
         let prev = Schema::default();
         let mut curr = Schema::default();
-        curr.tables.insert("zebra".to_string(), empty_table("zebra"));
-        curr.tables.insert("apple".to_string(), empty_table("apple"));
+        curr.tables
+            .insert("zebra".to_string(), empty_table("zebra"));
+        curr.tables
+            .insert("apple".to_string(), empty_table("apple"));
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 2);
         assert!(matches!(&ops[0], Operation::CreateTable { table } if table.name == "apple"));
@@ -635,8 +789,10 @@ mod tests {
     #[test]
     fn multiple_dropped_tables_reverse_sorted() {
         let mut prev = Schema::default();
-        prev.tables.insert("zebra".to_string(), empty_table("zebra"));
-        prev.tables.insert("apple".to_string(), empty_table("apple"));
+        prev.tables
+            .insert("zebra".to_string(), empty_table("zebra"));
+        prev.tables
+            .insert("apple".to_string(), empty_table("apple"));
         let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 2);
@@ -662,10 +818,13 @@ mod tests {
         let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
         // inventory (referencing table) must be dropped before products (referenced)
-        let drop_names: Vec<&str> = ops.iter().filter_map(|op| match op {
-            Operation::DropTable { table } => Some(table.name.as_str()),
-            _ => None,
-        }).collect();
+        let drop_names: Vec<&str> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Operation::DropTable { table } => Some(table.name.as_str()),
+                _ => None,
+            })
+            .collect();
         assert_eq!(drop_names, vec!["inventory", "products"]);
     }
 
@@ -678,7 +837,9 @@ mod tests {
         let curr = state_with_table(curr_table);
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], Operation::AddColumn { table_name, column } if table_name == "users" && column.name == "email"));
+        assert!(
+            matches!(&ops[0], Operation::AddColumn { table_name, column } if table_name == "users" && column.name == "email")
+        );
     }
 
     /// A removed column generates DropColumn.
@@ -690,7 +851,9 @@ mod tests {
         let curr = state_with_table(empty_table("users"));
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], Operation::DropColumn { table_name, column, .. } if table_name == "users" && column.name == "email"));
+        assert!(
+            matches!(&ops[0], Operation::DropColumn { table_name, column, .. } if table_name == "users" && column.name == "email")
+        );
     }
 
     /// A column whose type changes generates AlterColumn.
@@ -701,23 +864,46 @@ mod tests {
         let prev = state_with_table(prev_table);
 
         let mut curr_table = empty_table("users");
-        curr_table.columns.push(Column { name: "bio".to_string(), col_type: "varchar(500)".to_string(), nullable: false, default: None, primary_key: false, ..Default::default() });
+        curr_table.columns.push(Column {
+            name: "bio".to_string(),
+            col_type: "varchar(500)".to_string(),
+            nullable: false,
+            default: None,
+            primary_key: false,
+            ..Default::default()
+        });
         let curr = state_with_table(curr_table);
 
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], Operation::AlterColumn { table_name, .. } if table_name == "users"));
+        assert!(
+            matches!(&ops[0], Operation::AlterColumn { table_name, .. } if table_name == "users")
+        );
     }
 
     /// A column whose nullable flag changes generates AlterColumn.
     #[test]
     fn altered_column_nullable_generates_alter() {
         let mut prev_table = empty_table("users");
-        prev_table.columns.push(Column { name: "bio".to_string(), col_type: "text".to_string(), nullable: false, default: None, primary_key: false, ..Default::default() });
+        prev_table.columns.push(Column {
+            name: "bio".to_string(),
+            col_type: "text".to_string(),
+            nullable: false,
+            default: None,
+            primary_key: false,
+            ..Default::default()
+        });
         let prev = state_with_table(prev_table);
 
         let mut curr_table = empty_table("users");
-        curr_table.columns.push(Column { name: "bio".to_string(), col_type: "text".to_string(), nullable: true, default: None, primary_key: false, ..Default::default() });
+        curr_table.columns.push(Column {
+            name: "bio".to_string(),
+            col_type: "text".to_string(),
+            nullable: true,
+            default: None,
+            primary_key: false,
+            ..Default::default()
+        });
         let curr = state_with_table(curr_table);
 
         let ops = engine().diff(&curr, &prev).unwrap();
@@ -729,11 +915,25 @@ mod tests {
     #[test]
     fn altered_column_default_generates_alter() {
         let mut prev_table = empty_table("users");
-        prev_table.columns.push(Column { name: "score".to_string(), col_type: "int".to_string(), nullable: false, default: None, primary_key: false, ..Default::default() });
+        prev_table.columns.push(Column {
+            name: "score".to_string(),
+            col_type: "int".to_string(),
+            nullable: false,
+            default: None,
+            primary_key: false,
+            ..Default::default()
+        });
         let prev = state_with_table(prev_table);
 
         let mut curr_table = empty_table("users");
-        curr_table.columns.push(Column { name: "score".to_string(), col_type: "int".to_string(), nullable: false, default: Some("0".to_string()), primary_key: false, ..Default::default() });
+        curr_table.columns.push(Column {
+            name: "score".to_string(),
+            col_type: "int".to_string(),
+            nullable: false,
+            default: Some("0".to_string()),
+            primary_key: false,
+            ..Default::default()
+        });
         let curr = state_with_table(curr_table);
 
         let ops = engine().diff(&curr, &prev).unwrap();
@@ -756,23 +956,37 @@ mod tests {
     fn added_fk_generates_add() {
         let prev = state_with_table(empty_table("posts"));
         let mut curr_table = empty_table("posts");
-        curr_table.foreign_keys.push(ForeignKey { name: "fk_user".to_string(), from_column: "user_id".to_string(), to_table: "users".to_string(), to_column: "id".to_string() });
+        curr_table.foreign_keys.push(ForeignKey {
+            name: "fk_user".to_string(),
+            from_column: "user_id".to_string(),
+            to_table: "users".to_string(),
+            to_column: "id".to_string(),
+        });
         let curr = state_with_table(curr_table);
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], Operation::AddForeignKey { foreign_key, .. } if foreign_key.name == "fk_user"));
+        assert!(
+            matches!(&ops[0], Operation::AddForeignKey { foreign_key, .. } if foreign_key.name == "fk_user")
+        );
     }
 
     /// A removed foreign key generates DropForeignKey.
     #[test]
     fn removed_fk_generates_drop() {
         let mut prev_table = empty_table("posts");
-        prev_table.foreign_keys.push(ForeignKey { name: "fk_user".to_string(), from_column: "user_id".to_string(), to_table: "users".to_string(), to_column: "id".to_string() });
+        prev_table.foreign_keys.push(ForeignKey {
+            name: "fk_user".to_string(),
+            from_column: "user_id".to_string(),
+            to_table: "users".to_string(),
+            to_column: "id".to_string(),
+        });
         let prev = state_with_table(prev_table);
         let curr = state_with_table(empty_table("posts"));
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], Operation::DropForeignKey { foreign_key, .. } if foreign_key.name == "fk_user"));
+        assert!(
+            matches!(&ops[0], Operation::DropForeignKey { foreign_key, .. } if foreign_key.name == "fk_user")
+        );
     }
 
     /// A new index generates AddIndex.
@@ -780,7 +994,12 @@ mod tests {
     fn added_index_generates_add() {
         let prev = state_with_table(empty_table("users"));
         let mut curr_table = empty_table("users");
-        curr_table.indexes.push(Index { name: "idx_email".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None });
+        curr_table.indexes.push(Index {
+            name: "idx_email".to_string(),
+            columns: vec!["email".to_string()],
+            unique: true,
+            predicate: None,
+        });
         let curr = state_with_table(curr_table);
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
@@ -791,7 +1010,12 @@ mod tests {
     #[test]
     fn removed_index_generates_drop() {
         let mut prev_table = empty_table("users");
-        prev_table.indexes.push(Index { name: "idx_email".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None });
+        prev_table.indexes.push(Index {
+            name: "idx_email".to_string(),
+            columns: vec!["email".to_string()],
+            unique: true,
+            predicate: None,
+        });
         let prev = state_with_table(prev_table);
         let curr = state_with_table(empty_table("users"));
         let ops = engine().diff(&curr, &prev).unwrap();
@@ -804,23 +1028,33 @@ mod tests {
     fn added_constraint_generates_add() {
         let prev = state_with_table(empty_table("users"));
         let mut curr_table = empty_table("users");
-        curr_table.constraints.push(Constraint::Check { name: "chk_age".to_string(), expression: "age > 0".to_string() });
+        curr_table.constraints.push(Constraint::Check {
+            name: "chk_age".to_string(),
+            expression: "age > 0".to_string(),
+        });
         let curr = state_with_table(curr_table);
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], Operation::AddConstraint { constraint, .. } if constraint.name() == "chk_age"));
+        assert!(
+            matches!(&ops[0], Operation::AddConstraint { constraint, .. } if constraint.name() == "chk_age")
+        );
     }
 
     /// A removed constraint generates DropConstraint.
     #[test]
     fn removed_constraint_generates_drop() {
         let mut prev_table = empty_table("users");
-        prev_table.constraints.push(Constraint::Unique { name: "uq_email".to_string(), columns: vec!["email".to_string()] });
+        prev_table.constraints.push(Constraint::Unique {
+            name: "uq_email".to_string(),
+            columns: vec!["email".to_string()],
+        });
         let prev = state_with_table(prev_table);
         let curr = state_with_table(empty_table("users"));
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], Operation::DropConstraint { constraint, .. } if constraint.name() == "uq_email"));
+        assert!(
+            matches!(&ops[0], Operation::DropConstraint { constraint, .. } if constraint.name() == "uq_email")
+        );
     }
 
     /// Removals (Drop*) are emitted before additions (Add*) within the same table.
@@ -836,8 +1070,14 @@ mod tests {
 
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 2);
-        assert!(matches!(&ops[0], Operation::DropColumn { .. }), "drop should come first");
-        assert!(matches!(&ops[1], Operation::AddColumn { .. }), "add should come second");
+        assert!(
+            matches!(&ops[0], Operation::DropColumn { .. }),
+            "drop should come first"
+        );
+        assert!(
+            matches!(&ops[1], Operation::AddColumn { .. }),
+            "add should come second"
+        );
     }
 
     /// Drops come before Creates at the table level.
@@ -850,8 +1090,14 @@ mod tests {
 
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 2);
-        assert!(matches!(&ops[0], Operation::DropTable { .. }), "drop should come first");
-        assert!(matches!(&ops[1], Operation::CreateTable { .. }), "create should come second");
+        assert!(
+            matches!(&ops[0], Operation::DropTable { .. }),
+            "drop should come first"
+        );
+        assert!(
+            matches!(&ops[1], Operation::CreateTable { .. }),
+            "create should come second"
+        );
     }
 
     /// The diff result, when applied to previous state, produces a state equal to current.
@@ -862,15 +1108,24 @@ mod tests {
         prev_table.columns.push(text_col("old_field"));
         let mut prev = Schema::default();
         prev.tables.insert("users".to_string(), prev_table);
-        prev.tables.insert("to_drop".to_string(), empty_table("to_drop"));
+        prev.tables
+            .insert("to_drop".to_string(), empty_table("to_drop"));
 
         let mut curr_table = empty_table("users");
         curr_table.columns.push(text_col("name"));
-        curr_table.columns.push(Column { name: "old_field".to_string(), col_type: "int".to_string(), nullable: true, default: None, primary_key: false, ..Default::default() });
+        curr_table.columns.push(Column {
+            name: "old_field".to_string(),
+            col_type: "int".to_string(),
+            nullable: true,
+            default: None,
+            primary_key: false,
+            ..Default::default()
+        });
         curr_table.columns.push(text_col("new_field"));
         let mut curr = Schema::default();
         curr.tables.insert("users".to_string(), curr_table);
-        curr.tables.insert("to_create".to_string(), empty_table("to_create"));
+        curr.tables
+            .insert("to_create".to_string(), empty_table("to_create"));
 
         let ops = engine().diff(&curr, &prev).unwrap();
 
@@ -879,7 +1134,10 @@ mod tests {
             replayed.apply(op).expect("op should apply cleanly");
         }
 
-        assert_eq!(replayed.tables.keys().collect::<Vec<_>>(), curr.tables.keys().collect::<Vec<_>>());
+        assert_eq!(
+            replayed.tables.keys().collect::<Vec<_>>(),
+            curr.tables.keys().collect::<Vec<_>>()
+        );
         let replayed_users = &replayed.tables["users"];
         let curr_users = &curr.tables["users"];
         assert_eq!(replayed_users.columns.len(), curr_users.columns.len());
@@ -907,8 +1165,10 @@ mod tests {
         curr.tables.insert("posts".to_string(), posts);
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 2);
-        assert!(matches!(&ops[0], Operation::CreateTable { table } if table.name == "users"),
-            "users (referenced) must come before posts (referencing)");
+        assert!(
+            matches!(&ops[0], Operation::CreateTable { table } if table.name == "users"),
+            "users (referenced) must come before posts (referencing)"
+        );
         assert!(matches!(&ops[1], Operation::CreateTable { table } if table.name == "posts"));
     }
 
@@ -916,7 +1176,8 @@ mod tests {
     #[test]
     fn fk_to_existing_table_does_not_affect_order() {
         let mut prev = Schema::default();
-        prev.tables.insert("users".to_string(), empty_table("users"));
+        prev.tables
+            .insert("users".to_string(), empty_table("users"));
         let mut curr = prev.clone();
         let mut posts = empty_table("posts");
         posts.foreign_keys.push(ForeignKey {
@@ -954,19 +1215,33 @@ mod tests {
 
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 2);
-        assert!(matches!(&ops[0], Operation::DropForeignKey { foreign_key, .. } if foreign_key.name == "fk_user"));
-        assert!(matches!(&ops[1], Operation::AddForeignKey { foreign_key, .. } if foreign_key.to_table == "accounts"));
+        assert!(
+            matches!(&ops[0], Operation::DropForeignKey { foreign_key, .. } if foreign_key.name == "fk_user")
+        );
+        assert!(
+            matches!(&ops[1], Operation::AddForeignKey { foreign_key, .. } if foreign_key.to_table == "accounts")
+        );
     }
 
     /// Changing an index's unique flag emits DropIndex then AddIndex.
     #[test]
     fn modified_index_generates_drop_and_add() {
         let mut prev_table = empty_table("users");
-        prev_table.indexes.push(Index { name: "idx_email".to_string(), columns: vec!["email".to_string()], unique: false, predicate: None });
+        prev_table.indexes.push(Index {
+            name: "idx_email".to_string(),
+            columns: vec!["email".to_string()],
+            unique: false,
+            predicate: None,
+        });
         let prev = state_with_table(prev_table);
 
         let mut curr_table = empty_table("users");
-        curr_table.indexes.push(Index { name: "idx_email".to_string(), columns: vec!["email".to_string()], unique: true, predicate: None });
+        curr_table.indexes.push(Index {
+            name: "idx_email".to_string(),
+            columns: vec!["email".to_string()],
+            unique: true,
+            predicate: None,
+        });
         let curr = state_with_table(curr_table);
 
         let ops = engine().diff(&curr, &prev).unwrap();
@@ -979,29 +1254,42 @@ mod tests {
     #[test]
     fn modified_constraint_generates_drop_and_add() {
         let mut prev_table = empty_table("users");
-        prev_table.constraints.push(Constraint::Check { name: "chk_age".to_string(), expression: "age > 0".to_string() });
+        prev_table.constraints.push(Constraint::Check {
+            name: "chk_age".to_string(),
+            expression: "age > 0".to_string(),
+        });
         let prev = state_with_table(prev_table);
 
         let mut curr_table = empty_table("users");
-        curr_table.constraints.push(Constraint::Check { name: "chk_age".to_string(), expression: "age >= 18".to_string() });
+        curr_table.constraints.push(Constraint::Check {
+            name: "chk_age".to_string(),
+            expression: "age >= 18".to_string(),
+        });
         let curr = state_with_table(curr_table);
 
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 2);
-        assert!(matches!(&ops[0], Operation::DropConstraint { constraint, .. } if constraint.name() == "chk_age"));
-        assert!(matches!(&ops[1], Operation::AddConstraint { constraint, .. }
-            if matches!(constraint, Constraint::Check { expression, .. } if expression == "age >= 18")));
+        assert!(
+            matches!(&ops[0], Operation::DropConstraint { constraint, .. } if constraint.name() == "chk_age")
+        );
+        assert!(
+            matches!(&ops[1], Operation::AddConstraint { constraint, .. }
+            if matches!(constraint, Constraint::Check { expression, .. } if expression == "age >= 18"))
+        );
     }
 
     /// A function present in current but not previous generates CreateFunction.
     #[test]
     fn new_function_generates_create() {
         let mut curr = Schema::default();
-        curr.functions.insert("notify".to_string(), basic_function("notify"));
+        curr.functions
+            .insert("notify".to_string(), basic_function("notify"));
         let prev = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], Operation::CreateFunction { function } if function.name == "notify"));
+        assert!(
+            matches!(&ops[0], Operation::CreateFunction { function } if function.name == "notify")
+        );
     }
 
     /// A function present in previous but not current generates DropFunction.
@@ -1009,10 +1297,13 @@ mod tests {
     fn removed_function_generates_drop() {
         let curr = Schema::default();
         let mut prev = Schema::default();
-        prev.functions.insert("notify".to_string(), basic_function("notify"));
+        prev.functions
+            .insert("notify".to_string(), basic_function("notify"));
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], Operation::DropFunction { function } if function.name == "notify"));
+        assert!(
+            matches!(&ops[0], Operation::DropFunction { function } if function.name == "notify")
+        );
     }
 
     /// A changed function body generates AlterFunction with correct old and new.
@@ -1023,7 +1314,8 @@ mod tests {
         updated.body = "SELECT 2".to_string();
         curr.functions.insert("notify".to_string(), updated.clone());
         let mut prev = Schema::default();
-        prev.functions.insert("notify".to_string(), basic_function("notify"));
+        prev.functions
+            .insert("notify".to_string(), basic_function("notify"));
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], Operation::AlterFunction { old, new }
@@ -1039,7 +1331,9 @@ mod tests {
         let curr = state_with_table(curr_table);
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], Operation::CreateTrigger { trigger, .. } if trigger.name.as_deref() == Some("audit_trg")));
+        assert!(
+            matches!(&ops[0], Operation::CreateTrigger { trigger, .. } if trigger.name.as_deref() == Some("audit_trg"))
+        );
     }
 
     /// A removed trigger generates DropTrigger.
@@ -1051,7 +1345,9 @@ mod tests {
         let prev = state_with_table(prev_table);
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], Operation::DropTrigger { trigger, .. } if trigger.name.as_deref() == Some("audit_trg")));
+        assert!(
+            matches!(&ops[0], Operation::DropTrigger { trigger, .. } if trigger.name.as_deref() == Some("audit_trg"))
+        );
     }
 
     /// A changed trigger generates AlterTrigger.
@@ -1075,31 +1371,52 @@ mod tests {
     #[test]
     fn function_creates_before_table_creates() {
         let mut curr = Schema::default();
-        curr.tables.insert("users".to_string(), empty_table("users"));
-        curr.functions.insert("notify".to_string(), basic_function("notify"));
+        curr.tables
+            .insert("users".to_string(), empty_table("users"));
+        curr.functions
+            .insert("notify".to_string(), basic_function("notify"));
         let prev = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 2);
-        assert!(matches!(&ops[0], Operation::CreateFunction { .. }), "first op should be CreateFunction");
-        assert!(matches!(&ops[1], Operation::CreateTable { .. }), "second op should be CreateTable");
+        assert!(
+            matches!(&ops[0], Operation::CreateFunction { .. }),
+            "first op should be CreateFunction"
+        );
+        assert!(
+            matches!(&ops[1], Operation::CreateTable { .. }),
+            "second op should be CreateTable"
+        );
     }
 
     /// DropView must precede DropTable so a view over a dropped table doesn't block the op.
     #[test]
     fn view_drops_before_table_drops() {
         let mut prev = Schema::default();
-        prev.tables.insert("users".to_string(), empty_table("users"));
-        prev.views.insert("v_users".to_string(), ViewDef {
-            name: "v_users".to_string(),
-            schema: None,
-            definition: "SELECT * FROM users".to_string(),
-        });
+        prev.tables
+            .insert("users".to_string(), empty_table("users"));
+        prev.views.insert(
+            "v_users".to_string(),
+            ViewDef {
+                name: "v_users".to_string(),
+                schema: None,
+                definition: "SELECT * FROM users".to_string(),
+            },
+        );
         let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 2);
-        let drop_view_pos = ops.iter().position(|op| matches!(op, Operation::DropView { .. })).unwrap();
-        let drop_table_pos = ops.iter().position(|op| matches!(op, Operation::DropTable { .. })).unwrap();
-        assert!(drop_view_pos < drop_table_pos, "DropView must precede DropTable");
+        let drop_view_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropView { .. }))
+            .unwrap();
+        let drop_table_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropTable { .. }))
+            .unwrap();
+        assert!(
+            drop_view_pos < drop_table_pos,
+            "DropView must precede DropTable"
+        );
     }
 
     /// CreateView must follow CreateTable so the table already exists when the view is created.
@@ -1107,17 +1424,30 @@ mod tests {
     fn view_creates_after_table_creates() {
         let prev = Schema::default();
         let mut curr = Schema::default();
-        curr.tables.insert("users".to_string(), empty_table("users"));
-        curr.views.insert("v_users".to_string(), ViewDef {
-            name: "v_users".to_string(),
-            schema: None,
-            definition: "SELECT * FROM users".to_string(),
-        });
+        curr.tables
+            .insert("users".to_string(), empty_table("users"));
+        curr.views.insert(
+            "v_users".to_string(),
+            ViewDef {
+                name: "v_users".to_string(),
+                schema: None,
+                definition: "SELECT * FROM users".to_string(),
+            },
+        );
         let ops = engine().diff(&curr, &prev).unwrap();
         assert_eq!(ops.len(), 2);
-        let create_table_pos = ops.iter().position(|op| matches!(op, Operation::CreateTable { .. })).unwrap();
-        let create_view_pos = ops.iter().position(|op| matches!(op, Operation::CreateView { .. })).unwrap();
-        assert!(create_table_pos < create_view_pos, "CreateTable must precede CreateView");
+        let create_table_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::CreateTable { .. }))
+            .unwrap();
+        let create_view_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::CreateView { .. }))
+            .unwrap();
+        assert!(
+            create_table_pos < create_view_pos,
+            "CreateTable must precede CreateView"
+        );
     }
 
     /// Two tables referencing each other: both are created (one with its back-edge FK stripped)
@@ -1143,13 +1473,32 @@ mod tests {
         curr.tables.insert("a".to_string(), a);
         curr.tables.insert("b".to_string(), b);
         let ops = engine().diff(&curr, &prev).unwrap();
-        let creates: Vec<_> = ops.iter().filter(|op| matches!(op, Operation::CreateTable { .. })).collect();
-        let fk_adds: Vec<_> = ops.iter().filter(|op| matches!(op, Operation::AddForeignKey { .. })).collect();
+        let creates: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, Operation::CreateTable { .. }))
+            .collect();
+        let fk_adds: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, Operation::AddForeignKey { .. }))
+            .collect();
         assert_eq!(creates.len(), 2, "both tables must be created");
-        assert_eq!(fk_adds.len(), 1, "exactly one FK must be deferred to break the cycle");
-        let fk_add_pos = ops.iter().position(|op| matches!(op, Operation::AddForeignKey { .. })).unwrap();
-        let last_create_pos = ops.iter().rposition(|op| matches!(op, Operation::CreateTable { .. })).unwrap();
-        assert!(last_create_pos < fk_add_pos, "both CreateTable ops must precede the deferred AddForeignKey");
+        assert_eq!(
+            fk_adds.len(),
+            1,
+            "exactly one FK must be deferred to break the cycle"
+        );
+        let fk_add_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::AddForeignKey { .. }))
+            .unwrap();
+        let last_create_pos = ops
+            .iter()
+            .rposition(|op| matches!(op, Operation::CreateTable { .. }))
+            .unwrap();
+        assert!(
+            last_create_pos < fk_add_pos,
+            "both CreateTable ops must precede the deferred AddForeignKey"
+        );
     }
 
     // --- Phase ordering: cross-entity dependency tests ---
@@ -1166,21 +1515,28 @@ mod tests {
             to_table: "users".to_string(),
             to_column: "id".to_string(),
         });
-        prev.tables.insert("users".to_string(), empty_table("users"));
+        prev.tables
+            .insert("users".to_string(), empty_table("users"));
         prev.tables.insert("orders".to_string(), orders);
 
         let mut curr = Schema::default();
-        curr.tables.insert("orders".to_string(), empty_table("orders"));
+        curr.tables
+            .insert("orders".to_string(), empty_table("orders"));
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let drop_fk_pos = ops.iter().position(|op| matches!(op, Operation::DropForeignKey { .. }))
+        let drop_fk_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropForeignKey { .. }))
             .expect("should have DropForeignKey");
-        let drop_table_pos = ops.iter().position(|op| matches!(op, Operation::DropTable { table } if table.name == "users"))
+        let drop_table_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropTable { table } if table.name == "users"))
             .expect("should have DropTable for users");
         assert!(
             drop_fk_pos < drop_table_pos,
             "DropForeignKey on surviving table must precede DropTable of referenced table, got fk@{} table@{}",
-            drop_fk_pos, drop_table_pos,
+            drop_fk_pos,
+            drop_table_pos,
         );
     }
 
@@ -1189,7 +1545,8 @@ mod tests {
     #[test]
     fn multiple_surviving_fks_to_dropped_table() {
         let mut prev = Schema::default();
-        prev.tables.insert("users".to_string(), empty_table("users"));
+        prev.tables
+            .insert("users".to_string(), empty_table("users"));
         let mut orders = empty_table("orders");
         orders.foreign_keys.push(ForeignKey {
             name: "fk_orders_users".to_string(),
@@ -1208,16 +1565,24 @@ mod tests {
         prev.tables.insert("reviews".to_string(), reviews);
 
         let mut curr = Schema::default();
-        curr.tables.insert("orders".to_string(), empty_table("orders"));
-        curr.tables.insert("reviews".to_string(), empty_table("reviews"));
+        curr.tables
+            .insert("orders".to_string(), empty_table("orders"));
+        curr.tables
+            .insert("reviews".to_string(), empty_table("reviews"));
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let drop_table_pos = ops.iter().position(|op| matches!(op, Operation::DropTable { .. }))
+        let drop_table_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropTable { .. }))
             .expect("should have DropTable");
         for (i, op) in ops.iter().enumerate() {
             if matches!(op, Operation::DropForeignKey { .. }) {
-                assert!(i < drop_table_pos,
-                    "DropForeignKey at {} must precede DropTable at {}", i, drop_table_pos);
+                assert!(
+                    i < drop_table_pos,
+                    "DropForeignKey at {} must precede DropTable at {}",
+                    i,
+                    drop_table_pos
+                );
             }
         }
     }
@@ -1242,14 +1607,19 @@ mod tests {
         let curr = state_with_table(empty_table("users"));
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let drop_trigger_pos = ops.iter().position(|op| matches!(op, Operation::DropTrigger { .. }))
+        let drop_trigger_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropTrigger { .. }))
             .expect("should have DropTrigger");
-        let drop_col_pos = ops.iter().position(|op| matches!(op, Operation::DropColumn { .. }))
+        let drop_col_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropColumn { .. }))
             .expect("should have DropColumn");
         assert!(
             drop_trigger_pos < drop_col_pos,
             "DropTrigger must precede DropColumn, got trigger@{} col@{}",
-            drop_trigger_pos, drop_col_pos,
+            drop_trigger_pos,
+            drop_col_pos,
         );
     }
 
@@ -1267,14 +1637,19 @@ mod tests {
         let curr = state_with_table(empty_table("users"));
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let drop_trigger_pos = ops.iter().position(|op| matches!(op, Operation::DropTrigger { .. }))
+        let drop_trigger_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropTrigger { .. }))
             .expect("should have DropTrigger");
-        let drop_constraint_pos = ops.iter().position(|op| matches!(op, Operation::DropConstraint { .. }))
+        let drop_constraint_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropConstraint { .. }))
             .expect("should have DropConstraint");
         assert!(
             drop_trigger_pos < drop_constraint_pos,
             "DropTrigger must precede DropConstraint, got trigger@{} constraint@{}",
-            drop_trigger_pos, drop_constraint_pos,
+            drop_trigger_pos,
+            drop_constraint_pos,
         );
     }
 
@@ -1283,7 +1658,8 @@ mod tests {
     #[test]
     fn orphan_trigger_drop_precedes_function_drop() {
         let mut prev = Schema::default();
-        prev.functions.insert("audit_fn".to_string(), basic_function("audit_fn"));
+        prev.functions
+            .insert("audit_fn".to_string(), basic_function("audit_fn"));
         let mut users = empty_table("users");
         users.triggers.push(TriggerDef {
             name: Some("audit_trg".to_string()),
@@ -1302,14 +1678,19 @@ mod tests {
         // function removed, trigger stays in table definition but should be force-dropped
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let drop_trigger_pos = ops.iter().position(|op| matches!(op, Operation::DropTrigger { .. }))
+        let drop_trigger_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropTrigger { .. }))
             .expect("should have orphan DropTrigger");
-        let drop_fn_pos = ops.iter().position(|op| matches!(op, Operation::DropFunction { .. }))
+        let drop_fn_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropFunction { .. }))
             .expect("should have DropFunction");
         assert!(
             drop_trigger_pos < drop_fn_pos,
             "orphan DropTrigger must precede DropFunction, got trigger@{} fn@{}",
-            drop_trigger_pos, drop_fn_pos,
+            drop_trigger_pos,
+            drop_fn_pos,
         );
     }
 
@@ -1318,7 +1699,8 @@ mod tests {
     #[test]
     fn no_orphan_trigger_when_table_also_dropped() {
         let mut prev = Schema::default();
-        prev.functions.insert("audit_fn".to_string(), basic_function("audit_fn"));
+        prev.functions
+            .insert("audit_fn".to_string(), basic_function("audit_fn"));
         let mut users = empty_table("users");
         users.triggers.push(TriggerDef {
             name: Some("audit_trg".to_string()),
@@ -1334,8 +1716,14 @@ mod tests {
 
         let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
-        let trigger_drops: Vec<_> = ops.iter().filter(|op| matches!(op, Operation::DropTrigger { .. })).collect();
-        assert!(trigger_drops.is_empty(), "no orphan trigger drops when table is also dropped");
+        let trigger_drops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, Operation::DropTrigger { .. }))
+            .collect();
+        assert!(
+            trigger_drops.is_empty(),
+            "no orphan trigger drops when table is also dropped"
+        );
     }
 
     // --- FK topology: advanced cycle and chain tests ---
@@ -1355,13 +1743,19 @@ mod tests {
         curr.tables.insert("employees".to_string(), emp);
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let create = ops.iter().find(|op| matches!(op, Operation::CreateTable { .. }))
+        let create = ops
+            .iter()
+            .find(|op| matches!(op, Operation::CreateTable { .. }))
             .expect("should have CreateTable");
         if let Operation::CreateTable { table } = create {
-            assert!(table.foreign_keys.is_empty(),
-                "self-referential FK must be stripped from CreateTable");
+            assert!(
+                table.foreign_keys.is_empty(),
+                "self-referential FK must be stripped from CreateTable"
+            );
         }
-        let deferred = ops.iter().find(|op| matches!(op, Operation::AddForeignKey { .. }))
+        let deferred = ops
+            .iter()
+            .find(|op| matches!(op, Operation::AddForeignKey { .. }))
             .expect("self-referential FK must be deferred as AddForeignKey");
         if let Operation::AddForeignKey { foreign_key, .. } = deferred {
             assert_eq!(foreign_key.name, "fk_manager");
@@ -1400,18 +1794,34 @@ mod tests {
         curr.tables.insert("c".to_string(), c);
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let creates: Vec<&str> = ops.iter().filter_map(|op| match op {
-            Operation::CreateTable { table } => Some(table.name.as_str()),
-            _ => None,
-        }).collect();
-        let fk_adds: Vec<_> = ops.iter().filter(|op| matches!(op, Operation::AddForeignKey { .. })).collect();
+        let creates: Vec<&str> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Operation::CreateTable { table } => Some(table.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let fk_adds: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, Operation::AddForeignKey { .. }))
+            .collect();
         assert_eq!(creates.len(), 3, "all three tables must be created");
-        assert!(!fk_adds.is_empty(), "at least one FK must be deferred for the cycle");
-        let last_create_pos = ops.iter().rposition(|op| matches!(op, Operation::CreateTable { .. })).unwrap();
+        assert!(
+            !fk_adds.is_empty(),
+            "at least one FK must be deferred for the cycle"
+        );
+        let last_create_pos = ops
+            .iter()
+            .rposition(|op| matches!(op, Operation::CreateTable { .. }))
+            .unwrap();
         for (i, op) in ops.iter().enumerate() {
             if matches!(op, Operation::AddForeignKey { .. }) {
-                assert!(last_create_pos < i,
-                    "deferred AddForeignKey at {} must follow last CreateTable at {}", i, last_create_pos);
+                assert!(
+                    last_create_pos < i,
+                    "deferred AddForeignKey at {} must follow last CreateTable at {}",
+                    i,
+                    last_create_pos
+                );
             }
         }
     }
@@ -1442,12 +1852,18 @@ mod tests {
         curr.tables.insert("orders".to_string(), orders);
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let create_names: Vec<&str> = ops.iter().filter_map(|op| match op {
-            Operation::CreateTable { table } => Some(table.name.as_str()),
-            _ => None,
-        }).collect();
-        assert_eq!(create_names, vec!["accounts", "users", "orders"],
-            "must create in dependency order: accounts, users, orders");
+        let create_names: Vec<&str> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Operation::CreateTable { table } => Some(table.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            create_names,
+            vec!["accounts", "users", "orders"],
+            "must create in dependency order: accounts, users, orders"
+        );
     }
 
     /// Linear FK chain dropped: orders→users→accounts. Drop order must be
@@ -1476,12 +1892,18 @@ mod tests {
 
         let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
-        let drop_names: Vec<&str> = ops.iter().filter_map(|op| match op {
-            Operation::DropTable { table } => Some(table.name.as_str()),
-            _ => None,
-        }).collect();
-        assert_eq!(drop_names, vec!["orders", "users", "accounts"],
-            "must drop in reverse dependency order");
+        let drop_names: Vec<&str> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Operation::DropTable { table } => Some(table.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            drop_names,
+            vec!["orders", "users", "accounts"],
+            "must drop in reverse dependency order"
+        );
     }
 
     /// Mutual FK cycle among dropped tables must emit DropForeignKey
@@ -1508,12 +1930,26 @@ mod tests {
 
         let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
-        let drop_fk_ops: Vec<_> = ops.iter().filter(|op| matches!(op, Operation::DropForeignKey { .. })).collect();
-        assert!(!drop_fk_ops.is_empty(), "cycle-breaking DropForeignKey must be emitted");
-        let first_drop_fk = ops.iter().position(|op| matches!(op, Operation::DropForeignKey { .. })).unwrap();
-        let first_drop_table = ops.iter().position(|op| matches!(op, Operation::DropTable { .. })).unwrap();
-        assert!(first_drop_fk < first_drop_table,
-            "DropForeignKey must precede all DropTable ops");
+        let drop_fk_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, Operation::DropForeignKey { .. }))
+            .collect();
+        assert!(
+            !drop_fk_ops.is_empty(),
+            "cycle-breaking DropForeignKey must be emitted"
+        );
+        let first_drop_fk = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropForeignKey { .. }))
+            .unwrap();
+        let first_drop_table = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropTable { .. }))
+            .unwrap();
+        assert!(
+            first_drop_fk < first_drop_table,
+            "DropForeignKey must precede all DropTable ops"
+        );
     }
 
     // --- Within-table ordering: comprehensive sub-entity tests ---
@@ -1547,23 +1983,33 @@ mod tests {
         let curr = state_with_table(empty_table("users"));
         let ops = engine().diff(&curr, &prev).unwrap();
 
-        let pos = |pred: &dyn Fn(&Operation) -> bool| -> usize {
-            ops.iter().position(pred).unwrap()
-        };
+        let pos =
+            |pred: &dyn Fn(&Operation) -> bool| -> usize { ops.iter().position(pred).unwrap() };
         let trigger_pos = pos(&|op| matches!(op, Operation::DropTrigger { .. }));
         let constraint_pos = pos(&|op| matches!(op, Operation::DropConstraint { .. }));
         let index_pos = pos(&|op| matches!(op, Operation::DropIndex { .. }));
         let fk_pos = pos(&|op| matches!(op, Operation::DropForeignKey { .. }));
-        let col_pos = ops.iter().position(|op| matches!(op, Operation::DropColumn { .. })).unwrap();
+        let col_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropColumn { .. }))
+            .unwrap();
 
-        assert!(trigger_pos < constraint_pos,
-            "DropTrigger({trigger_pos}) must precede DropConstraint({constraint_pos})");
-        assert!(constraint_pos < index_pos,
-            "DropConstraint({constraint_pos}) must precede DropIndex({index_pos})");
-        assert!(index_pos < fk_pos,
-            "DropIndex({index_pos}) must precede DropForeignKey({fk_pos})");
-        assert!(fk_pos < col_pos,
-            "DropForeignKey({fk_pos}) must precede DropColumn({col_pos})");
+        assert!(
+            trigger_pos < constraint_pos,
+            "DropTrigger({trigger_pos}) must precede DropConstraint({constraint_pos})"
+        );
+        assert!(
+            constraint_pos < index_pos,
+            "DropConstraint({constraint_pos}) must precede DropIndex({index_pos})"
+        );
+        assert!(
+            index_pos < fk_pos,
+            "DropIndex({index_pos}) must precede DropForeignKey({fk_pos})"
+        );
+        assert!(
+            fk_pos < col_pos,
+            "DropForeignKey({fk_pos}) must precede DropColumn({col_pos})"
+        );
     }
 
     /// All add types on the same table must be in safe order:
@@ -1594,19 +2040,30 @@ mod tests {
         let curr = state_with_table(curr_table);
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let pos = |pred: &dyn Fn(&Operation) -> bool| -> usize {
-            ops.iter().position(pred).unwrap()
-        };
+        let pos =
+            |pred: &dyn Fn(&Operation) -> bool| -> usize { ops.iter().position(pred).unwrap() };
         let col_pos = pos(&|op| matches!(op, Operation::AddColumn { .. }));
         let fk_pos = pos(&|op| matches!(op, Operation::AddForeignKey { .. }));
         let index_pos = pos(&|op| matches!(op, Operation::AddIndex { .. }));
         let constraint_pos = pos(&|op| matches!(op, Operation::AddConstraint { .. }));
         let trigger_pos = pos(&|op| matches!(op, Operation::CreateTrigger { .. }));
 
-        assert!(col_pos < fk_pos, "AddColumn({col_pos}) must precede AddForeignKey({fk_pos})");
-        assert!(fk_pos < index_pos, "AddForeignKey({fk_pos}) must precede AddIndex({index_pos})");
-        assert!(index_pos < constraint_pos, "AddIndex({index_pos}) must precede AddConstraint({constraint_pos})");
-        assert!(constraint_pos < trigger_pos, "AddConstraint({constraint_pos}) must precede CreateTrigger({trigger_pos})");
+        assert!(
+            col_pos < fk_pos,
+            "AddColumn({col_pos}) must precede AddForeignKey({fk_pos})"
+        );
+        assert!(
+            fk_pos < index_pos,
+            "AddForeignKey({fk_pos}) must precede AddIndex({index_pos})"
+        );
+        assert!(
+            index_pos < constraint_pos,
+            "AddIndex({index_pos}) must precede AddConstraint({constraint_pos})"
+        );
+        assert!(
+            constraint_pos < trigger_pos,
+            "AddConstraint({constraint_pos}) must precede CreateTrigger({trigger_pos})"
+        );
     }
 
     /// Replacing an entity (drop old + add new) within the same table:
@@ -1616,15 +2073,20 @@ mod tests {
         let mut prev_table = empty_table("users");
         prev_table.columns.push(text_col("old_col"));
         prev_table.foreign_keys.push(ForeignKey {
-            name: "fk_old".to_string(), from_column: "a".to_string(),
-            to_table: "other".to_string(), to_column: "id".to_string(),
+            name: "fk_old".to_string(),
+            from_column: "a".to_string(),
+            to_table: "other".to_string(),
+            to_column: "id".to_string(),
         });
         prev_table.indexes.push(Index {
-            name: "idx_old".to_string(), columns: vec!["old_col".to_string()],
-            unique: false, predicate: None,
+            name: "idx_old".to_string(),
+            columns: vec!["old_col".to_string()],
+            unique: false,
+            predicate: None,
         });
         prev_table.constraints.push(Constraint::Check {
-            name: "chk_old".to_string(), expression: "1=1".to_string(),
+            name: "chk_old".to_string(),
+            expression: "1=1".to_string(),
         });
         prev_table.triggers.push(basic_trigger("old_trg"));
         let prev = state_with_table(prev_table);
@@ -1632,38 +2094,59 @@ mod tests {
         let mut curr_table = empty_table("users");
         curr_table.columns.push(text_col("new_col"));
         curr_table.foreign_keys.push(ForeignKey {
-            name: "fk_new".to_string(), from_column: "b".to_string(),
-            to_table: "other2".to_string(), to_column: "id".to_string(),
+            name: "fk_new".to_string(),
+            from_column: "b".to_string(),
+            to_table: "other2".to_string(),
+            to_column: "id".to_string(),
         });
         curr_table.indexes.push(Index {
-            name: "idx_new".to_string(), columns: vec!["new_col".to_string()],
-            unique: true, predicate: None,
+            name: "idx_new".to_string(),
+            columns: vec!["new_col".to_string()],
+            unique: true,
+            predicate: None,
         });
         curr_table.constraints.push(Constraint::Check {
-            name: "chk_new".to_string(), expression: "2=2".to_string(),
+            name: "chk_new".to_string(),
+            expression: "2=2".to_string(),
         });
         curr_table.triggers.push(basic_trigger("new_trg"));
         let curr = state_with_table(curr_table);
 
         let ops = engine().diff(&curr, &prev).unwrap();
         let is_drop = |op: &Operation| -> bool {
-            matches!(op,
-                Operation::DropColumn { .. } | Operation::DropForeignKey { .. } |
-                Operation::DropIndex { .. } | Operation::DropConstraint { .. } |
-                Operation::DropTrigger { .. }
+            matches!(
+                op,
+                Operation::DropColumn { .. }
+                    | Operation::DropForeignKey { .. }
+                    | Operation::DropIndex { .. }
+                    | Operation::DropConstraint { .. }
+                    | Operation::DropTrigger { .. }
             )
         };
         let is_add = |op: &Operation| -> bool {
-            matches!(op,
-                Operation::AddColumn { .. } | Operation::AddForeignKey { .. } |
-                Operation::AddIndex { .. } | Operation::AddConstraint { .. } |
-                Operation::CreateTrigger { .. }
+            matches!(
+                op,
+                Operation::AddColumn { .. }
+                    | Operation::AddForeignKey { .. }
+                    | Operation::AddIndex { .. }
+                    | Operation::AddConstraint { .. }
+                    | Operation::CreateTrigger { .. }
             )
         };
-        let last_drop = ops.iter().rposition(|op| is_drop(op)).expect("should have drops");
-        let first_add = ops.iter().position(|op| is_add(op)).expect("should have adds");
-        assert!(last_drop < first_add,
-            "all drops must precede all adds, got last_drop@{} first_add@{}", last_drop, first_add);
+        let last_drop = ops
+            .iter()
+            .rposition(|op| is_drop(op))
+            .expect("should have drops");
+        let first_add = ops
+            .iter()
+            .position(|op| is_add(op))
+            .expect("should have adds");
+        assert!(
+            last_drop < first_add,
+            "all drops must precede all adds, got last_drop@{} first_add@{}",
+            last_drop,
+            first_add
+        );
     }
 
     // --- Global phase ordering tests ---
@@ -1673,20 +2156,32 @@ mod tests {
     #[test]
     fn full_phase_ordering() {
         let mut prev = Schema::default();
-        prev.tables.insert("old_table".to_string(), empty_table("old_table"));
-        prev.views.insert("old_view".to_string(), ViewDef {
-            name: "old_view".to_string(), schema: None,
-            definition: "SELECT 1".to_string(),
-        });
-        prev.functions.insert("old_fn".to_string(), basic_function("old_fn"));
+        prev.tables
+            .insert("old_table".to_string(), empty_table("old_table"));
+        prev.views.insert(
+            "old_view".to_string(),
+            ViewDef {
+                name: "old_view".to_string(),
+                schema: None,
+                definition: "SELECT 1".to_string(),
+            },
+        );
+        prev.functions
+            .insert("old_fn".to_string(), basic_function("old_fn"));
 
         let mut curr = Schema::default();
-        curr.tables.insert("new_table".to_string(), empty_table("new_table"));
-        curr.views.insert("new_view".to_string(), ViewDef {
-            name: "new_view".to_string(), schema: None,
-            definition: "SELECT 2".to_string(),
-        });
-        curr.functions.insert("new_fn".to_string(), basic_function("new_fn"));
+        curr.tables
+            .insert("new_table".to_string(), empty_table("new_table"));
+        curr.views.insert(
+            "new_view".to_string(),
+            ViewDef {
+                name: "new_view".to_string(),
+                schema: None,
+                definition: "SELECT 2".to_string(),
+            },
+        );
+        curr.functions
+            .insert("new_fn".to_string(), basic_function("new_fn"));
 
         let ops = engine().diff(&curr, &prev).unwrap();
         let phase_of = |op: &Operation| -> u8 {
@@ -1703,9 +2198,14 @@ mod tests {
         for window in ops.windows(2) {
             let p0 = phase_of(&window[0]);
             let p1 = phase_of(&window[1]);
-            assert!(p0 <= p1,
+            assert!(
+                p0 <= p1,
                 "phase ordering violated: {:?} (phase {}) before {:?} (phase {})",
-                window[0].type_name(), p0, window[1].type_name(), p1);
+                window[0].type_name(),
+                p0,
+                window[1].type_name(),
+                p1
+            );
         }
     }
 
@@ -1714,7 +2214,8 @@ mod tests {
     #[test]
     fn fn_drop_after_explicit_trigger_drop() {
         let mut prev = Schema::default();
-        prev.functions.insert("audit_fn".to_string(), basic_function("audit_fn"));
+        prev.functions
+            .insert("audit_fn".to_string(), basic_function("audit_fn"));
         let mut users = empty_table("users");
         users.triggers.push(TriggerDef {
             name: Some("audit_trg".to_string()),
@@ -1722,20 +2223,29 @@ mod tests {
             events: vec![TriggerEvent::Insert],
             scope: TriggerScope::Row,
             function_name: Some("audit_fn".to_string()),
-            when: None, body: None, language: None,
+            when: None,
+            body: None,
+            language: None,
         });
         prev.tables.insert("users".to_string(), users);
 
         let mut curr = Schema::default();
-        curr.tables.insert("users".to_string(), empty_table("users"));
+        curr.tables
+            .insert("users".to_string(), empty_table("users"));
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let drop_trigger_pos = ops.iter().position(|op| matches!(op, Operation::DropTrigger { .. }))
+        let drop_trigger_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropTrigger { .. }))
             .expect("should have DropTrigger");
-        let drop_fn_pos = ops.iter().position(|op| matches!(op, Operation::DropFunction { .. }))
+        let drop_fn_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropFunction { .. }))
             .expect("should have DropFunction");
-        assert!(drop_trigger_pos < drop_fn_pos,
-            "DropTrigger({drop_trigger_pos}) must precede DropFunction({drop_fn_pos})");
+        assert!(
+            drop_trigger_pos < drop_fn_pos,
+            "DropTrigger({drop_trigger_pos}) must precede DropFunction({drop_fn_pos})"
+        );
     }
 
     /// CreateFunction must come before CreateTrigger when a new trigger
@@ -1743,10 +2253,12 @@ mod tests {
     #[test]
     fn fn_create_before_trigger_create() {
         let mut prev = Schema::default();
-        prev.tables.insert("users".to_string(), empty_table("users"));
+        prev.tables
+            .insert("users".to_string(), empty_table("users"));
 
         let mut curr = Schema::default();
-        curr.functions.insert("new_fn".to_string(), basic_function("new_fn"));
+        curr.functions
+            .insert("new_fn".to_string(), basic_function("new_fn"));
         let mut users = empty_table("users");
         users.triggers.push(TriggerDef {
             name: Some("new_trg".to_string()),
@@ -1754,17 +2266,25 @@ mod tests {
             events: vec![TriggerEvent::Insert],
             scope: TriggerScope::Row,
             function_name: Some("new_fn".to_string()),
-            when: None, body: None, language: None,
+            when: None,
+            body: None,
+            language: None,
         });
         curr.tables.insert("users".to_string(), users);
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let create_fn_pos = ops.iter().position(|op| matches!(op, Operation::CreateFunction { .. }))
+        let create_fn_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::CreateFunction { .. }))
             .expect("should have CreateFunction");
-        let create_trigger_pos = ops.iter().position(|op| matches!(op, Operation::CreateTrigger { .. }))
+        let create_trigger_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::CreateTrigger { .. }))
             .expect("should have CreateTrigger");
-        assert!(create_fn_pos < create_trigger_pos,
-            "CreateFunction({create_fn_pos}) must precede CreateTrigger({create_trigger_pos})");
+        assert!(
+            create_fn_pos < create_trigger_pos,
+            "CreateFunction({create_fn_pos}) must precede CreateTrigger({create_trigger_pos})"
+        );
     }
 
     // --- Determinism tests ---
@@ -1776,8 +2296,10 @@ mod tests {
         let mut users = empty_table("users");
         users.columns.push(text_col("name"));
         users.foreign_keys.push(ForeignKey {
-            name: "fk_users_org".to_string(), from_column: "org_id".to_string(),
-            to_table: "orgs".to_string(), to_column: "id".to_string(),
+            name: "fk_users_org".to_string(),
+            from_column: "org_id".to_string(),
+            to_table: "orgs".to_string(),
+            to_column: "id".to_string(),
         });
         prev.tables.insert("users".to_string(), users);
         prev.tables.insert("orgs".to_string(), empty_table("orgs"));
@@ -1786,15 +2308,19 @@ mod tests {
         let mut users2 = empty_table("users");
         users2.columns.push(text_col("email"));
         curr.tables.insert("users".to_string(), users2);
-        curr.tables.insert("products".to_string(), empty_table("products"));
+        curr.tables
+            .insert("products".to_string(), empty_table("products"));
 
         let e = engine();
         let ops1 = e.diff(&curr, &prev).unwrap();
         let ops2 = e.diff(&curr, &prev).unwrap();
         assert_eq!(ops1.len(), ops2.len(), "different number of operations");
         for (a, b) in ops1.iter().zip(ops2.iter()) {
-            assert_eq!(a.type_name(), b.type_name(),
-                "operation types differ at same position");
+            assert_eq!(
+                a.type_name(),
+                b.type_name(),
+                "operation types differ at same position"
+            );
         }
     }
 
@@ -1808,43 +2334,63 @@ mod tests {
         users.columns.push(text_col("name"));
         users.columns.push(text_col("old_col"));
         users.indexes.push(Index {
-            name: "idx_old".to_string(), columns: vec!["name".to_string()],
-            unique: false, predicate: None,
+            name: "idx_old".to_string(),
+            columns: vec!["name".to_string()],
+            unique: false,
+            predicate: None,
         });
         users.constraints.push(Constraint::Check {
-            name: "chk_old".to_string(), expression: "1=1".to_string(),
+            name: "chk_old".to_string(),
+            expression: "1=1".to_string(),
         });
         prev.tables.insert("users".to_string(), users);
-        prev.tables.insert("to_drop".to_string(), empty_table("to_drop"));
-        prev.functions.insert("old_fn".to_string(), basic_function("old_fn"));
-        prev.views.insert("old_view".to_string(), ViewDef {
-            name: "old_view".to_string(), schema: None,
-            definition: "SELECT 1".to_string(),
-        });
+        prev.tables
+            .insert("to_drop".to_string(), empty_table("to_drop"));
+        prev.functions
+            .insert("old_fn".to_string(), basic_function("old_fn"));
+        prev.views.insert(
+            "old_view".to_string(),
+            ViewDef {
+                name: "old_view".to_string(),
+                schema: None,
+                definition: "SELECT 1".to_string(),
+            },
+        );
 
         let mut curr = Schema::default();
         let mut users2 = empty_table("users");
         users2.columns.push(text_col("name"));
         users2.columns.push(text_col("new_col"));
         users2.indexes.push(Index {
-            name: "idx_new".to_string(), columns: vec!["new_col".to_string()],
-            unique: true, predicate: None,
+            name: "idx_new".to_string(),
+            columns: vec!["new_col".to_string()],
+            unique: true,
+            predicate: None,
         });
         users2.constraints.push(Constraint::Check {
-            name: "chk_new".to_string(), expression: "2=2".to_string(),
+            name: "chk_new".to_string(),
+            expression: "2=2".to_string(),
         });
         curr.tables.insert("users".to_string(), users2);
-        curr.tables.insert("to_create".to_string(), empty_table("to_create"));
-        curr.functions.insert("new_fn".to_string(), basic_function("new_fn"));
-        curr.views.insert("new_view".to_string(), ViewDef {
-            name: "new_view".to_string(), schema: None,
-            definition: "SELECT 2".to_string(),
-        });
+        curr.tables
+            .insert("to_create".to_string(), empty_table("to_create"));
+        curr.functions
+            .insert("new_fn".to_string(), basic_function("new_fn"));
+        curr.views.insert(
+            "new_view".to_string(),
+            ViewDef {
+                name: "new_view".to_string(),
+                schema: None,
+                definition: "SELECT 2".to_string(),
+            },
+        );
 
         let ops = engine().diff(&curr, &prev).unwrap();
         let mut replayed = prev.clone();
         for (i, op) in ops.iter().enumerate() {
-            replayed.apply(op).unwrap_or_else(|e| panic!("op {} ({}) failed: {}", i, op.type_name(), e));
+            replayed
+                .apply(op)
+                .unwrap_or_else(|e| panic!("op {} ({}) failed: {}", i, op.type_name(), e));
         }
         assert_eq!(replayed, curr, "replayed state must equal current state");
     }
@@ -1856,13 +2402,17 @@ mod tests {
         let mut curr = Schema::default();
         let mut a = empty_table("a");
         a.foreign_keys.push(ForeignKey {
-            name: "fk_a_b".to_string(), from_column: "b_id".to_string(),
-            to_table: "b".to_string(), to_column: "id".to_string(),
+            name: "fk_a_b".to_string(),
+            from_column: "b_id".to_string(),
+            to_table: "b".to_string(),
+            to_column: "id".to_string(),
         });
         let mut b = empty_table("b");
         b.foreign_keys.push(ForeignKey {
-            name: "fk_b_a".to_string(), from_column: "a_id".to_string(),
-            to_table: "a".to_string(), to_column: "id".to_string(),
+            name: "fk_b_a".to_string(),
+            from_column: "a_id".to_string(),
+            to_table: "a".to_string(),
+            to_column: "id".to_string(),
         });
         curr.tables.insert("a".to_string(), a);
         curr.tables.insert("b".to_string(), b);
@@ -1870,7 +2420,9 @@ mod tests {
         let ops = engine().diff(&curr, &prev).unwrap();
         let mut replayed = prev.clone();
         for (i, op) in ops.iter().enumerate() {
-            replayed.apply(op).unwrap_or_else(|e| panic!("op {} ({}) failed: {}", i, op.type_name(), e));
+            replayed
+                .apply(op)
+                .unwrap_or_else(|e| panic!("op {} ({}) failed: {}", i, op.type_name(), e));
         }
         assert_eq!(replayed, curr);
     }
@@ -1882,15 +2434,19 @@ mod tests {
         let mut curr = Schema::default();
         let mut emp = empty_table("employees");
         emp.foreign_keys.push(ForeignKey {
-            name: "fk_manager".to_string(), from_column: "manager_id".to_string(),
-            to_table: "employees".to_string(), to_column: "id".to_string(),
+            name: "fk_manager".to_string(),
+            from_column: "manager_id".to_string(),
+            to_table: "employees".to_string(),
+            to_column: "id".to_string(),
         });
         curr.tables.insert("employees".to_string(), emp);
 
         let ops = engine().diff(&curr, &prev).unwrap();
         let mut replayed = prev.clone();
         for (i, op) in ops.iter().enumerate() {
-            replayed.apply(op).unwrap_or_else(|e| panic!("op {} ({}) failed: {}", i, op.type_name(), e));
+            replayed
+                .apply(op)
+                .unwrap_or_else(|e| panic!("op {} ({}) failed: {}", i, op.type_name(), e));
         }
         assert_eq!(replayed, curr);
     }
@@ -1900,7 +2456,9 @@ mod tests {
     /// Both states empty produces zero operations.
     #[test]
     fn both_empty_no_ops() {
-        let ops = engine().diff(&Schema::default(), &Schema::default()).unwrap();
+        let ops = engine()
+            .diff(&Schema::default(), &Schema::default())
+            .unwrap();
         assert!(ops.is_empty());
     }
 
@@ -1910,15 +2468,20 @@ mod tests {
         let mut table = empty_table("users");
         table.columns.push(text_col("name"));
         table.foreign_keys.push(ForeignKey {
-            name: "fk".to_string(), from_column: "a".to_string(),
-            to_table: "b".to_string(), to_column: "id".to_string(),
+            name: "fk".to_string(),
+            from_column: "a".to_string(),
+            to_table: "b".to_string(),
+            to_column: "id".to_string(),
         });
         table.indexes.push(Index {
-            name: "idx".to_string(), columns: vec!["name".to_string()],
-            unique: false, predicate: None,
+            name: "idx".to_string(),
+            columns: vec!["name".to_string()],
+            unique: false,
+            predicate: None,
         });
         table.constraints.push(Constraint::Check {
-            name: "chk".to_string(), expression: "1=1".to_string(),
+            name: "chk".to_string(),
+            expression: "1=1".to_string(),
         });
         table.triggers.push(basic_trigger("trg"));
         let s = state_with_table(table);
@@ -1932,16 +2495,23 @@ mod tests {
         let mut prev = Schema::default();
         let mut emp = empty_table("employees");
         emp.foreign_keys.push(ForeignKey {
-            name: "fk_manager".to_string(), from_column: "manager_id".to_string(),
-            to_table: "employees".to_string(), to_column: "id".to_string(),
+            name: "fk_manager".to_string(),
+            from_column: "manager_id".to_string(),
+            to_table: "employees".to_string(),
+            to_column: "id".to_string(),
         });
         prev.tables.insert("employees".to_string(), emp);
         let curr = Schema::default();
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let drop_fk_count = ops.iter().filter(|op| matches!(op, Operation::DropForeignKey { .. })).count();
-        assert_eq!(drop_fk_count, 0,
-            "self-referential FK should not need a separate DropForeignKey when table is dropped");
+        let drop_fk_count = ops
+            .iter()
+            .filter(|op| matches!(op, Operation::DropForeignKey { .. }))
+            .count();
+        assert_eq!(
+            drop_fk_count, 0,
+            "self-referential FK should not need a separate DropForeignKey when table is dropped"
+        );
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], Operation::DropTable { .. }));
     }
@@ -1960,7 +2530,8 @@ mod tests {
         let mut users2 = empty_table("users");
         users2.columns.push(text_col("new_field"));
         curr.tables.insert("users".to_string(), users2);
-        curr.tables.insert("products".to_string(), empty_table("products"));
+        curr.tables
+            .insert("products".to_string(), empty_table("products"));
 
         let ops = engine().diff(&curr, &prev).unwrap();
         assert!(
@@ -1974,14 +2545,17 @@ mod tests {
             "should drop the removed column"
         );
         assert!(
-            ops.iter().any(|op| matches!(op, Operation::AddColumn { .. })),
+            ops.iter()
+                .any(|op| matches!(op, Operation::AddColumn { .. })),
             "should add the new column"
         );
 
         // Replay: applying all ops to prev must yield curr
         let mut replayed = prev.clone();
         for (i, op) in ops.iter().enumerate() {
-            replayed.apply(op).unwrap_or_else(|e| panic!("op {} ({}) failed: {}", i, op.type_name(), e));
+            replayed
+                .apply(op)
+                .unwrap_or_else(|e| panic!("op {} ({}) failed: {}", i, op.type_name(), e));
         }
         assert_eq!(replayed, curr);
     }
@@ -1994,28 +2568,42 @@ mod tests {
         let mut users = empty_table("users");
         users.columns.push(text_col("name"));
         prev.tables.insert("users".to_string(), users);
-        prev.views.insert("v_users".to_string(), ViewDef {
-            name: "v_users".to_string(), schema: None,
-            definition: "SELECT name FROM users".to_string(),
-        });
+        prev.views.insert(
+            "v_users".to_string(),
+            ViewDef {
+                name: "v_users".to_string(),
+                schema: None,
+                definition: "SELECT name FROM users".to_string(),
+            },
+        );
 
         let mut curr = Schema::default();
         let mut users2 = empty_table("users");
         users2.columns.push(text_col("name"));
         users2.columns.push(text_col("email"));
         curr.tables.insert("users".to_string(), users2);
-        curr.views.insert("v_users".to_string(), ViewDef {
-            name: "v_users".to_string(), schema: None,
-            definition: "SELECT name, email FROM users".to_string(),
-        });
+        curr.views.insert(
+            "v_users".to_string(),
+            ViewDef {
+                name: "v_users".to_string(),
+                schema: None,
+                definition: "SELECT name, email FROM users".to_string(),
+            },
+        );
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let add_col_pos = ops.iter().position(|op| matches!(op, Operation::AddColumn { .. }))
+        let add_col_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::AddColumn { .. }))
             .expect("should have AddColumn");
-        let replace_view_pos = ops.iter().position(|op| matches!(op, Operation::ReplaceView { .. }))
+        let replace_view_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::ReplaceView { .. }))
             .expect("should have ReplaceView");
-        assert!(add_col_pos < replace_view_pos,
-            "AddColumn({add_col_pos}) must precede ReplaceView({replace_view_pos})");
+        assert!(
+            add_col_pos < replace_view_pos,
+            "AddColumn({add_col_pos}) must precede ReplaceView({replace_view_pos})"
+        );
     }
 
     /// FK from new table to another new table, plus an existing table change in the same diff.
@@ -2033,24 +2621,34 @@ mod tests {
         let authors = empty_table("authors");
         let mut books = empty_table("books");
         books.foreign_keys.push(ForeignKey {
-            name: "fk_books_authors".to_string(), from_column: "author_id".to_string(),
-            to_table: "authors".to_string(), to_column: "id".to_string(),
+            name: "fk_books_authors".to_string(),
+            from_column: "author_id".to_string(),
+            to_table: "authors".to_string(),
+            to_column: "id".to_string(),
         });
         curr.tables.insert("authors".to_string(), authors);
         curr.tables.insert("books".to_string(), books);
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let create_names: Vec<&str> = ops.iter().filter_map(|op| match op {
-            Operation::CreateTable { table } => Some(table.name.as_str()),
-            _ => None,
-        }).collect();
+        let create_names: Vec<&str> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Operation::CreateTable { table } => Some(table.name.as_str()),
+                _ => None,
+            })
+            .collect();
         let authors_idx = create_names.iter().position(|n| *n == "authors").unwrap();
         let books_idx = create_names.iter().position(|n| *n == "books").unwrap();
-        assert!(authors_idx < books_idx, "authors must be created before books");
+        assert!(
+            authors_idx < books_idx,
+            "authors must be created before books"
+        );
 
         let mut replayed = prev.clone();
         for (i, op) in ops.iter().enumerate() {
-            replayed.apply(op).unwrap_or_else(|e| panic!("op {} ({}) failed: {}", i, op.type_name(), e));
+            replayed
+                .apply(op)
+                .unwrap_or_else(|e| panic!("op {} ({}) failed: {}", i, op.type_name(), e));
         }
         assert_eq!(replayed, curr);
     }
@@ -2060,17 +2658,32 @@ mod tests {
     fn drop_everything_ordering() {
         let mut prev = Schema::default();
         prev.tables.insert("t1".to_string(), empty_table("t1"));
-        prev.functions.insert("f1".to_string(), basic_function("f1"));
-        prev.views.insert("v1".to_string(), ViewDef {
-            name: "v1".to_string(), schema: None, definition: "SELECT 1".to_string(),
-        });
+        prev.functions
+            .insert("f1".to_string(), basic_function("f1"));
+        prev.views.insert(
+            "v1".to_string(),
+            ViewDef {
+                name: "v1".to_string(),
+                schema: None,
+                definition: "SELECT 1".to_string(),
+            },
+        );
 
         let curr = Schema::default();
         let ops = engine().diff(&curr, &prev).unwrap();
 
-        let view_drop = ops.iter().position(|op| matches!(op, Operation::DropView { .. })).unwrap();
-        let table_drop = ops.iter().position(|op| matches!(op, Operation::DropTable { .. })).unwrap();
-        let fn_drop = ops.iter().position(|op| matches!(op, Operation::DropFunction { .. })).unwrap();
+        let view_drop = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropView { .. }))
+            .unwrap();
+        let table_drop = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropTable { .. }))
+            .unwrap();
+        let fn_drop = ops
+            .iter()
+            .position(|op| matches!(op, Operation::DropFunction { .. }))
+            .unwrap();
 
         assert!(view_drop < table_drop, "DropView before DropTable");
         assert!(table_drop < fn_drop, "DropTable before DropFunction");
@@ -2082,17 +2695,35 @@ mod tests {
         let prev = Schema::default();
         let mut curr = Schema::default();
         curr.tables.insert("t1".to_string(), empty_table("t1"));
-        curr.functions.insert("f1".to_string(), basic_function("f1"));
-        curr.views.insert("v1".to_string(), ViewDef {
-            name: "v1".to_string(), schema: None, definition: "SELECT 1".to_string(),
-        });
+        curr.functions
+            .insert("f1".to_string(), basic_function("f1"));
+        curr.views.insert(
+            "v1".to_string(),
+            ViewDef {
+                name: "v1".to_string(),
+                schema: None,
+                definition: "SELECT 1".to_string(),
+            },
+        );
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let fn_create = ops.iter().position(|op| matches!(op, Operation::CreateFunction { .. })).unwrap();
-        let table_create = ops.iter().position(|op| matches!(op, Operation::CreateTable { .. })).unwrap();
-        let view_create = ops.iter().position(|op| matches!(op, Operation::CreateView { .. })).unwrap();
+        let fn_create = ops
+            .iter()
+            .position(|op| matches!(op, Operation::CreateFunction { .. }))
+            .unwrap();
+        let table_create = ops
+            .iter()
+            .position(|op| matches!(op, Operation::CreateTable { .. }))
+            .unwrap();
+        let view_create = ops
+            .iter()
+            .position(|op| matches!(op, Operation::CreateView { .. }))
+            .unwrap();
 
-        assert!(fn_create < table_create, "CreateFunction before CreateTable");
+        assert!(
+            fn_create < table_create,
+            "CreateFunction before CreateTable"
+        );
         assert!(table_create < view_create, "CreateTable before CreateView");
     }
 
@@ -2101,7 +2732,8 @@ mod tests {
     #[test]
     fn alter_function_before_table_creates() {
         let mut prev = Schema::default();
-        prev.functions.insert("f1".to_string(), basic_function("f1"));
+        prev.functions
+            .insert("f1".to_string(), basic_function("f1"));
 
         let mut curr = Schema::default();
         let mut f1 = basic_function("f1");
@@ -2110,10 +2742,18 @@ mod tests {
         curr.tables.insert("t1".to_string(), empty_table("t1"));
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let alter_fn_pos = ops.iter().position(|op| matches!(op, Operation::AlterFunction { .. })).unwrap();
-        let create_table_pos = ops.iter().position(|op| matches!(op, Operation::CreateTable { .. })).unwrap();
-        assert!(alter_fn_pos < create_table_pos,
-            "AlterFunction must precede CreateTable");
+        let alter_fn_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::AlterFunction { .. }))
+            .unwrap();
+        let create_table_pos = ops
+            .iter()
+            .position(|op| matches!(op, Operation::CreateTable { .. }))
+            .unwrap();
+        assert!(
+            alter_fn_pos < create_table_pos,
+            "AlterFunction must precede CreateTable"
+        );
     }
 
     /// Dropping one table that references another table also being dropped
@@ -2125,13 +2765,17 @@ mod tests {
         prev.tables.insert("orgs".to_string(), empty_table("orgs"));
         let mut users = empty_table("users");
         users.foreign_keys.push(ForeignKey {
-            name: "fk_users_orgs".to_string(), from_column: "org_id".to_string(),
-            to_table: "orgs".to_string(), to_column: "id".to_string(),
+            name: "fk_users_orgs".to_string(),
+            from_column: "org_id".to_string(),
+            to_table: "orgs".to_string(),
+            to_column: "id".to_string(),
         });
         let mut orders = empty_table("orders");
         orders.foreign_keys.push(ForeignKey {
-            name: "fk_orders_users".to_string(), from_column: "user_id".to_string(),
-            to_table: "users".to_string(), to_column: "id".to_string(),
+            name: "fk_orders_users".to_string(),
+            from_column: "user_id".to_string(),
+            to_table: "users".to_string(),
+            to_column: "id".to_string(),
         });
         prev.tables.insert("users".to_string(), users);
         prev.tables.insert("orders".to_string(), orders);
@@ -2141,12 +2785,21 @@ mod tests {
         curr.tables.insert("orgs".to_string(), empty_table("orgs"));
 
         let ops = engine().diff(&curr, &prev).unwrap();
-        let drop_names: Vec<&str> = ops.iter().filter_map(|op| match op {
-            Operation::DropTable { table } => Some(table.name.as_str()),
-            _ => None,
-        }).collect();
+        let drop_names: Vec<&str> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Operation::DropTable { table } => Some(table.name.as_str()),
+                _ => None,
+            })
+            .collect();
         assert_eq!(drop_names.len(), 2);
-        assert_eq!(drop_names[0], "orders", "orders (referencing) must drop before users");
-        assert_eq!(drop_names[1], "users", "users (referenced) must drop after orders");
+        assert_eq!(
+            drop_names[0], "orders",
+            "orders (referencing) must drop before users"
+        );
+        assert_eq!(
+            drop_names[1], "users",
+            "users (referenced) must drop after orders"
+        );
     }
 }

@@ -5,7 +5,7 @@
 [![Crates.io](https://img.shields.io/crates/v/gaman)](https://crates.io/crates/gaman)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A deterministic, offline-first migration engine for PostgreSQL, written in Rust and inspired by Django migrations. SQLite support is available behind the `sqlite` Cargo feature as an engine-specific dialect with explicit errors for unsupported operations.
+A deterministic, offline-first migration engine for PostgreSQL, written in Rust. SQLite support is available behind the `sqlite` Cargo feature as an engine-specific dialect with explicit errors for unsupported operations.
 
 Declare your schema as **YAML**, **SQL DDL**, or **Rust structs**. Gaman diffs that desired state against replayed migration history and writes the next migration without touching a database at plan time.
 
@@ -133,6 +133,15 @@ extensions:
   pgcrypto: {}
 
 tables:
+  order_lines:
+    primary_key:
+      name: order_lines_pkey
+      columns: [tenant_id, order_id]
+    columns:
+      - name: order_id
+        type: bigint
+      - name: tenant_id
+        type: bigint
   users:
     columns:
       - name: id
@@ -152,7 +161,7 @@ tables:
         unique: true
 ```
 
-Inline shorthands such as `primary_key`, `references`, and `check` are normalized before diffing. `SCHEMA_FILE` can point to a `.yaml`, a `.sql`, or a directory; when you pass a directory, Gaman merges files in alphabetical order.
+Inline shorthands such as `primary_key`, `references`, and `check` are normalized before diffing. Multiple columns may use `primary_key: true`; if no explicit table-level `primary_key` is provided, Gaman creates one deterministically from the table name and column order. Use the explicit `primary_key: { name, columns }` form when the constraint name or primary-key column order matters. `SCHEMA_FILE` can point to a `.yaml`, a `.sql`, or a directory; when you pass a directory, Gaman merges files in alphabetical order.
 
 ### SQL DDL
 
@@ -265,6 +274,7 @@ For `NotNullChange`, a backfill `UPDATE` is automatically injected before the `A
 ## CLI and Config Reference
 
 The complete command reference, flag details, and environment variables now live in [docs/cli.md](docs/cli.md).
+For the engine design, lifecycle, dialect boundaries, and planned work, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 The short version:
 
@@ -296,20 +306,50 @@ Integration tests create and destroy isolated schemas automatically; they leave 
 
 Offline transform cases live under `tests/cases/offline/`, and PostgreSQL-backed cases live under `tests/cases/postgres/`. Each case is a single `case.yaml` with inline inputs and expected outputs.
 
-## Status
+## Database Support
 
-Engine-specific migration files are expected; Gaman does not try to make one file portable across databases. Unsupported operations fail during validation or SQL rendering instead of silently producing no-op SQL.
+Engine-specific migration files are expected; Gaman does not try to make one file portable across databases. Unsupported operations fail during validation or SQL rendering instead of silently producing no-op SQL. `Statement` remains the escape hatch for database-specific SQL outside the modeled schema superset.
 
-| Engine | Feature | Support level | Supported scope | Unsupported or deferred |
-| --- | --- | --- | --- | --- |
-| PostgreSQL | `postgres` (default) | Primary, production-used dialect | Offline diffing and SQL rendering for schemas, tables, columns, indexes, unique/check constraints, foreign keys, extensions, enums, functions, triggers, views, raw SQL, migration tracking, advisory locks, live introspection, and drift verification | `verify_db` does not yet validate view, function, extension, or enum definitions; `alter_enum` has no inverse |
-| SQLite | `sqlite` | Native subset with table rebuilds | Create/drop/rename table, add/rename column, drop column, alter type/nullability/defaults through table rebuilds, create/drop index, inline and rebuilt foreign key/unique/check constraints, views, raw SQL, migration tracking, and conservative introspection | Schemas, extensions, enums, most stored functions, PostgreSQL trigger semantics, concurrent indexes, advisory locks, primary-key rebuilds, non-atomic table rebuilds, and automatic preservation of dependent triggers/views |
+Legend: ✅ implemented, 🚧 planned but not implemented, ❌ unsupported by design or by the database engine.
+
+| Feature | PostgreSQL | SQLite | MySQL / MariaDB |
+| --- | --- | --- | --- |
+| Offline replay, diff, and migration generation | ✅ | ✅ | 🚧 |
+| Offline SQL rendering through `sql_migrate` | ✅ | ✅ | 🚧 |
+| Live migration application | ✅ | ✅ | 🚧 |
+| Live database introspection | ✅ | ✅ | 🚧 |
+| Live `verify_db` for supported metadata | ✅ | ✅ | 🚧 |
+| Migration tracking table | ✅ | ✅ | 🚧 |
+| Database locking | ✅ | 🚧 | 🚧 |
+| Tables: create, drop, rename | ✅ | ✅ | 🚧 |
+| Columns: add, drop, rename | ✅ | ✅ | 🚧 |
+| Columns: type, nullability, default changes | ✅ | ✅ | 🚧 |
+| Generated columns | ✅ | ✅ | 🚧 |
+| Single-column primary keys | ✅ | ✅ | 🚧 |
+| Composite primary keys | ✅ | ✅ | 🚧 |
+| Primary-key changes after table creation | ❌ | ❌ | ❌ |
+| Foreign keys | ✅ | ✅ | 🚧 |
+| Unique constraints | ✅ | ✅ | 🚧 |
+| Check constraints | ✅ | ✅ | 🚧 |
+| Indexes | ✅ | ✅ | 🚧 |
+| Partial indexes | ✅ | ✅ | 🚧 |
+| Concurrent indexes | ✅ | ❌ | 🚧 |
+| Schemas / namespaces | ✅ | ❌ | ❌ |
+| Extensions as opaque schema objects | ✅ | ❌ | ❌ |
+| Enums | ✅ | ❌ | 🚧 |
+| Functions as opaque schema objects | ✅ | ❌ | 🚧 |
+| Triggers as opaque schema objects | ✅ | ❌ | 🚧 |
+| Views as opaque schema objects | ✅ | ✅ | 🚧 |
+| Raw SQL statements | ✅ | ✅ | 🚧 |
+| SQLite-style table rebuilds for limited ALTER TABLE | ❌ | ✅ | ❌ |
+| Opaque source formatting fallback in offline diff | ✅ | ✅ | 🚧 |
 
 ### Known limitations
 
-- Single-column primary and foreign keys only
+- Single-column foreign keys only
 - Column order is not tracked
-- `verify_db` does not validate view, function, extension, or enum definitions
-- `alter_enum` has no inverse, so migrations containing it cannot be rolled back
+- Offline diff preserves opaque source exactly and uses lexical canonicalization only as a fallback to suppress formatting-only churn
+- `verify_db` compares deterministic opaque metadata where available, but does not prove function, trigger, or view body equivalence from live catalog text
+- PostgreSQL enum value additions have no inverse; enum value renames are reversible
 - SQLite table rebuilds require `atomic: true`; primary-key changes, modeled triggers, and dependent views are rejected until Gaman can preserve them safely
 - SQLite nullable-to-not-null rebuilds require a default or explicit cast expression so existing rows can be copied deterministically

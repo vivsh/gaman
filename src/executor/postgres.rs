@@ -3,8 +3,9 @@ use sqlx::Row;
 
 use super::{BoxFuture, Executor, ExecutorError, Introspectable};
 use crate::states::{
-    Column, Constraint, ForeignKey, FunctionDef, Index, Schema, Table, TriggerDef, TriggerEvent,
-    TriggerScope, TriggerTiming, ViewDef, Volatility, schema_qualified_key,
+    Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, PrimaryKey, Schema,
+    Table, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming, ViewDef, Volatility,
+    schema_qualified_key,
 };
 
 const GAMAN_LOCK_KEY: i64 = 7242068691819328000;
@@ -240,6 +241,7 @@ impl Introspectable for PostgresExecutor {
                         } else {
                             Some(schema.to_string())
                         },
+                        primary_key: None,
                         columns: vec![],
                         foreign_keys: vec![],
                         indexes: vec![],
@@ -265,7 +267,7 @@ impl Introspectable for PostgresExecutor {
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
                     let pk_rows = sqlx::query(
-                        "SELECT kcu.column_name \
+                        "SELECT tc.constraint_name, kcu.column_name \
                          FROM information_schema.table_constraints tc \
                          JOIN information_schema.key_column_usage kcu \
                            ON tc.constraint_name = kcu.constraint_name \
@@ -280,13 +282,18 @@ impl Introspectable for PostgresExecutor {
                     .fetch_all(&mut self.conn)
                     .await
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                    let pk_cols: Vec<String> = pk_rows
-                        .iter()
-                        .map(|r| {
-                            r.try_get::<String, _>(0)
-                                .map_err(|e| ExecutorError::Fetch(e.to_string()))
-                        })
-                        .collect::<Result<_, _>>()?;
+                    let mut pk_name: Option<String> = None;
+                    let mut pk_cols: Vec<String> = Vec::new();
+                    for row in &pk_rows {
+                        let name: String = row
+                            .try_get(0)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let column: String = row
+                            .try_get(1)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        pk_name.get_or_insert(name);
+                        pk_cols.push(column);
+                    }
 
                     for cr in &col_rows {
                         let col_name: String = cr
@@ -358,6 +365,12 @@ impl Introspectable for PostgresExecutor {
                             references: None,
                             check: None,
                             generated,
+                        });
+                    }
+                    if !pk_cols.is_empty() {
+                        table.primary_key = Some(PrimaryKey {
+                            name: pk_name.unwrap_or_else(|| table.pk_constraint_name()),
+                            columns: pk_cols,
                         });
                     }
 
@@ -669,6 +682,85 @@ impl Introspectable for PostgresExecutor {
                     },
                 );
             }
+
+            let ext_rows = sqlx::query(
+                "SELECT e.extname, n.nspname, e.extversion \
+                 FROM pg_extension e \
+                 JOIN pg_namespace n ON n.oid = e.extnamespace \
+                 WHERE n.nspname = ANY($1) \
+                 ORDER BY n.nspname, e.extname",
+            )
+            .bind(&schema_list[..])
+            .fetch_all(&mut self.conn)
+            .await
+            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+
+            for row in &ext_rows {
+                let name: String = row
+                    .try_get(0)
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let schema: String = row
+                    .try_get(1)
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let version: Option<String> = row
+                    .try_get(2)
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let extension = ExtensionDef {
+                    name,
+                    schema: if schema == "public" {
+                        None
+                    } else {
+                        Some(schema)
+                    },
+                    version,
+                };
+                state
+                    .extensions
+                    .insert(extension.qualified_name(), extension);
+            }
+
+            let enum_rows = sqlx::query(
+                "SELECT t.typname, n.nspname, e.enumlabel \
+                 FROM pg_type t \
+                 JOIN pg_enum e ON e.enumtypid = t.oid \
+                 JOIN pg_namespace n ON n.oid = t.typnamespace \
+                 WHERE n.nspname = ANY($1) \
+                 ORDER BY n.nspname, t.typname, e.enumsortorder",
+            )
+            .bind(&schema_list[..])
+            .fetch_all(&mut self.conn)
+            .await
+            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+
+            let mut enum_map: std::collections::BTreeMap<String, EnumDef> =
+                std::collections::BTreeMap::new();
+            for row in &enum_rows {
+                let name: String = row
+                    .try_get(0)
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let schema: String = row
+                    .try_get(1)
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let label: String = row
+                    .try_get(2)
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let schema = if schema == "public" {
+                    None
+                } else {
+                    Some(schema)
+                };
+                let key = schema_qualified_key(&name, schema.as_deref());
+                enum_map
+                    .entry(key)
+                    .or_insert_with(|| EnumDef {
+                        name,
+                        schema,
+                        values: Vec::new(),
+                    })
+                    .values
+                    .push(label);
+            }
+            state.enums.extend(enum_map);
 
             Ok(state)
         })

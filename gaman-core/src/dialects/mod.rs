@@ -43,7 +43,8 @@ impl Dialect {
         }
     }
 
-    pub(crate) fn migration_to_sql(
+    #[doc(hidden)]
+    pub fn migration_to_sql(
         &self,
         migration: &Migration,
         _start: &Schema,
@@ -63,7 +64,12 @@ impl Dialect {
     /// Reorders operations to satisfy database-specific execution constraints.
     /// The default is a no-op — only databases with ordering requirements need to override.
     /// Called once per migration after diffing, before SQL generation or writing.
-    pub fn reorder(&self, ops: Vec<Operation>, previous: &Schema, current: &Schema) -> Vec<Operation> {
+    pub fn reorder(
+        &self,
+        ops: Vec<Operation>,
+        previous: &Schema,
+        current: &Schema,
+    ) -> Vec<Operation> {
         match self {
             Dialect::Postgres => postgres::reorder_ops(ops, previous, current),
             #[cfg(feature = "sqlite")]
@@ -132,7 +138,8 @@ impl Dialect {
         }
     }
 
-    pub(crate) fn validate_migration_with_state(
+    #[doc(hidden)]
+    pub fn validate_migration_with_state(
         &self,
         m: &Migration,
         _start: &Schema,

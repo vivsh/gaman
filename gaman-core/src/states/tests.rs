@@ -6,6 +6,7 @@ fn basic_table(name: &str) -> Table {
     Table {
         name: name.to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![],
         foreign_keys: vec![],
         indexes: vec![],
@@ -27,6 +28,133 @@ fn text_col(name: &str) -> Column {
 
 fn apply_ok(state: &mut Schema, op: Operation) {
     state.apply(&op).expect("apply should succeed");
+}
+
+#[test]
+fn normalize_column_primary_key_flags_into_table_primary_key() {
+    let mut schema = Schema::default();
+    let mut table = basic_table("order_lines");
+    table.columns.push(Column {
+        name: "order_id".to_string(),
+        col_type: "bigint".to_string(),
+        nullable: true,
+        primary_key: true,
+        ..Default::default()
+    });
+    table.columns.push(Column {
+        name: "tenant_id".to_string(),
+        col_type: "bigint".to_string(),
+        nullable: true,
+        primary_key: true,
+        ..Default::default()
+    });
+    schema.tables.insert("order_lines".to_string(), table);
+
+    schema.normalize();
+    let table = &schema.tables["order_lines"];
+    let pk = table.primary_key.as_ref().expect("primary key");
+    assert_eq!(pk.name, "order_lines_pkey");
+    assert_eq!(pk.columns, ["order_id", "tenant_id"]);
+    assert!(table.columns.iter().all(|column| !column.nullable));
+}
+
+#[test]
+fn normalize_explicit_primary_key_preserves_name_and_order() {
+    let mut schema = Schema::default();
+    let mut table = basic_table("order_lines");
+    table.primary_key = Some(PrimaryKey {
+        name: "order_lines_identity".to_string(),
+        columns: vec!["tenant_id".to_string(), "order_id".to_string()],
+    });
+    table.columns.push(Column {
+        name: "order_id".to_string(),
+        col_type: "bigint".to_string(),
+        nullable: true,
+        ..Default::default()
+    });
+    table.columns.push(Column {
+        name: "tenant_id".to_string(),
+        col_type: "bigint".to_string(),
+        nullable: true,
+        ..Default::default()
+    });
+    schema.tables.insert("order_lines".to_string(), table);
+
+    schema.normalize();
+    let table = &schema.tables["order_lines"];
+    assert_eq!(table.primary_key_column_names(), ["tenant_id", "order_id"]);
+    assert!(table.is_primary_key_column("tenant_id"));
+    assert!(table.is_primary_key_column("order_id"));
+    assert!(table.columns.iter().all(|column| !column.nullable));
+}
+
+#[test]
+fn validate_rejects_conflicting_explicit_primary_key_and_column_flags() {
+    let mut table = basic_table("order_lines");
+    table.primary_key = Some(PrimaryKey {
+        name: "order_lines_identity".to_string(),
+        columns: vec!["tenant_id".to_string(), "order_id".to_string()],
+    });
+    table.columns.push(Column {
+        name: "order_id".to_string(),
+        col_type: "bigint".to_string(),
+        primary_key: true,
+        ..Default::default()
+    });
+    table.columns.push(Column {
+        name: "tenant_id".to_string(),
+        col_type: "bigint".to_string(),
+        ..Default::default()
+    });
+    let mut schema = Schema::default();
+    schema.tables.insert("order_lines".to_string(), table);
+
+    let err = schema.validate().unwrap_err();
+    assert!(err.contains("primary key column flags conflict"));
+}
+
+#[test]
+fn validate_rejects_unknown_primary_key_column() {
+    let mut table = basic_table("order_lines");
+    table.primary_key = Some(PrimaryKey {
+        name: "order_lines_identity".to_string(),
+        columns: vec!["tenant_id".to_string()],
+    });
+    table.columns.push(Column {
+        name: "order_id".to_string(),
+        col_type: "bigint".to_string(),
+        ..Default::default()
+    });
+    let mut schema = Schema::default();
+    schema.tables.insert("order_lines".to_string(), table);
+
+    let err = schema.validate().unwrap_err();
+    assert!(err.contains("references unknown column 'tenant_id'"));
+}
+
+#[test]
+fn yaml_accepts_explicit_primary_key_metadata() {
+    let schema = Schema::from_yaml_str(
+        r#"
+tables:
+  order_lines:
+    primary_key:
+      name: order_lines_identity
+      columns: [tenant_id, order_id]
+    columns:
+      - name: order_id
+        type: bigint
+      - name: tenant_id
+        type: bigint
+"#,
+    )
+    .unwrap();
+
+    let table = &schema.tables["order_lines"];
+    let pk = table.primary_key.as_ref().expect("primary key");
+    assert_eq!(pk.name, "order_lines_identity");
+    assert_eq!(pk.columns, ["tenant_id", "order_id"]);
+    assert!(table.columns.iter().all(|column| column.primary_key));
 }
 
 /// CreateTable inserts the table into the state.
@@ -677,13 +805,14 @@ fn table_not_found_propagates() {
     assert_eq!(err, ReplayError::TableNotFound("ghost".to_string()));
 }
 
-/// CreateTable with two primary_key columns returns MultiplePrimaryKeys.
+/// CreateTable with two primary_key columns creates a composite primary key.
 #[test]
-fn create_table_with_multiple_pk_returns_error() {
+fn create_table_with_multiple_pk_creates_composite_primary_key() {
     let mut s = Schema::default();
     let table = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![
             Column {
                 name: "id".to_string(),
@@ -707,11 +836,13 @@ fn create_table_with_multiple_pk_returns_error() {
         constraints: vec![],
         triggers: vec![],
     };
-    let err = s.apply(&Operation::CreateTable { table }).unwrap_err();
-    assert_eq!(err, ReplayError::MultiplePrimaryKeys("users".to_string()));
+    s.apply(&Operation::CreateTable { table }).unwrap();
+    let table = &s.tables["users"];
+    let pk = table.primary_key.as_ref().expect("primary key");
+    assert_eq!(pk.columns, ["id", "alt_id"]);
 }
 
-/// AddColumn with primary_key=true when one already exists returns MultiplePrimaryKeys.
+/// AddColumn with primary_key=true on an existing table is an unsafe PK mutation.
 #[test]
 fn add_pk_column_when_pk_exists_returns_error() {
     let mut s = Schema::default();
@@ -726,6 +857,7 @@ fn add_pk_column_when_pk_exists_returns_error() {
     let table = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col],
         foreign_keys: vec![],
         indexes: vec![],
@@ -747,10 +879,10 @@ fn add_pk_column_when_pk_exists_returns_error() {
             column: second_pk,
         })
         .unwrap_err();
-    assert_eq!(err, ReplayError::MultiplePrimaryKeys("users".to_string()));
+    assert_eq!(err, ReplayError::PrimaryKeyMutation("users".to_string()));
 }
 
-/// AlterColumn that promotes a column to primary_key when one already exists returns MultiplePrimaryKeys.
+/// AlterColumn that promotes a column to primary_key is an unsafe PK mutation.
 #[test]
 fn alter_column_to_pk_when_pk_exists_returns_error() {
     let mut s = Schema::default();
@@ -773,6 +905,7 @@ fn alter_column_to_pk_when_pk_exists_returns_error() {
     let table = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col, other_col.clone()],
         foreign_keys: vec![],
         indexes: vec![],
@@ -796,7 +929,7 @@ fn alter_column_to_pk_when_pk_exists_returns_error() {
             cast_expr: None,
         })
         .unwrap_err();
-    assert_eq!(err, ReplayError::MultiplePrimaryKeys("users".to_string()));
+    assert_eq!(err, ReplayError::PrimaryKeyMutation("users".to_string()));
 }
 
 /// validate() returns Ok for a state with at most one PK column per table.
@@ -814,6 +947,7 @@ fn validate_single_pk_ok() {
     let table = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col],
         foreign_keys: vec![],
         indexes: vec![],
@@ -831,6 +965,7 @@ fn validate_multiple_pk_returns_err() {
     let table = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![
             Column {
                 name: "id".to_string(),
@@ -855,7 +990,9 @@ fn validate_multiple_pk_returns_err() {
         triggers: vec![],
     };
     s.tables.insert("users".to_string(), table);
-    assert!(s.validate().is_err());
+    s.normalize();
+    assert!(s.validate().is_ok());
+    assert_eq!(s.tables["users"].primary_key_column_names(), ["id", "alt"]);
 }
 
 /// normalize() moves an inline `references` into `table.foreign_keys` and clears the column field.
@@ -879,6 +1016,7 @@ fn normalize_moves_inline_fk_to_foreign_keys() {
     let table = Table {
         name: "posts".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![col],
         foreign_keys: vec![],
         indexes: vec![],
@@ -917,6 +1055,7 @@ fn normalize_inline_fk_uses_explicit_name_when_provided() {
     let table = Table {
         name: "posts".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![col],
         foreign_keys: vec![],
         indexes: vec![],
@@ -946,6 +1085,7 @@ fn normalize_moves_inline_check_to_constraints() {
     let table = Table {
         name: "results".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![col],
         foreign_keys: vec![],
         indexes: vec![],
@@ -983,6 +1123,7 @@ fn normalize_is_idempotent() {
     let table = Table {
         name: "posts".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![col],
         foreign_keys: vec![],
         indexes: vec![],
@@ -1308,6 +1449,7 @@ fn validate_trigger_empty_events() {
     let table = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![],
         foreign_keys: vec![],
         indexes: vec![],
@@ -1334,6 +1476,7 @@ fn validate_trigger_no_function_name() {
     let table = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![],
         foreign_keys: vec![],
         indexes: vec![],
@@ -1442,6 +1585,7 @@ fn create_table_inline_vs_incremental_are_equal() {
             table: Table {
                 name: "users".to_string(),
                 schema: None,
+                primary_key: None,
                 columns: cols.clone(),
                 foreign_keys: vec![],
                 indexes: vec![],

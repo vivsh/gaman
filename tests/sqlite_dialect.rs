@@ -7,7 +7,7 @@ use gaman::core::{
     Migrator, SqliteExecutor, VecAdapter,
 };
 use gaman::schema::{
-    Column, Constraint, ExtensionDef, ForeignKey, Index, Operation, Table, TriggerDef,
+    Column, Constraint, ExtensionDef, ForeignKey, Index, Operation, PrimaryKey, Table, TriggerDef,
     TriggerEvent, TriggerScope, TriggerTiming, ViewDef,
 };
 use gaman::{Config, Migration};
@@ -17,6 +17,7 @@ fn table(name: &str) -> Table {
     Table {
         name: name.to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![Column {
             name: "id".to_string(),
             col_type: "integer".to_string(),
@@ -75,6 +76,39 @@ fn migration_after(id: &str, dependency: &str, operations: Vec<Operation>) -> Mi
         operations,
         atomic: true,
     }
+}
+
+#[test]
+fn create_table_composite_primary_key() {
+    let table = Table {
+        name: "order_lines".to_string(),
+        schema: None,
+        primary_key: Some(PrimaryKey {
+            name: "order_lines_identity".to_string(),
+            columns: vec!["tenant_id".to_string(), "order_id".to_string()],
+        }),
+        columns: vec![
+            col("order_id", "integer", false),
+            col("tenant_id", "integer", false),
+        ],
+        foreign_keys: vec![],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![],
+    };
+
+    let sql = Dialect::Sqlite
+        .operation_to_sql(&Operation::CreateTable { table })
+        .unwrap();
+
+    assert_eq!(sql.len(), 1);
+    assert!(
+        sql[0].contains(
+            "CONSTRAINT \"order_lines_identity\" PRIMARY KEY (\"tenant_id\", \"order_id\")"
+        )
+    );
+    assert!(!sql[0].contains("\"tenant_id\" integer PRIMARY KEY"));
+    assert!(!sql[0].contains("\"order_id\" integer PRIMARY KEY"));
 }
 
 fn migration_atomic(id: &str, atomic: bool, operations: Vec<Operation>) -> Migration {
@@ -164,7 +198,10 @@ fn sqlite_errors_for_unsupported_extension_operations() {
         })
         .unwrap_err();
 
-    assert!(err.to_string().contains("not supported by the SQLite dialect"));
+    assert!(
+        err.to_string()
+            .contains("not supported by the SQLite dialect")
+    );
 }
 
 #[test]
@@ -197,7 +234,12 @@ fn sqlite_rebuilds_drop_column_and_recreates_indexes() {
     let mut users = Table {
         name: "users".to_string(),
         schema: None,
-        columns: vec![pk_col("id"), col("username", "text", false), col("email", "text", true)],
+        primary_key: None,
+        columns: vec![
+            pk_col("id"),
+            col("username", "text", false),
+            col("email", "text", true),
+        ],
         foreign_keys: vec![],
         indexes: vec![Index {
             name: "users_username_idx".to_string(),
@@ -212,7 +254,12 @@ fn sqlite_rebuilds_drop_column_and_recreates_indexes() {
     target_users.columns.pop();
 
     let sql = sql_for(vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users.clone() }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable {
+                table: users.clone(),
+            }],
+        ),
         migration(
             "0002_drop_email",
             vec![Operation::DropColumn {
@@ -248,7 +295,12 @@ fn sqlite_batches_same_table_rebuild_ops() {
     let users = Table {
         name: "users".to_string(),
         schema: None,
-        columns: vec![pk_col("id"), col("age", "text", true), col("email", "text", true)],
+        primary_key: None,
+        columns: vec![
+            pk_col("id"),
+            col("age", "text", true),
+            col("email", "text", true),
+        ],
         foreign_keys: vec![],
         indexes: vec![],
         constraints: vec![],
@@ -258,7 +310,12 @@ fn sqlite_batches_same_table_rebuild_ops() {
     new_age.default = Some("0".to_string());
 
     let sql = sql_for(vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users.clone() }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable {
+                table: users.clone(),
+            }],
+        ),
         migration(
             "0002_rebuild_users",
             vec![
@@ -303,6 +360,7 @@ fn sqlite_rebuilds_foreign_key_and_unique_constraint_changes() {
     let accounts = Table {
         name: "accounts".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id")],
         foreign_keys: vec![],
         indexes: vec![],
@@ -312,6 +370,7 @@ fn sqlite_rebuilds_foreign_key_and_unique_constraint_changes() {
     let users = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id"), col("account_id", "integer", false)],
         foreign_keys: vec![],
         indexes: vec![],
@@ -320,8 +379,14 @@ fn sqlite_rebuilds_foreign_key_and_unique_constraint_changes() {
     };
 
     let sql = sql_for(vec![
-        migration("0001_create_accounts", vec![Operation::CreateTable { table: accounts }]),
-        migration("0002_create_users", vec![Operation::CreateTable { table: users }]),
+        migration(
+            "0001_create_accounts",
+            vec![Operation::CreateTable { table: accounts }],
+        ),
+        migration(
+            "0002_create_users",
+            vec![Operation::CreateTable { table: users }],
+        ),
         migration(
             "0003_add_constraints",
             vec![
@@ -356,6 +421,7 @@ fn sqlite_rebuild_adds_generated_column_without_copying_it() {
     let users = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id"), col("name", "text", false)],
         foreign_keys: vec![],
         indexes: vec![],
@@ -366,7 +432,10 @@ fn sqlite_rebuild_adds_generated_column_without_copying_it() {
     slug.generated = Some("lower(name)".to_string());
 
     let sql = sql_for(vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable { table: users }],
+        ),
         migration(
             "0002_add_slug",
             vec![Operation::AddColumn {
@@ -389,6 +458,7 @@ fn sqlite_rebuild_rejects_unsafe_cases() {
     let users = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id"), col("name", "text", true)],
         foreign_keys: vec![],
         indexes: vec![],
@@ -399,7 +469,12 @@ fn sqlite_rebuild_rejects_unsafe_cases() {
     let mut new_id = pk_col("id");
     new_id.col_type = "text".to_string();
     let err = migrator(vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users.clone() }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable {
+                table: users.clone(),
+            }],
+        ),
         migration(
             "0002_alter_pk",
             vec![Operation::AlterColumn {
@@ -411,7 +486,12 @@ fn sqlite_rebuild_rejects_unsafe_cases() {
         ),
     ])
     .sql_migrate(&[
-        migration("0001_create_users", vec![Operation::CreateTable { table: users.clone() }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable {
+                table: users.clone(),
+            }],
+        ),
         migration(
             "0002_alter_pk",
             vec![Operation::AlterColumn {
@@ -432,7 +512,12 @@ fn sqlite_rebuild_rejects_unsafe_cases() {
     let mut required_name = col("name", "text", false);
     required_name.default = None;
     let err = sql_for_result(vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users.clone() }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable {
+                table: users.clone(),
+            }],
+        ),
         migration(
             "0002_require_name",
             vec![Operation::AlterColumn {
@@ -444,10 +529,18 @@ fn sqlite_rebuild_rejects_unsafe_cases() {
         ),
     ])
     .unwrap_err();
-    assert!(err.to_string().contains("without a default or cast expression"));
+    assert!(
+        err.to_string()
+            .contains("without a default or cast expression")
+    );
 
     let err = sql_for_result(vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users.clone() }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable {
+                table: users.clone(),
+            }],
+        ),
         migration_atomic(
             "0002_drop_name",
             false,
@@ -462,7 +555,10 @@ fn sqlite_rebuild_rejects_unsafe_cases() {
     assert!(err.to_string().contains("require atomic migrations"));
 
     let err = sql_for_result(vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable { table: users }],
+        ),
         migration(
             "0002_custom_type",
             vec![Operation::AlterColumn {
@@ -482,6 +578,7 @@ fn sqlite_rebuild_rejects_temp_collision_triggers_and_views() {
     let users = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id"), col("name", "text", true)],
         foreign_keys: vec![],
         indexes: vec![],
@@ -491,6 +588,7 @@ fn sqlite_rebuild_rejects_temp_collision_triggers_and_views() {
     let temp = Table {
         name: "__gaman_rebuild_users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id")],
         foreign_keys: vec![],
         indexes: vec![],
@@ -500,6 +598,7 @@ fn sqlite_rebuild_rejects_temp_collision_triggers_and_views() {
     let fk_temp = Table {
         name: "__gaman_fk_check_users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id")],
         foreign_keys: vec![],
         indexes: vec![],
@@ -513,16 +612,32 @@ fn sqlite_rebuild_rejects_temp_collision_triggers_and_views() {
     };
 
     let err = sql_for_result(vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users.clone() }]),
-        migration("0002_create_temp", vec![Operation::CreateTable { table: temp }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable {
+                table: users.clone(),
+            }],
+        ),
+        migration(
+            "0002_create_temp",
+            vec![Operation::CreateTable { table: temp }],
+        ),
         migration("0003_drop_name", vec![drop_name.clone()]),
     ])
     .unwrap_err();
     assert!(err.to_string().contains("already exists"));
 
     let err = sql_for_result(vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users.clone() }]),
-        migration("0002_create_fk_temp", vec![Operation::CreateTable { table: fk_temp }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable {
+                table: users.clone(),
+            }],
+        ),
+        migration(
+            "0002_create_fk_temp",
+            vec![Operation::CreateTable { table: fk_temp }],
+        ),
         migration("0003_drop_name", vec![drop_name.clone()]),
     ])
     .unwrap_err();
@@ -540,14 +655,20 @@ fn sqlite_rebuild_rejects_temp_collision_triggers_and_views() {
         language: None,
     });
     let err = sql_for_result(vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: triggered }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable { table: triggered }],
+        ),
         migration("0002_drop_name", vec![drop_name.clone()]),
     ])
     .unwrap_err();
     assert!(err.to_string().contains("modeled triggers"));
 
     let err = sql_for_result(vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable { table: users }],
+        ),
         migration(
             "0002_create_view",
             vec![Operation::CreateView {
@@ -569,6 +690,7 @@ fn sqlite_dependent_view_detection_is_identifier_aware() {
     let users = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id"), col("name", "text", true)],
         foreign_keys: vec![],
         indexes: vec![],
@@ -582,7 +704,12 @@ fn sqlite_dependent_view_detection_is_identifier_aware() {
     };
 
     sql_for_result(vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users.clone() }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable {
+                table: users.clone(),
+            }],
+        ),
         migration(
             "0002_create_unrelated_view",
             vec![Operation::CreateView {
@@ -598,7 +725,10 @@ fn sqlite_dependent_view_detection_is_identifier_aware() {
     .unwrap();
 
     let err = sql_for_result(vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable { table: users }],
+        ),
         migration(
             "0002_create_quoted_view",
             vec![Operation::CreateView {
@@ -625,7 +755,12 @@ async fn sqlite_rebuild_live_preserves_data_and_constraints() {
     let users = Table {
         name: "users".to_string(),
         schema: None,
-        columns: vec![pk_col("id"), col("age", "text", true), col("email", "text", true)],
+        primary_key: None,
+        columns: vec![
+            pk_col("id"),
+            col("age", "text", true),
+            col("email", "text", true),
+        ],
         foreign_keys: vec![],
         indexes: vec![],
         constraints: vec![],
@@ -696,6 +831,7 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
     let accounts = Table {
         name: "accounts".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id")],
         foreign_keys: vec![],
         indexes: vec![],
@@ -705,6 +841,7 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
     let users = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id"), col("account_id", "integer", false)],
         foreign_keys: vec![],
         indexes: vec![Index {
@@ -724,8 +861,15 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
     };
 
     let migrations = vec![
-        migration("0001_create_accounts", vec![Operation::CreateTable { table: accounts }]),
-        migration_after("0002_create_users", "0001_create_accounts", vec![Operation::CreateTable { table: users }]),
+        migration(
+            "0001_create_accounts",
+            vec![Operation::CreateTable { table: accounts }],
+        ),
+        migration_after(
+            "0002_create_users",
+            "0001_create_accounts",
+            vec![Operation::CreateTable { table: users }],
+        ),
         migration_after(
             "0003_add_fk",
             "0002_create_users",
@@ -780,6 +924,7 @@ async fn sqlite_rebuild_live_preserves_child_rows_when_parent_is_rebuilt() {
     let mut accounts_v1 = Table {
         name: "accounts".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id"), col("legacy_code", "text", true)],
         foreign_keys: vec![],
         indexes: vec![],
@@ -789,6 +934,7 @@ async fn sqlite_rebuild_live_preserves_child_rows_when_parent_is_rebuilt() {
     let users = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id"), col("account_id", "integer", false)],
         foreign_keys: vec![ForeignKey {
             name: "users_account_id_fkey".to_string(),
@@ -808,8 +954,15 @@ async fn sqlite_rebuild_live_preserves_child_rows_when_parent_is_rebuilt() {
     });
 
     let migrations = vec![
-        migration("0001_create_accounts", vec![Operation::CreateTable { table: accounts_v1 }]),
-        migration_after("0002_create_users", "0001_create_accounts", vec![Operation::CreateTable { table: users }]),
+        migration(
+            "0001_create_accounts",
+            vec![Operation::CreateTable { table: accounts_v1 }],
+        ),
+        migration_after(
+            "0002_create_users",
+            "0001_create_accounts",
+            vec![Operation::CreateTable { table: users }],
+        ),
         migration_after(
             "0003_rebuild_parent",
             "0002_create_users",
@@ -867,6 +1020,7 @@ async fn sqlite_rebuild_live_fails_foreign_key_check_for_existing_bad_data() {
     let accounts = Table {
         name: "accounts".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id")],
         foreign_keys: vec![],
         indexes: vec![],
@@ -876,6 +1030,7 @@ async fn sqlite_rebuild_live_fails_foreign_key_check_for_existing_bad_data() {
     let users = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id"), col("account_id", "integer", false)],
         foreign_keys: vec![],
         indexes: vec![],
@@ -883,8 +1038,15 @@ async fn sqlite_rebuild_live_fails_foreign_key_check_for_existing_bad_data() {
         triggers: vec![],
     };
     let migrations = vec![
-        migration("0001_create_accounts", vec![Operation::CreateTable { table: accounts }]),
-        migration_after("0002_create_users", "0001_create_accounts", vec![Operation::CreateTable { table: users }]),
+        migration(
+            "0001_create_accounts",
+            vec![Operation::CreateTable { table: accounts }],
+        ),
+        migration_after(
+            "0002_create_users",
+            "0001_create_accounts",
+            vec![Operation::CreateTable { table: users }],
+        ),
         migration_after(
             "0003_seed_bad_user",
             "0002_create_users",
@@ -943,12 +1105,17 @@ impl RecordingExecutor {
 }
 
 impl Executor for RecordingExecutor {
-    fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), gaman::core::ExecutorError>> {
+    fn execute<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> BoxFuture<'a, Result<(), gaman::core::ExecutorError>> {
         self.log.push(sql.to_string());
         let should_fail = self.fail_on.is_some_and(|needle| sql.contains(needle));
         Box::pin(async move {
             if should_fail {
-                Err(gaman::core::ExecutorError::Execute("forced failure".to_string()))
+                Err(gaman::core::ExecutorError::Execute(
+                    "forced failure".to_string(),
+                ))
             } else {
                 Ok(())
             }
@@ -995,6 +1162,7 @@ async fn sqlite_rebuild_uses_existing_migrator_transaction_and_record_flow() {
     let users = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id"), col("email", "text", true)],
         foreign_keys: vec![],
         indexes: vec![],
@@ -1002,7 +1170,10 @@ async fn sqlite_rebuild_uses_existing_migrator_transaction_and_record_flow() {
         triggers: vec![],
     };
     let migrations = vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable { table: users }],
+        ),
         migration_after(
             "0002_drop_email",
             "0001_create_users",
@@ -1021,7 +1192,11 @@ async fn sqlite_rebuild_uses_existing_migrator_transaction_and_record_flow() {
         .await
         .unwrap();
 
-    let begin_pos = executor.log.iter().position(|entry| entry == "BEGIN").unwrap();
+    let begin_pos = executor
+        .log
+        .iter()
+        .position(|entry| entry == "BEGIN")
+        .unwrap();
     let rebuild_pos = executor
         .log
         .iter()
@@ -1032,13 +1207,20 @@ async fn sqlite_rebuild_uses_existing_migrator_transaction_and_record_flow() {
         .iter()
         .rposition(|entry| entry.contains("INSERT INTO gaman_migrations"))
         .unwrap();
-    let commit_pos = executor.log.iter().rposition(|entry| entry == "COMMIT").unwrap();
+    let commit_pos = executor
+        .log
+        .iter()
+        .rposition(|entry| entry == "COMMIT")
+        .unwrap();
 
     assert!(begin_pos < rebuild_pos);
     assert!(rebuild_pos < record_pos);
     assert!(record_pos < commit_pos);
     assert_eq!(executor.lock_count, 0);
-    assert_eq!(executor.log.last().map(String::as_str), Some("RELEASE_LOCK"));
+    assert_eq!(
+        executor.log.last().map(String::as_str),
+        Some("RELEASE_LOCK")
+    );
 }
 
 #[tokio::test]
@@ -1046,6 +1228,7 @@ async fn sqlite_rebuild_failure_rolls_back_without_recording_and_releases_lock()
     let users = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id"), col("email", "text", true)],
         foreign_keys: vec![],
         indexes: vec![],
@@ -1053,7 +1236,10 @@ async fn sqlite_rebuild_failure_rolls_back_without_recording_and_releases_lock()
         triggers: vec![],
     };
     let migrations = vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable { table: users }],
+        ),
         migration_after(
             "0002_drop_email",
             "0001_create_users",
@@ -1074,12 +1260,18 @@ async fn sqlite_rebuild_failure_rolls_back_without_recording_and_releases_lock()
 
     assert!(err.to_string().contains("forced failure"));
     assert!(executor.log.iter().any(|entry| entry == "ROLLBACK"));
-    assert!(!executor
-        .log
-        .iter()
-        .any(|entry| entry.contains("INSERT INTO gaman_migrations") && entry.contains("0002_drop_email")));
+    assert!(
+        !executor
+            .log
+            .iter()
+            .any(|entry| entry.contains("INSERT INTO gaman_migrations")
+                && entry.contains("0002_drop_email"))
+    );
     assert_eq!(executor.lock_count, 0);
-    assert_eq!(executor.log.last().map(String::as_str), Some("RELEASE_LOCK"));
+    assert_eq!(
+        executor.log.last().map(String::as_str),
+        Some("RELEASE_LOCK")
+    );
 }
 
 #[tokio::test]
@@ -1087,6 +1279,7 @@ async fn sqlite_rebuild_render_failure_preflights_before_install_lock_or_begin()
     let users = Table {
         name: "users".to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![pk_col("id"), col("name", "text", true)],
         foreign_keys: vec![],
         indexes: vec![],
@@ -1094,7 +1287,10 @@ async fn sqlite_rebuild_render_failure_preflights_before_install_lock_or_begin()
         triggers: vec![],
     };
     let migrations = vec![
-        migration("0001_create_users", vec![Operation::CreateTable { table: users }]),
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable { table: users }],
+        ),
         migration_after(
             "0002_require_name",
             "0001_create_users",
@@ -1114,7 +1310,14 @@ async fn sqlite_rebuild_render_failure_preflights_before_install_lock_or_begin()
         .await
         .unwrap_err();
 
-    assert!(err.to_string().contains("without a default or cast expression"));
-    assert!(executor.log.is_empty(), "unexpected executor activity: {:?}", executor.log);
+    assert!(
+        err.to_string()
+            .contains("without a default or cast expression")
+    );
+    assert!(
+        executor.log.is_empty(),
+        "unexpected executor activity: {:?}",
+        executor.log
+    );
     assert_eq!(executor.lock_count, 0);
 }

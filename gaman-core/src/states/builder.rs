@@ -1,8 +1,8 @@
-use crate::dialects::Dialect;
 use super::{
     Column, ColumnRef, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index,
-    Schema, Table, ViewDef, schema_qualified_key, SchemaLoadError,
+    PrimaryKey, Schema, SchemaLoadError, Table, ViewDef, schema_qualified_key,
 };
+use crate::dialects::Dialect;
 
 /// Map a Rust type to a table definition.
 pub trait IntoTable {
@@ -40,6 +40,7 @@ impl ColumnBuilder {
 
     pub fn primary_key(mut self) -> Self {
         self.col.primary_key = true;
+        self.col.nullable = false;
         self
     }
 
@@ -108,6 +109,7 @@ impl TableBuilder {
             table: Table {
                 name,
                 schema: None,
+                primary_key: None,
                 columns: vec![],
                 foreign_keys: vec![],
                 indexes: vec![],
@@ -189,7 +191,43 @@ impl TableBuilder {
         self
     }
 
-    pub fn build(self) -> Table {
+    pub fn primary_key(mut self, name: impl Into<String>, columns: &[&str]) -> Self {
+        self.table.primary_key = Some(PrimaryKey {
+            name: name.into(),
+            columns: columns.iter().map(|s| s.to_string()).collect(),
+        });
+        self
+    }
+
+    pub fn primary_key_columns(self, columns: &[&str]) -> Self {
+        let name = self.table.pk_constraint_name();
+        self.primary_key(name, columns)
+    }
+
+    pub fn build(mut self) -> Table {
+        if self.table.primary_key.is_none() {
+            let columns: Vec<String> = self
+                .table
+                .columns
+                .iter()
+                .filter(|column| column.primary_key)
+                .map(|column| column.name.clone())
+                .collect();
+            if !columns.is_empty() {
+                self.table.primary_key = Some(PrimaryKey {
+                    name: self.table.pk_constraint_name(),
+                    columns,
+                });
+            }
+        }
+        if let Some(pk) = &self.table.primary_key {
+            for column in &mut self.table.columns {
+                column.primary_key = pk.columns.iter().any(|name| name == &column.name);
+                if column.primary_key {
+                    column.nullable = false;
+                }
+            }
+        }
         self.table
     }
 }
@@ -214,7 +252,10 @@ impl SchemaBuilder {
     }
 
     pub fn new(dialect: Dialect) -> Self {
-        Self { dialect, state: Schema::default() }
+        Self {
+            dialect,
+            state: Schema::default(),
+        }
     }
 
     /// Add a table from any type that implements [`IntoTable`].
@@ -229,11 +270,7 @@ impl SchemaBuilder {
         self.insert_extension(name, None)
     }
 
-    pub fn extension_versioned(
-        self,
-        name: impl Into<String>,
-        version: impl Into<String>,
-    ) -> Self {
+    pub fn extension_versioned(self, name: impl Into<String>, version: impl Into<String>) -> Self {
         self.insert_extension(name, Some(version.into()))
     }
 
@@ -241,7 +278,11 @@ impl SchemaBuilder {
         let name = name.into();
         self.state.views.insert(
             name.clone(),
-            ViewDef { name, schema: None, definition: definition.into() },
+            ViewDef {
+                name,
+                schema: None,
+                definition: definition.into(),
+            },
         );
         self
     }
@@ -272,11 +313,13 @@ impl SchemaBuilder {
     }
 
     /// Load schema from a `.yaml`, `.sql`, or directory path.
+    #[cfg(feature = "fs")]
     pub fn load_file(self, path: impl AsRef<std::path::Path>) -> Result<Schema, SchemaLoadError> {
         Schema::from_file(path.as_ref())
     }
 
     /// Load schema from a directory of `.yaml` or `.sql` files (merged in alphabetical order).
+    #[cfg(feature = "fs")]
     pub fn load_dir(self, path: impl AsRef<std::path::Path>) -> Result<Schema, SchemaLoadError> {
         Schema::from_dir(path.as_ref())
     }

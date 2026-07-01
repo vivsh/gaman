@@ -28,7 +28,10 @@ pub enum InvokerError {
 
 pub trait Executor {
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>>;
-    fn fetch_strings<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>>;
+    fn fetch_strings<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>>;
     fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>>;
     fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>>;
     fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>>;
@@ -45,7 +48,10 @@ pub trait Invoker {
 }
 
 pub trait Introspectable {
-    fn inspect_db<'a>(&'a mut self, schemas: &'a [&'a str]) -> BoxFuture<'a, Result<crate::states::Schema, ExecutorError>>;
+    fn inspect_db<'a>(
+        &'a mut self,
+        schemas: &'a [&'a str],
+    ) -> BoxFuture<'a, Result<crate::states::Schema, ExecutorError>>;
 }
 
 #[derive(Debug, Error)]
@@ -56,6 +62,7 @@ pub enum ConnectError {
     Connect(String),
 }
 
+#[allow(dead_code)]
 pub fn connect_environment_executor<'a>(
     dialect: Dialect,
     url: &'a str,

@@ -1,7 +1,8 @@
 use super::*;
+use crate::dialects::Dialect;
 use crate::states::{
-    Column, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, Table, TriggerDef, TriggerEvent,
-    TriggerScope, TriggerTiming, ViewDef, Volatility,
+    Column, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, PrimaryKey, Table, TriggerDef,
+    TriggerEvent, TriggerScope, TriggerTiming, ViewDef, Volatility,
 };
 
 fn empty_schema() -> Schema {
@@ -12,6 +13,7 @@ fn empty_table(name: &str) -> Table {
     Table {
         name: name.to_string(),
         schema: None,
+        primary_key: None,
         columns: vec![],
         foreign_keys: vec![],
         indexes: vec![],
@@ -29,6 +31,44 @@ fn text_col(name: &str) -> Column {
         primary_key: false,
         ..Default::default()
     }
+}
+
+#[test]
+fn diff_rejects_primary_key_mutation() {
+    let mut previous = empty_schema();
+    let mut current = empty_schema();
+    let mut old_table = empty_table("order_lines");
+    old_table.columns.push(Column {
+        name: "order_id".to_string(),
+        col_type: "bigint".to_string(),
+        nullable: false,
+        primary_key: true,
+        ..Default::default()
+    });
+    old_table.primary_key = Some(PrimaryKey {
+        name: "order_lines_pkey".to_string(),
+        columns: vec!["order_id".to_string()],
+    });
+    let mut new_table = old_table.clone();
+    new_table.columns.push(Column {
+        name: "tenant_id".to_string(),
+        col_type: "bigint".to_string(),
+        nullable: false,
+        primary_key: true,
+        ..Default::default()
+    });
+    new_table.primary_key = Some(PrimaryKey {
+        name: "order_lines_pkey".to_string(),
+        columns: vec!["order_id".to_string(), "tenant_id".to_string()],
+    });
+    previous.tables.insert("order_lines".to_string(), old_table);
+    current.tables.insert("order_lines".to_string(), new_table);
+
+    let err = DiffEngine::new()
+        .diff(&current, &previous, &Dialect::Postgres)
+        .unwrap_err();
+
+    assert!(matches!(err, DiffError::PrimaryKeyMutation(table) if table == "order_lines"));
 }
 
 fn int_col(name: &str) -> Column {
@@ -80,8 +120,44 @@ fn schema_with_enum(e: EnumDef) -> Schema {
     s
 }
 
+fn schema_with_function(f: FunctionDef) -> Schema {
+    let mut s = Schema::default();
+    s.functions.insert(f.name.clone(), f);
+    s
+}
+
+fn schema_with_view(v: ViewDef) -> Schema {
+    let mut s = Schema::default();
+    s.views.insert(v.name.clone(), v);
+    s
+}
+
 fn op_names(ops: &[Operation]) -> Vec<&'static str> {
     ops.iter().map(|op| op.type_name()).collect()
+}
+
+#[test]
+fn opaque_source_comparison_ignores_whitespace_and_comments() {
+    assert!(crate::opaque::opaque_sources_equal(
+        "SELECT  a -- ignored\nFROM users /* ignored */ WHERE id = 1",
+        "SELECT a FROM users WHERE id = 1"
+    ));
+}
+
+#[test]
+fn opaque_source_comparison_preserves_quoted_string_contents() {
+    assert!(!crate::opaque::opaque_sources_equal(
+        "SELECT 'a b'",
+        "SELECT 'ab'"
+    ));
+}
+
+#[test]
+fn opaque_source_comparison_preserves_dollar_quoted_contents() {
+    assert!(!crate::opaque::opaque_sources_equal(
+        "SELECT $$a b$$",
+        "SELECT $$ab$$"
+    ));
 }
 
 // -- generate_diff -----------------------------------------------------------
@@ -228,6 +304,25 @@ fn gen_enum_strict_append() {
         name: "status".into(),
         schema: None,
         values: vec!["a".into(), "b".into(), "c".into()],
+    });
+    let ops = generate_diff(&curr, &prev);
+    assert_eq!(ops.len(), 1);
+    assert!(matches!(&ops[0], Operation::AlterEnum { .. }));
+}
+
+/// Adding enum values between existing labels preserves old label order, so PostgreSQL can
+/// render it losslessly with ADD VALUE BEFORE/AFTER.
+#[test]
+fn gen_enum_insert_without_reorder_is_alter() {
+    let prev = schema_with_enum(EnumDef {
+        name: "status".into(),
+        schema: None,
+        values: vec!["a".into(), "c".into()],
+    });
+    let curr = schema_with_enum(EnumDef {
+        name: "status".into(),
+        schema: None,
+        values: vec!["a".into(), "b".into(), "c".into(), "d".into()],
     });
     let ops = generate_diff(&curr, &prev);
     assert_eq!(ops.len(), 1);
@@ -905,6 +1000,140 @@ fn full_pipeline_function_trigger_table() {
     );
 }
 
+#[test]
+fn full_pipeline_function_formatting_only_change_is_noop() {
+    let mut prev_fn = basic_function("audit_fn");
+    prev_fn.body = "SELECT  a -- ignored\nFROM users".to_string();
+    let mut curr_fn = prev_fn.clone();
+    curr_fn.body = "SELECT a FROM users".to_string();
+
+    let engine = DiffEngine::new();
+    let ops = engine
+        .diff(
+            &schema_with_function(curr_fn),
+            &schema_with_function(prev_fn),
+            &Dialect::Postgres,
+        )
+        .unwrap();
+
+    assert!(ops.is_empty(), "expected no drift, got: {ops:?}");
+}
+
+#[test]
+fn full_pipeline_function_real_body_change_alters_function() {
+    let mut prev_fn = basic_function("audit_fn");
+    prev_fn.body = "SELECT 'a b'".to_string();
+    let mut curr_fn = prev_fn.clone();
+    curr_fn.body = "SELECT 'ab'".to_string();
+
+    let engine = DiffEngine::new();
+    let ops = engine
+        .diff(
+            &schema_with_function(curr_fn),
+            &schema_with_function(prev_fn),
+            &Dialect::Postgres,
+        )
+        .unwrap();
+
+    assert_eq!(op_names(&ops), vec!["alter_function"]);
+}
+
+#[test]
+fn full_pipeline_view_formatting_only_change_is_noop() {
+    let prev = ViewDef {
+        name: "active_users".to_string(),
+        schema: None,
+        definition: "SELECT  id -- ignored\nFROM users".to_string(),
+    };
+    let curr = ViewDef {
+        definition: "SELECT id FROM users".to_string(),
+        ..prev.clone()
+    };
+
+    let engine = DiffEngine::new();
+    let ops = engine
+        .diff(
+            &schema_with_view(curr),
+            &schema_with_view(prev),
+            &Dialect::Postgres,
+        )
+        .unwrap();
+
+    assert!(ops.is_empty(), "expected no drift, got: {ops:?}");
+}
+
+#[test]
+fn full_pipeline_view_real_definition_change_replaces_view() {
+    let prev = ViewDef {
+        name: "active_users".to_string(),
+        schema: None,
+        definition: "SELECT 'a b'".to_string(),
+    };
+    let curr = ViewDef {
+        definition: "SELECT 'ab'".to_string(),
+        ..prev.clone()
+    };
+
+    let engine = DiffEngine::new();
+    let ops = engine
+        .diff(
+            &schema_with_view(curr),
+            &schema_with_view(prev),
+            &Dialect::Postgres,
+        )
+        .unwrap();
+
+    assert_eq!(op_names(&ops), vec!["replace_view"]);
+}
+
+#[test]
+fn full_pipeline_trigger_formatting_only_body_change_is_noop() {
+    let mut prev_table = empty_table("events");
+    let mut prev_trigger = basic_trigger("trg_audit", "audit_fn");
+    prev_trigger.body = Some("SELECT  a -- ignored\nFROM users".to_string());
+    prev_table.triggers.push(prev_trigger);
+
+    let mut curr_table = empty_table("events");
+    let mut curr_trigger = basic_trigger("trg_audit", "audit_fn");
+    curr_trigger.body = Some("SELECT a FROM users".to_string());
+    curr_table.triggers.push(curr_trigger);
+
+    let engine = DiffEngine::new();
+    let ops = engine
+        .diff(
+            &schema_with_table(curr_table),
+            &schema_with_table(prev_table),
+            &Dialect::Postgres,
+        )
+        .unwrap();
+
+    assert!(ops.is_empty(), "expected no drift, got: {ops:?}");
+}
+
+#[test]
+fn full_pipeline_trigger_real_body_change_alters_trigger() {
+    let mut prev_table = empty_table("events");
+    let mut prev_trigger = basic_trigger("trg_audit", "audit_fn");
+    prev_trigger.body = Some("SELECT 'a b'".to_string());
+    prev_table.triggers.push(prev_trigger);
+
+    let mut curr_table = empty_table("events");
+    let mut curr_trigger = basic_trigger("trg_audit", "audit_fn");
+    curr_trigger.body = Some("SELECT 'ab'".to_string());
+    curr_table.triggers.push(curr_trigger);
+
+    let engine = DiffEngine::new();
+    let ops = engine
+        .diff(
+            &schema_with_table(curr_table),
+            &schema_with_table(prev_table),
+            &Dialect::Postgres,
+        )
+        .unwrap();
+
+    assert_eq!(op_names(&ops), vec!["alter_trigger"]);
+}
+
 /// Full pipeline: dropping function + table that has trigger referencing it.
 #[test]
 fn full_pipeline_drop_function_with_orphan_trigger() {
@@ -958,6 +1187,7 @@ fn incompatible_enum_change_injects_column_casts() {
         Table {
             name: "orders".into(),
             schema: None,
+            primary_key: None,
             columns: vec![
                 Column {
                     name: "id".into(),
@@ -1028,6 +1258,7 @@ fn drop_order_respects_fk_dependencies() {
         Table {
             name: "parents".into(),
             schema: None,
+            primary_key: None,
             columns: vec![Column {
                 name: "id".into(),
                 col_type: "integer".into(),
@@ -1045,6 +1276,7 @@ fn drop_order_respects_fk_dependencies() {
         Table {
             name: "children".into(),
             schema: None,
+            primary_key: None,
             columns: vec![
                 Column {
                     name: "id".into(),
@@ -1150,6 +1382,7 @@ mod proptest_diff {
             Table {
                 name: name.clone(),
                 schema: None,
+                primary_key: None,
                 columns,
                 foreign_keys: vec![],
                 indexes: vec![],
@@ -1211,6 +1444,10 @@ mod proptest_diff {
         #[test]
         #[doc = "Applying the diff to the previous schema must reconstruct the current schema."]
         fn apply_roundtrip(current in arb_schema(), previous in arb_schema()) {
+            let mut current = current;
+            let mut previous = previous;
+            current.normalize();
+            previous.normalize();
             let raw_ops = generate_diff(&current, &previous);
             let ops = inject_orphan_triggers(raw_ops, &previous);
             let ops = inject_enum_column_casts(ops, &previous);

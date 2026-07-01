@@ -31,9 +31,10 @@ pub(crate) fn extract_string_literal(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Value(v) => match &v.value {
             sqlparser::ast::Value::SingleQuotedString(s)
-            | sqlparser::ast::Value::DollarQuotedString(
-                sqlparser::ast::DollarQuotedString { value: s, .. },
-            ) => Some(s.clone()),
+            | sqlparser::ast::Value::DollarQuotedString(sqlparser::ast::DollarQuotedString {
+                value: s,
+                ..
+            }) => Some(s.clone()),
             _ => None,
         },
         _ => None,

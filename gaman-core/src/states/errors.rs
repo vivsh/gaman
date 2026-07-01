@@ -24,8 +24,12 @@ pub enum ReplayError {
     ConstraintAlreadyExists { table: String, constraint: String },
     #[error("constraint '{constraint}' not found on table '{table}'")]
     ConstraintNotFound { table: String, constraint: String },
-    #[error("table '{0}' has multiple primary key columns")]
+    #[error("table '{0}' has multiple primary key declarations")]
     MultiplePrimaryKeys(String),
+    #[error(
+        "primary key changes on existing table '{0}' are not generated automatically; use an explicit SQL statement migration"
+    )]
+    PrimaryKeyMutation(String),
     #[error("function '{0}' already exists")]
     FunctionAlreadyExists(String),
     #[error("function '{0}' not found")]

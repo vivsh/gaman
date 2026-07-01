@@ -11,7 +11,10 @@ use crate::disambiguator::{
 #[derive(Clone)]
 pub enum OptionAction {
     Fixed(Answer),
-    RequiresInput { prompt: String, make_answer: fn(String) -> Answer },
+    RequiresInput {
+        prompt: String,
+        make_answer: fn(String) -> Answer,
+    },
 }
 
 impl std::fmt::Debug for OptionAction {
@@ -46,7 +49,11 @@ pub struct ClarificationMessage {
 pub fn clarification_message(clar: &Clarification) -> ClarificationMessage {
     let tag = severity_tag(&clar.severity);
     match &clar.kind {
-        ClarificationKind::RenameColumn { table, old, candidates } => {
+        ClarificationKind::RenameColumn {
+            table,
+            old,
+            candidates,
+        } => {
             let description = format!(
                 "{} Column '{}' was removed from '{}'. Was it renamed?",
                 tag, old, table
@@ -62,11 +69,13 @@ pub fn clarification_message(clar: &Clarification) -> ClarificationMessage {
                 label: "No, it was dropped".to_string(),
                 action: OptionAction::Fixed(Answer::RenameNo),
             });
-            ClarificationMessage { description, options }
+            ClarificationMessage {
+                description,
+                options,
+            }
         }
         ClarificationKind::RenameTable { old, candidates } => {
-            let description =
-                format!("{} Table '{}' was removed. Was it renamed?", tag, old);
+            let description = format!("{} Table '{}' was removed. Was it renamed?", tag, old);
             let mut options: Vec<ClarificationOption> = candidates
                 .iter()
                 .map(|c| ClarificationOption {
@@ -78,9 +87,41 @@ pub fn clarification_message(clar: &Clarification) -> ClarificationMessage {
                 label: "No, it was dropped".to_string(),
                 action: OptionAction::Fixed(Answer::RenameNo),
             });
-            ClarificationMessage { description, options }
+            ClarificationMessage {
+                description,
+                options,
+            }
         }
-        ClarificationKind::NotNullAdd { table, column, col_type } => {
+        ClarificationKind::RenameEnumValue {
+            enum_name,
+            old,
+            candidates,
+        } => {
+            let description = format!(
+                "{} Enum value '{}' was removed from '{}'. Was it renamed?",
+                tag, old, enum_name
+            );
+            let mut options: Vec<ClarificationOption> = candidates
+                .iter()
+                .map(|c| ClarificationOption {
+                    label: c.clone(),
+                    action: OptionAction::Fixed(Answer::RenameTo(c.clone())),
+                })
+                .collect();
+            options.push(ClarificationOption {
+                label: "No, it was removed".to_string(),
+                action: OptionAction::Fixed(Answer::RenameNo),
+            });
+            ClarificationMessage {
+                description,
+                options,
+            }
+        }
+        ClarificationKind::NotNullAdd {
+            table,
+            column,
+            col_type,
+        } => {
             let description = format!(
                 "{} Column '{}' ({}) on '{}' is NOT NULL with no default.",
                 tag, column, col_type, table
@@ -89,7 +130,8 @@ pub fn clarification_message(clar: &Clarification) -> ClarificationMessage {
                 description,
                 options: vec![
                     ClarificationOption {
-                        label: "Provide a one-off default SQL value (e.g. 0, '', now())".to_string(),
+                        label: "Provide a one-off default SQL value (e.g. 0, '', now())"
+                            .to_string(),
                         action: OptionAction::RequiresInput {
                             prompt: "Default value:".to_string(),
                             make_answer: Answer::NotNullDefault,
@@ -132,7 +174,12 @@ pub fn clarification_message(clar: &Clarification) -> ClarificationMessage {
                 ],
             }
         }
-        ClarificationKind::TypeCast { table, column, from, to } => {
+        ClarificationKind::TypeCast {
+            table,
+            column,
+            from,
+            to,
+        } => {
             let description = format!(
                 "{} Column '{}' on '{}' changed type: {} -> {}.",
                 tag, column, table, from, to
@@ -160,10 +207,7 @@ pub fn clarification_message(clar: &Clarification) -> ClarificationMessage {
 pub struct CliPromptEngine;
 
 impl PromptEngine for CliPromptEngine {
-    fn prompt(
-        &self,
-        clarifications: &[Clarification],
-    ) -> Result<Vec<Decision>, PromptError> {
+    fn prompt(&self, clarifications: &[Clarification]) -> Result<Vec<Decision>, PromptError> {
         let stdin = io::stdin();
         let stdout = io::stdout();
         let mut out = io::BufWriter::new(stdout.lock());
@@ -171,7 +215,10 @@ impl PromptEngine for CliPromptEngine {
 
         for clar in clarifications {
             let answer = prompt_one(&mut out, &mut stdin.lock(), clar)?;
-            decisions.push(Decision { clarification_id: clar.id.clone(), answer });
+            decisions.push(Decision {
+                clarification_id: clar.id.clone(),
+                answer,
+            });
         }
 
         Ok(decisions)
@@ -201,7 +248,10 @@ fn prompt_one(
     let opt = &msg.options[choice - 1];
     match &opt.action {
         OptionAction::Fixed(answer) => Ok(answer.clone()),
-        OptionAction::RequiresInput { prompt, make_answer } => {
+        OptionAction::RequiresInput {
+            prompt,
+            make_answer,
+        } => {
             write!(out, "  {} ", prompt)?;
             out.flush()?;
             let val = read_line(input)?.trim().to_string();

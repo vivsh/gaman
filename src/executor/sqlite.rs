@@ -1,7 +1,7 @@
 use sqlx::{Row, SqliteConnection};
 
 use super::{BoxFuture, Executor, ExecutorError, Introspectable};
-use crate::states::{Column, ForeignKey, Index, Schema, Table};
+use crate::states::{Column, ForeignKey, Index, PrimaryKey, Schema, Table};
 
 /// Wraps a live SQLite connection and manages transaction boundaries explicitly.
 pub struct SqliteExecutor {
@@ -109,6 +109,7 @@ impl Introspectable for SqliteExecutor {
                 let mut table = Table {
                     name: table_name.clone(),
                     schema: None,
+                    primary_key: None,
                     columns: vec![],
                     foreign_keys: vec![],
                     indexes: vec![],
@@ -121,6 +122,7 @@ impl Introspectable for SqliteExecutor {
                     .await
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
+                let mut pk_columns: Vec<(i64, String)> = Vec::new();
                 for cr in col_rows {
                     let hidden: i64 = cr
                         .try_get("hidden")
@@ -143,6 +145,9 @@ impl Introspectable for SqliteExecutor {
                     let pk: i64 = cr
                         .try_get("pk")
                         .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                    if pk > 0 {
+                        pk_columns.push((pk, name.clone()));
+                    }
                     table.columns.push(Column {
                         name,
                         col_type,
@@ -152,6 +157,13 @@ impl Introspectable for SqliteExecutor {
                         references: None,
                         check: None,
                         generated: None,
+                    });
+                }
+                if !pk_columns.is_empty() {
+                    pk_columns.sort_by_key(|(position, _)| *position);
+                    table.primary_key = Some(PrimaryKey {
+                        name: table.pk_constraint_name(),
+                        columns: pk_columns.into_iter().map(|(_, column)| column).collect(),
                     });
                 }
 
