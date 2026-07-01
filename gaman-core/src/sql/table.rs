@@ -58,18 +58,19 @@ pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), Sq
                         .as_ref()
                         .map(|n| n.value.clone())
                         .unwrap_or_else(|| format!("{}_{}_fkey", name, col_name));
-                    let (to_table, _) = object_name_parts(&fk.foreign_table);
+                    let (to_table_name, to_schema) = object_name_parts(&fk.foreign_table);
+                    let to_table = schema_qualified_key(&to_table_name, to_schema.as_deref());
                     let to_column = fk
                         .referred_columns
                         .first()
                         .map(|i| i.value.clone())
                         .unwrap_or_default();
-                    table.foreign_keys.push(ForeignKey {
-                        name: fk_name,
-                        from_column: col_name.clone(),
+                    table.foreign_keys.push(ForeignKey::single(
+                        fk_name,
+                        col_name.clone(),
                         to_table,
                         to_column,
-                    });
+                    ));
                 }
                 ColumnOption::Check(chk) => {
                     let cname = chk
@@ -137,25 +138,20 @@ fn apply_table_constraint(tc: &TableConstraint, table_name: &str, table: &mut Ta
                         .first()
                         .map(|i| i.value.as_str())
                         .unwrap_or("col");
-                    format!("{}_{}_fkey", table_name, from)
+                    let columns: Vec<_> = fk.columns.iter().map(|i| i.value.as_str()).collect();
+                    if columns.is_empty() {
+                        format!("{}_{}_fkey", table_name, from)
+                    } else {
+                        format!("{}_{}_fkey", table_name, columns.join("_"))
+                    }
                 });
-            let (to_table, _) = object_name_parts(&fk.foreign_table);
-            let from_column = fk
-                .columns
-                .first()
-                .map(|i| i.value.clone())
-                .unwrap_or_default();
-            let to_column = fk
-                .referred_columns
-                .first()
-                .map(|i| i.value.clone())
-                .unwrap_or_default();
-            table.foreign_keys.push(ForeignKey {
-                name: fk_name,
-                from_column,
-                to_table,
-                to_column,
-            });
+            let (to_table_name, to_schema) = object_name_parts(&fk.foreign_table);
+            let to_table = schema_qualified_key(&to_table_name, to_schema.as_deref());
+            let from_columns = fk.columns.iter().map(|i| i.value.clone());
+            let to_columns = fk.referred_columns.iter().map(|i| i.value.clone());
+            table
+                .foreign_keys
+                .push(ForeignKey::new(fk_name, from_columns, to_table, to_columns));
         }
         TableConstraint::Check(chk) => {
             let cname = chk

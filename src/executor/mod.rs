@@ -3,8 +3,8 @@ use std::pin::Pin;
 use thiserror::Error;
 
 use crate::conf::TlsMode;
-use crate::dialects::Dialect;
 use crate::environment::EnvironmentExecutor;
+use gaman_core::dialects::Dialect;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
@@ -39,7 +39,7 @@ pub trait Introspectable {
     fn inspect_db<'a>(
         &'a mut self,
         schemas: &'a [&'a str],
-    ) -> BoxFuture<'a, Result<crate::states::Schema, ExecutorError>>;
+    ) -> BoxFuture<'a, Result<gaman_core::states::Schema, ExecutorError>>;
 }
 
 #[derive(Debug, Error)]

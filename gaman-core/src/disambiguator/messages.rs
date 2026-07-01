@@ -195,6 +195,32 @@ pub fn clarification_message(clar: &Clarification) -> ClarificationMessage {
                 ],
             }
         }
+        ClarificationKind::UnknownType {
+            table,
+            column,
+            type_name,
+            suggested,
+        } => {
+            let description = format!(
+                "{} Column '{}' on '{}' uses unknown type '{}'.",
+                tag, column, table, type_name
+            );
+            let mut options = suggested
+                .iter()
+                .map(|suggestion| ClarificationOption {
+                    label: format!("Use {suggestion}"),
+                    action: OptionAction::Fixed(Answer::UseType(suggestion.clone())),
+                })
+                .collect::<Vec<_>>();
+            options.push(ClarificationOption {
+                label: format!("Keep {type_name} as a custom/domain/extension type"),
+                action: OptionAction::Fixed(Answer::KeepType),
+            });
+            ClarificationMessage {
+                description,
+                options,
+            }
+        }
     }
 }
 
@@ -301,6 +327,16 @@ mod tests {
                     to: "integer".to_string(),
                 },
             },
+            Clarification {
+                id: "unknown_type:users:age".to_string(),
+                severity: Severity::Warning,
+                kind: ClarificationKind::UnknownType {
+                    table: "users".to_string(),
+                    column: "age".to_string(),
+                    type_name: "intger".to_string(),
+                    suggested: vec!["integer".to_string()],
+                },
+            },
         ];
 
         for clarification in clarifications {
@@ -308,5 +344,31 @@ mod tests {
             assert!(!message.description.is_empty());
             assert!(!message.options.is_empty());
         }
+    }
+
+    #[test]
+    fn unknown_type_message_spec_is_stable() {
+        let message = clarification_message(&Clarification {
+            id: "unknown_type:users:age".to_string(),
+            severity: Severity::Warning,
+            kind: ClarificationKind::UnknownType {
+                table: "users".to_string(),
+                column: "age".to_string(),
+                type_name: "intger".to_string(),
+                suggested: vec!["integer".to_string()],
+            },
+        });
+
+        assert_eq!(
+            message.description,
+            "[WARNING] Column 'age' on 'users' uses unknown type 'intger'."
+        );
+        assert_eq!(
+            option_labels(&message),
+            [
+                "Use integer",
+                "Keep intger as a custom/domain/extension type"
+            ]
+        );
     }
 }

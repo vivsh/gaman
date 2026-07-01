@@ -229,7 +229,7 @@ operations:
         - name: fk_posts_author
           columns: [author_id]
           to_table: users
-          to_column: id
+          to_columns: [id]
 ```
 
 Every migration runs in one transaction by default. Set `atomic: false` only for PostgreSQL operations that cannot run transactionally, most notably `CREATE INDEX CONCURRENTLY`.
@@ -267,9 +267,12 @@ The diff engine stays conservative on purpose. A renamed column looks exactly li
 
 - `Fatal`: `NotNullAdd` and `NotNullChange`, where the migration would fail or needs a backfill first.
 - `Warning`: `TypeCast`, where the change needs an explicit cast or relies on PostgreSQL coercion.
+- `Warning`: `UnknownType`, where a newly introduced column type is not in the selected dialect's built-in or extension catalog and has not appeared in replayed migration history.
 - `Suggestion`: `RenameColumn` and `RenameTable`, where a human likely meant rename rather than drop and recreate.
 
 For `NotNullChange`, a backfill `UPDATE` is automatically injected before the `ALTER COLUMN`.
+
+Type catalogs are intentionally incomplete. Known aliases such as PostgreSQL `int4` are canonicalized, popular extension types are recognized, and custom/domain/user-defined types already present in migration history are trusted. A brand-new unknown type asks whether to use a known canonical type or keep the authored type exactly; once committed in a migration, that type becomes trusted project history.
 
 ## CLI and Config Reference
 
@@ -328,7 +331,8 @@ Legend: ✅ implemented, 🚧 planned but not implemented, ❌ unsupported by de
 | Single-column primary keys | ✅ | ✅ | 🚧 |
 | Composite primary keys | ✅ | ✅ | 🚧 |
 | Primary-key changes after table creation | ❌ | ❌ | ❌ |
-| Foreign keys | ✅ | ✅ | 🚧 |
+| Single-column foreign keys | ✅ | ✅ | 🚧 |
+| Composite foreign keys | ✅ | ✅ | 🚧 |
 | Unique constraints | ✅ | ✅ | 🚧 |
 | Check constraints | ✅ | ✅ | 🚧 |
 | Indexes | ✅ | ✅ | 🚧 |
@@ -346,8 +350,7 @@ Legend: ✅ implemented, 🚧 planned but not implemented, ❌ unsupported by de
 
 ### Known limitations
 
-- Single-column foreign keys only
-- Column order is not tracked
+- Column-level `references` is single-column shorthand; use table-level `foreign_keys` for composite references
 - Offline diff preserves opaque source exactly and uses lexical canonicalization only as a fallback to suppress formatting-only churn
 - `verify_db` compares deterministic opaque metadata where available, but does not prove function, trigger, or view body equivalence from live catalog text
 - PostgreSQL enum value additions have no inverse; enum value renames are reversible

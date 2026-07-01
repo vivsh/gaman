@@ -6,15 +6,15 @@ use thiserror::Error;
 use crate::adapters::{AdapterError, MigrationSource, YamlAdapter};
 use crate::cli::{CommandError, GamanArgs, dispatch, parse_dialect};
 use crate::conf::Config;
-use crate::dialects::Dialect;
-use crate::disambiguator::{Decision, PromptEngine};
 use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
 use crate::executor::{BoxFuture, connect_environment_executor};
-use crate::migrations::Migration;
 use crate::migrator::{Migrator, MigratorError};
-use crate::operations::Operation;
 use crate::prompter::CliPromptEngine;
-use crate::states::{IntoSchema, Schema, SchemaBuilder, SchemaLoadError};
+use gaman_core::dialects::Dialect;
+use gaman_core::disambiguator::{Decision, PromptEngine};
+use gaman_core::migrations::Migration;
+use gaman_core::operations::Operation;
+use gaman_core::states::{IntoSchema, Schema, SchemaBuilder, SchemaLoadError};
 
 #[derive(Copy, Clone)]
 pub struct EmbeddedMigrations {

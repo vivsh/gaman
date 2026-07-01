@@ -4,7 +4,10 @@ use thiserror::Error;
 
 use crate::dialects::{Dialect, DialectError};
 use crate::diff::{DiffEngine, DiffError};
-use crate::disambiguator::{Decision, DisambiguationResult, Disambiguator, DisambiguatorError};
+use crate::disambiguator::{
+    Decision, DisambiguationResult, Disambiguator, DisambiguatorError, TypeResolution,
+    non_type_decisions, resolve_unknown_types,
+};
 use crate::graphs::{GraphError, MigrationGraph};
 use crate::migrations::Migration;
 use crate::operations::Operation;
@@ -70,18 +73,28 @@ impl OfflinePlanner {
         desired_schema: Schema,
         decisions: &[Decision],
     ) -> Result<Option<Migration>, OfflineError> {
+        let (previous, last_per_ns, entity_ns) = self.replay_with_sources()?;
+        let previous = previous
+            .prepare(self.dialect)
+            .map_err(|err| OfflineError::Schema(err.to_string()))?;
         let desired_schema = desired_schema
             .prepare(self.dialect)
             .map_err(|err| OfflineError::Schema(err.to_string()))?;
-        let (previous, last_per_ns, entity_ns) = self.replay_with_sources()?;
-        let previous = previous
+        let desired_schema =
+            match resolve_unknown_types(self.dialect, desired_schema, &previous, decisions)? {
+                TypeResolution::Resolved(schema) => schema,
+                TypeResolution::NeedsInput(clarifications) => {
+                    return Err(OfflineError::NeedsInput(clarifications));
+                }
+            }
             .prepare(self.dialect)
             .map_err(|err| OfflineError::Schema(err.to_string()))?;
         let raw_ops = DiffEngine::new().diff(&desired_schema, &previous, &self.dialect)?;
         if raw_ops.is_empty() {
             return Ok(None);
         }
-        let ops = match Disambiguator.process(&raw_ops, decisions)? {
+        let op_decisions = non_type_decisions(decisions);
+        let ops = match Disambiguator.process(&raw_ops, &op_decisions)? {
             DisambiguationResult::NeedsInput(clarifications) => {
                 return Err(OfflineError::NeedsInput(clarifications));
             }
@@ -341,6 +354,7 @@ fn op_entities(op: &Operation) -> Vec<(EntityKind, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::disambiguator::{Answer, ClarificationKind, Decision};
     use crate::operations::Operation;
     use crate::states::{Column, Schema, Table};
 
@@ -374,6 +388,19 @@ mod tests {
         Column {
             name: "email".to_string(),
             col_type: "text".to_string(),
+            nullable: true,
+            default: None,
+            primary_key: false,
+            references: None,
+            check: None,
+            generated: None,
+        }
+    }
+
+    fn col(name: &str, col_type: &str) -> Column {
+        Column {
+            name: name.to_string(),
+            col_type: col_type.to_string(),
             nullable: true,
             default: None,
             primary_key: false,
@@ -440,5 +467,102 @@ mod tests {
 
         assert_eq!(parsed.id, migration.id);
         assert_eq!(parsed.operations, migration.operations);
+    }
+
+    #[test]
+    fn make_migration_asks_for_new_unknown_type_before_diff() {
+        let mut desired = Schema::default();
+        desired.tables.insert(
+            "users".to_string(),
+            users_table(vec![id_col(), col("age", "intger")]),
+        );
+
+        let err = OfflinePlanner::new(Dialect::Postgres)
+            .make_migration(desired, &[])
+            .unwrap_err();
+        let OfflineError::NeedsInput(clarifications) = err else {
+            panic!("expected needs input");
+        };
+
+        assert_eq!(clarifications.len(), 1);
+        assert!(matches!(
+            &clarifications[0].kind,
+            ClarificationKind::UnknownType { type_name, suggested, .. }
+                if type_name == "intger" && suggested.contains(&"integer".to_string())
+        ));
+    }
+
+    #[test]
+    fn make_migration_type_decision_rewrites_desired_schema() {
+        let mut desired = Schema::default();
+        desired.tables.insert(
+            "users".to_string(),
+            users_table(vec![id_col(), col("age", "intger")]),
+        );
+        let decisions = vec![Decision {
+            clarification_id: "unknown_type:users:age".to_string(),
+            answer: Answer::UseType("integer".to_string()),
+        }];
+
+        let migration = OfflinePlanner::new(Dialect::Postgres)
+            .make_migration(desired, &decisions)
+            .expect("planning should succeed")
+            .expect("migration should be generated");
+        let Operation::CreateTable { table } = &migration.operations[0] else {
+            panic!("expected create table");
+        };
+
+        assert_eq!(table.columns[1].col_type, "integer");
+    }
+
+    #[test]
+    fn make_migration_trusts_unknown_type_from_replay() {
+        let previous = Migration {
+            id: "0001_users".to_string(),
+            dependencies: vec![],
+            operations: vec![Operation::CreateTable {
+                table: users_table(vec![id_col(), col("code", "project_code")]),
+            }],
+            atomic: true,
+        };
+        let mut desired = Schema::default();
+        desired.tables.insert(
+            "users".to_string(),
+            users_table(vec![
+                id_col(),
+                col("code", "project_code"),
+                col("other_code", "project_code"),
+            ]),
+        );
+
+        let migration = OfflinePlanner::new(Dialect::Postgres)
+            .from_migrations(vec![previous])
+            .make_migration(desired, &[])
+            .expect("trusted replay type should not ask")
+            .expect("migration should be generated");
+
+        assert!(matches!(
+            migration.operations.as_slice(),
+            [Operation::AddColumn { column, .. }] if column.col_type == "project_code"
+        ));
+    }
+
+    #[test]
+    fn make_migration_accepts_known_extension_type_without_prompt() {
+        let mut desired = Schema::default();
+        desired.tables.insert(
+            "users".to_string(),
+            users_table(vec![id_col(), col("email", "citext")]),
+        );
+
+        let migration = OfflinePlanner::new(Dialect::Postgres)
+            .make_migration(desired, &[])
+            .expect("known extension type should not ask")
+            .expect("migration should be generated");
+
+        assert!(matches!(
+            migration.operations.as_slice(),
+            [Operation::CreateTable { table }] if table.columns[1].col_type == "citext"
+        ));
     }
 }

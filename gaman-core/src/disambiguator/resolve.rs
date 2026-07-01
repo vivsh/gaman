@@ -384,6 +384,20 @@ fn validate_answer(clar: &Clarification, answer: &Answer) -> Result<(), Disambig
         (ClarificationKind::RenameColumn { .. }, Answer::RenameNo)
         | (ClarificationKind::RenameTable { .. }, Answer::RenameNo)
         | (ClarificationKind::RenameEnumValue { .. }, Answer::RenameNo) => {}
+        (ClarificationKind::UnknownType { suggested, .. }, Answer::UseType(name)) => {
+            if name.trim().is_empty() {
+                return Err(DisambiguatorError::EmptyInput {
+                    id: clar.id.clone(),
+                });
+            }
+            if !suggested.contains(name) {
+                return Err(DisambiguatorError::InvalidCandidate {
+                    id: clar.id.clone(),
+                    chosen: name.clone(),
+                });
+            }
+        }
+        (ClarificationKind::UnknownType { .. }, Answer::KeepType) => {}
         (ClarificationKind::NotNullAdd { .. }, Answer::NotNullDefault(value))
         | (ClarificationKind::NotNullChange { .. }, Answer::NotNullDefault(value))
         | (ClarificationKind::TypeCast { .. }, Answer::TypeCast(value)) => {

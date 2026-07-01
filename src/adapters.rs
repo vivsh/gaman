@@ -3,7 +3,7 @@ use std::io::Write;
 
 use thiserror::Error;
 
-use crate::migrations::Migration;
+use gaman_core::migrations::Migration;
 
 #[derive(Debug, Error)]
 pub enum AdapterError {

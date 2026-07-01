@@ -1,4 +1,6 @@
-use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum EntityKind {
@@ -51,6 +53,19 @@ pub fn schema_qualified_key(name: &str, schema: Option<&str>) -> String {
         None | Some("public") => name.to_string(),
         Some(s) => format!("{s}.{name}"),
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Schema {
+    pub tables: BTreeMap<String, Table>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub views: BTreeMap<String, ViewDef>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub functions: BTreeMap<String, FunctionDef>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, ExtensionDef>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub enums: BTreeMap<String, EnumDef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -281,10 +296,99 @@ pub struct Column {
     pub generated: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ForeignKey {
     pub name: String,
-    pub from_column: String,
+    pub columns: Vec<String>,
     pub to_table: String,
-    pub to_column: String,
+    pub to_columns: Vec<String>,
+}
+
+impl ForeignKey {
+    pub fn new(
+        name: impl Into<String>,
+        columns: impl IntoIterator<Item = impl Into<String>>,
+        to_table: impl Into<String>,
+        to_columns: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            columns: columns.into_iter().map(Into::into).collect(),
+            to_table: to_table.into(),
+            to_columns: to_columns.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    pub fn single(
+        name: impl Into<String>,
+        from_column: impl Into<String>,
+        to_table: impl Into<String>,
+        to_column: impl Into<String>,
+    ) -> Self {
+        Self::new(name, [from_column], to_table, [to_column])
+    }
+
+    pub fn source_columns(&self) -> &[String] {
+        &self.columns
+    }
+
+    pub fn target_columns(&self) -> &[String] {
+        &self.to_columns
+    }
+}
+
+#[derive(Deserialize)]
+struct ForeignKeyWire {
+    name: String,
+    #[serde(default)]
+    columns: Vec<String>,
+    #[serde(default)]
+    from_column: Option<String>,
+    to_table: String,
+    #[serde(default)]
+    to_columns: Vec<String>,
+    #[serde(default)]
+    to_column: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for ForeignKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = ForeignKeyWire::deserialize(deserializer)?;
+        let columns = merge_fk_columns(wire.columns, wire.from_column, "columns", "from_column")
+            .map_err(serde::de::Error::custom)?;
+        let to_columns =
+            merge_fk_columns(wire.to_columns, wire.to_column, "to_columns", "to_column")
+                .map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            name: wire.name,
+            columns,
+            to_table: wire.to_table,
+            to_columns,
+        })
+    }
+}
+
+fn merge_fk_columns(
+    columns: Vec<String>,
+    legacy_column: Option<String>,
+    canonical_name: &str,
+    legacy_name: &str,
+) -> Result<Vec<String>, String> {
+    match (columns.is_empty(), legacy_column) {
+        (true, Some(column)) => Ok(vec![column]),
+        (true, None) => Ok(columns),
+        (false, None) => Ok(columns),
+        (false, Some(column)) => {
+            if columns.len() == 1 && columns[0] == column {
+                Ok(columns)
+            } else {
+                Err(format!(
+                    "foreign key specifies both '{canonical_name}' and conflicting legacy '{legacy_name}'"
+                ))
+            }
+        }
+    }
 }

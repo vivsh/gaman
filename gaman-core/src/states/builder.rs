@@ -80,16 +80,13 @@ impl TableBuilder {
     fn push_foreign_key(
         mut self,
         name: String,
-        from: impl Into<String>,
+        from_columns: impl IntoIterator<Item = impl Into<String>>,
         to_table: impl Into<String>,
-        to_column: impl Into<String>,
+        to_columns: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
-        self.table.foreign_keys.push(ForeignKey {
-            name,
-            from_column: from.into(),
-            to_table: to_table.into(),
-            to_column: to_column.into(),
-        });
+        self.table
+            .foreign_keys
+            .push(ForeignKey::new(name, from_columns, to_table, to_columns));
         self
     }
 
@@ -154,7 +151,7 @@ impl TableBuilder {
     ) -> Self {
         let from = from.into();
         let name = format!("{}_{}_fkey", self.table.name, from);
-        self.push_foreign_key(name, from, to_table, to_column)
+        self.push_foreign_key(name, [from], to_table, [to_column.into()])
     }
 
     pub fn foreign_key_named(
@@ -164,7 +161,37 @@ impl TableBuilder {
         to_table: impl Into<String>,
         to_column: impl Into<String>,
     ) -> Self {
-        self.push_foreign_key(fk_name.into(), from, to_table, to_column)
+        self.push_foreign_key(fk_name.into(), [from.into()], to_table, [to_column.into()])
+    }
+
+    pub fn foreign_key_columns(
+        self,
+        from_columns: &[&str],
+        to_table: impl Into<String>,
+        to_columns: &[&str],
+    ) -> Self {
+        let name = format!("{}_{}_fkey", self.table.name, from_columns.join("_"));
+        self.push_foreign_key(
+            name,
+            from_columns.iter().copied(),
+            to_table,
+            to_columns.iter().copied(),
+        )
+    }
+
+    pub fn foreign_key_named_columns(
+        self,
+        fk_name: impl Into<String>,
+        from_columns: &[&str],
+        to_table: impl Into<String>,
+        to_columns: &[&str],
+    ) -> Self {
+        self.push_foreign_key(
+            fk_name.into(),
+            from_columns.iter().copied(),
+            to_table,
+            to_columns.iter().copied(),
+        )
     }
 
     pub fn index(self, name: impl Into<String>, columns: &[&str]) -> Self {

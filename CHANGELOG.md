@@ -9,7 +9,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `gaman-core` now physically owns the offline engine modules, with the root
+  `gaman` crate acting as the compatibility facade for existing users.
+- Offline/WASM-oriented feature boundaries: offline replay, diffing,
+  disambiguation, schema preparation, and SQL planning can compile without the
+  native DB/CLI layer.
+- `OfflinePlanner` and string-based helpers for offline schema and migration
+  parsing, replay, migration generation, and SQL planning.
+- Composite primary keys are modeled as table-level metadata while preserving
+  column-level `primary_key: true` as frontend shorthand.
+- Shared schema preparation pipeline: normalization, dialect canonicalization,
+  and validation now run after frontend input becomes Gaman IR.
+- Opaque source comparison now preserves authored source text and uses lexical
+  canonicalization only as a fallback for diff equality.
+- Dialect type catalogs now live in separate `data_types.rs` and
+  `extension_types.rs` modules for PostgreSQL and SQLite, with replay-aware
+  unknown-type disambiguation before diffing.
+
+### Changed
+
+- `sql_migrate` is now a stricter offline SQL planner with deterministic
+  selection validation, generated-migration baselines, rollback planning, and
+  parity between native `Migrator` and `OfflinePlanner` rendering.
+- The disambiguator is split into focused modules for model types, analysis,
+  resolution, deterministic IDs, type compatibility, and editable messages.
+- Rename suggestions are ranked deterministically using structural/name/type
+  similarity, and decision validation now rejects duplicate, conflicting,
+  incompatible, or empty-input answers before rewriting operations.
+- Prompt copy now lives in the core disambiguator message layer so CLI and
+  future offline/browser callers can render the same clarification specs.
+- Unknown column types are no longer rejected solely because they are absent
+  from the dialect catalog; replayed migration history and explicit keep/use
+  decisions form the project-local trust boundary for custom types.
+- Documentation now includes `ARCHITECTURE.md` and explicit repo guidance for
+  the offline core, strict schema superset, lifecycle, and feature boundaries.
+
+### Removed
+
+- External subprocess/remote invocation support was removed; `Statement`
+  remains the SQL escape hatch.
+
+## [0.3.18] - 2026-06-30
+
+### Added
+
 - Generated columns — `Column` now has an optional `generated` field. When set, the column is emitted as `GENERATED ALWAYS AS (...) STORED` in SQL. `inspect_db` reads `generation_expression` from `information_schema.columns` and populates the field automatically.
+- SQLite support behind the `sqlite` feature, including dialect rendering,
+  `SqliteExecutor`, native tracking SQL, and table-rebuild migrations for
+  SQLite operations that cannot be rendered as simple `ALTER TABLE` statements.
+- README database support matrix covering implemented, unsupported, and planned
+  feature support for PostgreSQL and SQLite.
+
+### Changed
+
+- Migration writes are more durable: parent directories are created, files are
+  written through temporary files and atomic rename, and existing migration IDs
+  are refused.
+- Live migration execution now uses stronger lifecycle guarantees, including
+  lock cleanup on error paths and better rollback/recording failure coverage.
+- `IntoTable` derive output now includes index and unique metadata in addition
+  to columns and foreign keys.
+
+### Fixed
+
+- `embedded_migrations!` now stores the absolute source directory so generated
+  migrations are written relative to the embedded migration source, not the
+  process current working directory.
+- PostgreSQL schema-qualified rendering and introspection were tightened for
+  functions, triggers, primary-key constraint names, indexes, foreign keys, and
+  same-named constraints on different tables.
+- Unsupported operations now fail with clearer errors instead of producing
+  no-op SQL, including SQLite-only unsupported features and PostgreSQL
+  expression indexes during introspection.
 
 ## [0.3.17] - 2026-04-23
 
@@ -203,7 +274,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `make_migration`, `migrate`, `fake_migrate`, `show_migrations`, `inspect_db` commands
 - DAG-based migration graph with dependency tracking
 
-[unreleased]: https://github.com/vivsh/gaman/compare/v0.3.17...HEAD
+[unreleased]: https://github.com/vivsh/gaman/compare/0f752c1...HEAD
+[0.3.18]: https://github.com/vivsh/gaman/compare/v0.3.17...0f752c1
 [0.3.17]: https://github.com/vivsh/gaman/compare/v0.3.16...v0.3.17
 [0.3.16]: https://github.com/vivsh/gaman/compare/v0.3.15...v0.3.16
 [0.3.15]: https://github.com/vivsh/gaman/compare/v0.3.14...v0.3.15

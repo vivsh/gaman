@@ -1,59 +1,61 @@
 # Gaman Architecture
 
-Gaman is an offline-first migration engine for applications that need
-deterministic schema planning without depending on a live database at generation
-time.
+Gaman is an offline-first migration engine. Its core job is to turn schema input
+from several frontends into deterministic migration operations and dialect SQL
+without needing a live database at generation time.
 
-The long-term SQLx database targets are:
+The long-term database families are the SQLx relational backends:
 
 - PostgreSQL.
 - SQLite.
 - MySQL / MariaDB.
 
+Current per-database support belongs in the README support matrix. This document
+defines the architecture and invariants; it should not drift into a stale status
+table.
+
+Implementation must not deviate from this architecture. If the architecture is
+wrong or incomplete, update it deliberately before changing code away from it.
+
 ## Conceptual Model
 
-All schema frontends are reduced to the same internal `Schema` representation.
-Schema frontends enter the model through:
+All frontends produce the same internal `Schema` representation:
 
 - YAML and JSON schema files.
 - SQL DDL parsing.
-- Rust structs through `IntoTable`.
+- Rust builders and `IntoTable` derive output.
 - Live database introspection.
 - Replayed migration history.
 
-The internal schema is the comparison boundary. Once inputs are normalized into
-that model, the diff engine compares current desired state against previous
-replayed state and emits operations.
+The internal schema is the comparison boundary. Frontends build IR; Gaman then
+prepares that IR for a selected dialect before diffing, SQL planning, live
+verification, or migration execution.
+
+At the highest level:
 
 ```text
-YAML / JSON schema --+
-SQL DDL schema     --+--> Schema IR --+
-Rust structs       --+                |
-                                      +--> DiffEngine --> operations --> migration
-migration history --> replay --------+
-```
-
-At the highest level, Gaman moves through this pipeline:
-
-```text
-Schema input --> Replay --> Diff --> Operations --> SQL --> Executor
+schema input --> Schema IR --> prepare --> diff --> operations --> SQL
+                    ^                         ^                    |
+                    |                         |                    v
+              frontends only          migration replay         executor
 ```
 
 Migration replay is deterministic, offline, and side-effect free. It consumes
 migration files and produces an in-memory `Schema`; it never connects to a
 database or mutates external state.
 
-The key property is that migration generation depends only on:
+Migration generation depends only on:
 
-- The desired schema input.
-- The migration files already present.
-- The selected dialect.
+- the desired schema input;
+- the committed migration files;
+- the selected dialect;
+- explicit disambiguation decisions.
 
-It does not depend on live database state.
+It must not depend on live database state.
 
 ## Schema Representation
 
-Gaman defines a strict, deliberately bounded schema superset:
+Gaman defines a strict schema superset:
 
 - Tables.
 - Columns:
@@ -65,7 +67,7 @@ Gaman defines a strict, deliberately bounded schema superset:
 - Indexes.
 - Constraints:
   - primary keys, including composite primary keys;
-  - foreign keys;
+  - foreign keys, including composite foreign keys;
   - unique constraints;
   - check constraints.
 - Extensions.
@@ -74,389 +76,383 @@ Gaman defines a strict, deliberately bounded schema superset:
 - Views.
 
 No feature outside this superset is planned as first-class model metadata. Use
-`Statement` for database-specific features outside the superset.
+`Statement` for database-specific SQL outside the modeled superset.
 
-Primary keys are table-level schema metadata. Frontends may use column-level
-`primary_key: true` as shorthand, including on multiple columns, but
-normalisation must produce explicit, deterministic `Table.primary_key` metadata
-with a constraint name and ordered column list. Explicit table-level
-`primary_key` input preserves its name and order; shorthand derives the name
-from the table and the order from the table's column order.
+Primary keys are table-level schema metadata. Column-level `primary_key: true`
+is accepted as frontend shorthand, including on multiple columns, but
+normalization must produce deterministic `Table.primary_key` metadata with a
+constraint name and ordered column list. Explicit table-level primary-key input
+preserves its name and order.
 
-In this document, the term opaque schema objects means extensions, triggers,
-functions, and views. Gaman tracks their identity and definition as whole
-objects; it does not structurally diff their internals. The supported lifecycle
-for opaque schema objects is create, replace, and delete. Gaman should not
-generate fine-grained `ALTER` statements for them.
+Foreign keys are table-level schema metadata with ordered source and target
+column lists. Column-level `references` is single-column shorthand only.
+Normalization turns shorthand into explicit table-level `ForeignKey` metadata.
+Composite foreign keys must use table-level metadata so names, source column
+order, target table, and target column order survive replay, diffing, rendering,
+introspection, and verification.
 
-If a database does not have one of these object types, that type is absent for
-that dialect. It should not be forced into the dialect's introspection or diff
-contract. If a migration explicitly asks that dialect to execute an absent or
-unimplemented feature, Gaman should raise an early, clear error rather than emit
-no-op SQL.
+Opaque schema objects means extensions, triggers, functions, and views. Gaman
+tracks opaque schema objects as whole objects. It may create, replace, or delete
+them, but it should not generate fine-grained internal `ALTER` statements for
+their bodies or definitions.
+
+If a database does not have a modeled object type, that type is absent for that
+dialect. If a migration asks that dialect to execute an absent or unimplemented
+feature, Gaman must raise a clear error instead of emitting no-op SQL.
 
 ## Design Principles
 
-- Migration generation is offline and deterministic.
-- Migration replay is offline and deterministic.
-- Offline generation must not require a selected live database driver.
-- Offline planning, replay, diffing, disambiguation, canonicalization, and SQL
-  rendering must compile without SQLx, Tokio, filesystem access, environment
-  variables, terminal I/O, TLS, or database executors.
-- The offline layer should be practical for browser use through
-  `wasm32-unknown-unknown`; browser callers provide schemas and migrations as
-  strings or in-memory values.
-- SQL rendering for `sql_migrate` should be offline but should match the
-  migration-operation SQL that live migration application will execute.
-- Migration application and `inspect_db` require a live database.
-- Unsupported and unimplemented features should fail as early as possible.
-- Dialects should support native behavior for their engine; migration files are
-  not expected to be portable across database engines.
-- Shared code owns graph, replay, diff, validation orchestration, and lifecycle.
-  Dialect-specific behavior belongs in dialect and executor modules.
-- Implementation must not deviate from this architecture. If the architecture
-  is wrong or incomplete, update it deliberately before changing code away from
-  it.
+- Offline generation, replay, diffing, disambiguation, and SQL rendering are
+  deterministic.
+- Offline features must not require SQLx, Tokio, live database drivers,
+  filesystem access, environment variables, terminal I/O, TLS, or executors.
+- The offline layer should compile for `wasm32-unknown-unknown`; browser callers
+  provide schemas and migrations as strings or in-memory values.
+- `sql_migrate` is offline and renders the operation SQL live migration
+  application would execute for the same migration and replay state.
+- Migration application, `inspect_db`, and the live side of `verify_db` require
+  a database connection.
+- Migration files are engine-specific. Gaman should support native behavior for
+  each dialect instead of forcing a lowest-common-denominator file format.
+- Unsupported and unimplemented features fail as early as possible.
+- Shared code owns graph ordering, replay, diff orchestration, disambiguation,
+  validation orchestration, and lifecycle.
+- Dialect-specific behavior stays inside dialect modules; executor-specific
+  behavior stays inside executor modules.
 
 ## Non-Goals
 
-- Full coverage of every PostgreSQL, SQLite, MySQL, or MariaDB DDL feature.
-- Modeling database features outside the strict superset.
-- Portable migration files across database engines.
-- Automatic modeling of arbitrary SQL in `Statement` operations.
-- Lossy introspection that silently ignores unsupported schema shapes.
+- Full coverage of every DDL feature in any database.
+- Schema metadata outside the strict superset.
+- Portable migration files across engines.
+- Structural modeling of arbitrary SQL inside `Statement`.
+- First-class data migration operations.
+- External process invocation during migration application.
+- Lossy introspection that silently drops unsupported modeled metadata.
 - Runtime migration discovery for embedded use. Embedded migrations should be
   compiled into the binary.
 
-## Normalization And Canonicalization
+## Schema Preparation
 
-Gaman has two cleanup layers because schema input can come from several
-frontends: Rust, YAML, JSON, SQL authored by hand, SQL generated from database
-introspection, and replayed migrations.
+Schema preparation runs after frontend input becomes Gaman IR. It has three
+separate responsibilities.
 
-Normalization is database-agnostic. It handles shared model sugar and should not
-encode database-specific assumptions:
+Normalization is database-agnostic frontend sugar cleanup:
 
-- Inline column `references` becomes table-level foreign-key metadata.
-- Inline column `check` becomes table-level check-constraint metadata.
-- Inline trigger bodies become modeled function definitions where supported.
-- Missing table names can be filled from schema map keys.
+- column `references` shorthand becomes table-level foreign-key metadata;
+- column `check` shorthand becomes table-level check constraints;
+- column primary-key flags become explicit table-level primary-key metadata;
+- inline trigger bodies become modeled functions where supported;
+- missing table names can be filled from schema map keys.
 
-Canonicalization is dialect-specific. It cleans semantically equivalent frontend
-output into the comparison form for one database engine:
+Canonicalization is dialect-specific cleanup:
 
-- Type aliases such as PostgreSQL `int4` to `integer`.
-- SQLite type names and, over time, SQLite affinity-aware comparison.
-- Schema qualification rules.
-- Dialect-specific object identity rules.
-- Catalog quirks from live introspection.
+- built-in type aliases such as PostgreSQL `int4` become canonical names;
+- SQLite type aliases map to Gaman's chosen affinity names where appropriate;
+- schema qualification rules are normalized for the selected dialect;
+- live introspection quirks are brought into the same comparison form.
 
-PostgreSQL assumptions such as `public` schema handling must not leak into
-SQLite validation. SQLite should reject schema-qualified objects rather than
-silently canonicalizing them away.
+Validation checks structural correctness:
+
+- duplicate objects;
+- unknown referenced tables and columns;
+- invalid primary-key, foreign-key, index, and constraint metadata;
+- unsupported dialect features;
+- invalid dependency graph state before planning or execution.
+
+Preparation is intentionally not the same thing as proving every column type is
+known. A type can be absent from the dialect catalog and still be valid project
+schema after replay trust or explicit user approval.
+
+## Dialect Type Catalogs
+
+Each dialect keeps type knowledge in frequently editable files under its dialect
+module:
+
+- `data_types.rs` lists native built-in types, aliases, canonical names,
+  affinity rules, and typo suggestions.
+- `extension_types.rs` lists popular extension or externally provided types.
+
+These catalogs are intentionally incomplete. They are used for deterministic
+canonicalization, typo suggestions, and helpful prompts. They are not a claim
+that Gaman knows the full database type universe. Unknown types must not be
+rejected solely because they are absent from these files.
+
+Unknown data-type handling is replay-aware:
+
+1. Replay committed migrations into the previous schema.
+2. Prepare the previous schema and desired schema for the selected dialect.
+3. Collect trusted project-local types from the replayed previous schema.
+4. Accept known built-in types, aliases, known extension types, and modeled enum
+   types.
+5. Accept unknown types already present in replayed history.
+6. Ask only when the desired schema introduces a new unknown type.
+7. Apply the user's decision before diffing:
+   - use a known canonical type; or
+   - keep the authored type exactly.
+
+A committed migration containing a custom, domain, extension, or user-defined
+type is the approval record. Gaman does not maintain a separate custom-type
+registry.
 
 ## Migration Graph
 
-Migrations form a DAG. Each migration declares its dependencies, and the graph is
-validated at `Migrator` construction. The migrator caches topological order so
-later planning and execution can reuse the same graph state.
+Migrations form a DAG. Each migration declares dependencies. The graph is
+validated when the migrator is constructed, and the migrator caches topological
+order for later planning and execution.
 
-The DAG exists to make ancestry explicit. It lets independent branches coexist
-while requiring a deliberate merge migration before new generated work can build
-on more than one head.
+The DAG makes ancestry explicit. Parallel histories may coexist, but ordinary
+generation refuses to build on multiple heads. Independent histories must be
+joined through an explicit merge migration.
 
-Parallel histories are valid only when joined by an explicit merge migration.
-`make_migration` refuses to generate ordinary migrations when multiple heads are
-present, because otherwise new operations would have ambiguous ancestry.
+Embedded multi-crate migration trees are namespaced at compile time. Child
+migration IDs and dependencies are rewritten into stable namespaces so crates can
+compose migration histories without runtime discovery or ID collisions.
 
-For embedded multi-crate use, child migration trees are namespaced at compile
-time. An application crate can combine migrations from several crates without
-runtime file discovery or ID collisions.
+## Generation Pipeline
 
-## Pipeline
-
-### Construction
-
-`MigrationEngine` is the embedding-facing API. It wraps configuration, embedded
-migration sources, optional schema input, and optional dialect override.
-
-`Migrator` is the core engine. Construction performs the first critical checks:
-
-1. Load all migrations from the selected source.
-2. Insert them into the migration graph.
-3. Validate dependency integrity.
-4. Cache the graph's topological order.
-
-### Migration Generation
-
-`make_migration` follows this flow:
-
-1. Reject graph conflicts.
-2. Validate the desired schema.
-3. Replay existing migrations into previous schema state.
-4. Diff desired state against replayed state.
-5. Run the disambiguator for ambiguous or risky changes.
-6. Let the selected dialect reorder operations if needed.
-7. Compute dependencies from touched namespaces and graph history.
-8. Save the new migration unless running in dry-run mode.
-
-The disambiguator is part of the generation pipeline, not an afterthought. It
-should run before migration files are written and should cover:
-
-- Ambiguous operations, such as rename candidates that otherwise look like
-  drop-and-add.
-- Risky operations, especially data-loss or data-rewrite changes.
-- Changes that need explicit user intent, such as casts or backfills.
-
-### SQL Rendering
-
-`sql_migrate` renders the same migration-operation SQL plan that live migration
-application will execute, but without connecting to a database. Rendering
-therefore uses replayed schema state when an operation needs context, such as
-SQLite table rebuilds. It intentionally excludes runtime lifecycle SQL such as
-tracking-table installation, locks, transaction boundaries, and record/unrecord
-statements.
-
-Partially supported operations may emit SQL comments only when the live path
-would do the same thing. If live migration would fail, offline SQL rendering
-should fail early too.
-
-`Dialect::operation_to_sql()` remains a simple single-operation renderer. SQLite
-operations that require rebuild context should fail there and instruct callers to
-render through `Migrator` or `OfflinePlanner`.
-
-### Live Migration
-
-`migrate` and `migrate_with` use the lifecycle shown below for every dialect:
-validate the plan, install tracking, acquire the lock, apply or roll back the
-selected migrations, and release the lock on success or failure.
-
-Each migration is applied independently. SQL is rendered before execution, a
-transaction is used when `atomic: true`, the migration ID is recorded only after
-SQL succeeds, and SQL or record failures roll back that migration transaction.
-
-Rollback builds inverse operations in reverse order and renders them through the
-same dialect path. Operations without an inverse make rollback fail before any
-SQL is executed.
-
-### Tracking
-
-Applied migrations are stored in `gaman_migrations`. Dialects provide the
-tracking table DDL and applied-migration query. Recording and unrecording use the
-same migration IDs that appear in the graph.
-
-### Verification
-
-`verify_db` compares live introspection against replayed migration state.
-
-Verification is strongest for the strict relational core:
-
-- Tables.
-- Columns.
-- Indexes.
-- Foreign keys.
-- Unique and check constraints where introspection can model them.
-
-For opaque schema objects, verification should track signatures and identities
-where the dialect can introspect them deterministically:
-
-- Functions: schema, name, arguments/signature, return type, language, and other
-  stable metadata where available.
-- Triggers: table, name, timing, events, scope, and referenced function or action
-  identity where available.
-- Extensions: name, schema, and version where available.
-- Views: schema, name, and stable definition metadata where available.
-
-Opaque schema object bodies and view definitions are preserved exactly as
-authored, or as first exported by `inspect_db`. Gaman does not rewrite this
-source when storing, replaying, rendering, or writing migrations. Offline diff
-first compares source text exactly; only on mismatch does it use a conservative,
-dialect-agnostic lexical canonicalizer to ignore formatting-only differences
-outside quoted and protected regions.
-
-Live database catalogs may normalize, rewrite, or omit source text, so
-`verify_db` does not compare opaque bodies or view definitions against catalog
-text. It verifies only deterministic metadata such as identity, signature,
-language, trigger wiring, extension version, and enum labels.
-
-## Lifecycle
-
-The complete migration lifecycle is:
+`make_migration` follows this order:
 
 ```text
-             offline                                live database required
-             -------                                ----------------------
-
-schema input --> normalize --> canonicalize --+
-                                              |
-migrations --> load graph --> replay ---------+--> diff --> disambiguate
-                                                        |
-                                                        v
-                                               write migration file
-                                                        |
-                                                        v
-                                              render SQL offline
-                                                        |
-                                                        v
-                            install tracking --> acquire lock --> apply/rollback
-                                                        |             |
-                                                        |             v
-                                                        |       record/unrecord
-                                                        |             |
-                                                        +--> release lock
-
-inspect_db -----------------------------------------> live introspection
-verify_db  --> replay offline ----------------------> compare live schema
+load graph
+  |
+  v
+reject multiple heads
+  |
+  v
+replay committed migrations ----------------+
+  |                                         |
+  v                                         v
+prepare previous schema              prepare desired schema
+  |                                         |
+  +------------ collect trusted types ------+
+                    |
+                    v
+        resolve newly introduced unknown types
+                    |
+                    v
+        prepare resolved desired schema again
+                    |
+                    v
+              diff previous -> desired
+                    |
+                    v
+        disambiguate operation-level risks
+                    |
+                    v
+         dialect reorder / dependency calc
+                    |
+                    v
+              write migration file
 ```
 
-Generation, replay, diffing, disambiguation, and SQL rendering are offline.
-Application, `inspect_db`, and the live side of `verify_db` require a database
-connection.
+There are two disambiguation layers:
+
+- Type disambiguation runs before diffing because it changes the desired schema
+  that all frontends share.
+- Operation disambiguation runs after diffing because it resolves ambiguous or
+  risky operations, such as renames, type casts, and not-null backfills.
+
+Generated migration files must be self-contained. They can contain modeled
+operations and literal `Statement` SQL, but not sidecar approvals, external data
+file references, or subprocess invocations.
+
+## SQL Rendering
+
+`sql_migrate` is the canonical offline SQL plan for migration operations. It
+renders the same operation SQL that live migration application will execute, but
+without opening a database connection.
+
+`sql_migrate` intentionally excludes lifecycle SQL:
+
+- tracking-table installation;
+- locks;
+- transaction boundaries;
+- record and unrecord statements.
+
+Rendering uses replayed schema state when an operation needs context. SQLite
+table rebuilds are the primary example: the renderer must know the table shape
+before and after a migration. Therefore `Dialect::operation_to_sql()` remains a
+single-operation convenience API, while context-dependent operations must render
+through `Migrator` or `OfflinePlanner`.
+
+If live migration would fail for an unsupported operation, offline SQL rendering
+must fail as well. Partially supported operations should not degrade into empty
+SQL.
+
+## Live Migration Lifecycle
+
+Live migration application keeps runtime concerns outside offline planning:
+
+```text
+validate plan
+   |
+   v
+install tracking table
+   |
+   v
+acquire lock
+   |
+   v
+apply or roll back selected migrations
+   |
+   v
+record / unrecord migration IDs
+   |
+   v
+release lock on success or failure
+```
+
+Each migration is applied independently. For `atomic: true`, SQL execution and
+recording happen inside one transaction. The migration ID is recorded only after
+operation SQL succeeds. SQL failure or record failure rolls back that migration
+transaction. Rollback builds inverse operations in reverse order and fails before
+execution if any selected operation is not reversible.
+
+## Inspect And Verify
+
+`inspect_db` requires a live database. It turns live catalog metadata into
+`Schema` IR, then prepares that schema for the selected dialect before returning
+or writing it.
+
+`verify_db` compares live introspection against replayed migration state.
+Verification is strongest for the relational core:
+
+- tables;
+- columns;
+- indexes;
+- primary keys;
+- foreign keys;
+- unique constraints;
+- check constraints where the dialect can introspect them deterministically.
+
+For opaque schema objects, verification should compare deterministic metadata,
+not body text:
+
+- functions: schema, name, arguments/signature, return type, language, and other
+  stable metadata where available;
+- triggers: table, name, timing, events, scope, and referenced function or
+  action identity where available;
+- extensions: name, schema, and version where available;
+- views: schema, name, and stable definition metadata where available.
+
+Opaque source text is preserved exactly as authored or first exported by
+`inspect_db`. Gaman does not rewrite source while storing, replaying, rendering,
+or writing migrations. Offline diff first compares source exactly; only on
+mismatch does it use conservative lexical canonicalization to suppress
+formatting-only churn outside quoted and protected regions.
+
+Live database catalogs may normalize, rewrite, or omit source text, so
+`verify_db` does not claim deep body-equivalence for functions, triggers, or
+views unless a future dialect-specific mode can recover deterministic source.
 
 ## Dialect Boundary
 
-The shared engine should know about operation sequencing, replay, graph state,
-validation hooks, disambiguation, and lifecycle. It should not know how a
-specific database quotes identifiers, rebuilds tables, acquires locks, or
-handles unsupported features.
-
 Dialect modules own:
 
-- SQL rendering.
-- Dialect-specific operation validation.
-- Type canonicalization.
-- Operation reordering when required.
-- Tracking-table SQL.
-- Unsupported-feature errors.
+- SQL rendering;
+- dialect-specific validation;
+- type canonicalization;
+- native and extension type catalogs;
+- operation reordering;
+- context-aware rendering such as SQLite table rebuilds;
+- tracking-table SQL;
+- unsupported-feature errors.
 
 Executor modules own:
 
-- Database connections.
-- Statement execution.
-- Transaction commands.
-- Lock acquisition and release.
-- Live introspection.
+- database connections;
+- statement execution;
+- transaction commands;
+- lock acquisition and release;
+- live introspection.
 
-This keeps cross-database leakage visible. For example, SQLite-specific rebuild
-planning belongs in the SQLite dialect module, while PostgreSQL advisory locks
-belong in the PostgreSQL executor.
+Shared code may ask a dialect to validate or render a migration from a replayed
+schema state. Shared code must not branch on PostgreSQL-specific, SQLite-
+specific, or future MySQL-specific syntax.
 
 ## Offline Core And WASM Goal
 
-Gaman is split around an offline-first core:
+`gaman-core` physically owns the offline implementation:
 
-- `gaman-core` is the pure offline engine. It contains schema IR, operations,
-  migrations, graph ordering, replay, diffing, disambiguation data structures,
-  dialect canonicalization, dialect SQL rendering, string-based schema parsing,
-  and `OfflinePlanner`.
-- `gaman-core` physically owns the offline implementation modules under
-  `gaman-core/src/`. The root `gaman` crate re-exports those modules for
-  compatibility and must not include core implementation files through path
-  bridges.
-- `gaman` remains the compatibility facade. Default features keep the native CLI
-  and database behavior. `--no-default-features --features offline` exposes the
-  offline core without compiling database drivers.
-- Native database execution, live introspection, locking, tracking-table
-  installation, and live `verify_db` are native-only concerns behind DB features.
-- CLI parsing, dotenv loading, terminal prompting, and filesystem-backed
-  migration writing are native-only concerns behind CLI/filesystem features.
+- schema IR;
+- operations and migrations;
+- graph ordering;
+- replay;
+- diffing;
+- disambiguation data structures and resolution;
+- dialect canonicalization and SQL rendering;
+- string-based schema and migration parsing;
+- `OfflinePlanner`.
 
-The offline acceptance target is:
+The root `gaman` crate is the compatibility facade. Default features expose the
+native CLI and database layer. `--no-default-features --features offline`
+exposes offline APIs without compiling database drivers. `offline-sqlite`
+enables SQLite rendering without linking the live SQLite executor.
 
-```text
+Native-only concerns remain outside the offline core:
+
+- SQLx executors;
+- live `inspect_db`;
+- live `verify_db`;
+- locks and tracking installation;
+- filesystem-backed migration sources and writers;
+- CLI parsing, dotenv loading, and terminal prompting.
+
+Offline acceptance targets:
+
+```bash
 cargo check -p gaman-core --target wasm32-unknown-unknown
 cargo check -p gaman --no-default-features --features offline --target wasm32-unknown-unknown
 cargo check -p gaman --no-default-features --features offline-sqlite --target wasm32-unknown-unknown
 ```
 
 Offline builds must not compile SQLx, Tokio, argh, dotenvy, native TLS, or
-executor modules. `sql_migrate` remains offline by using the same
-migration-operation renderer that live migration application uses for the
-selected dialect and replay state.
-Use the facade's `offline-sqlite` feature, or `gaman-core` with its `sqlite`
-feature, when browser/offline callers need SQLite SQL rendering without a live
-SQLite driver.
-
-## Dialect Scope
-
-Each dialect should implement the strict schema superset where the database has
-a matching concept, and should raise deterministic errors where the database
-does not. Per-engine support status belongs in the README so users see it before
-they read internals.
+executor modules.
 
 ## Escape Hatches
 
-`Statement` is the supported escape hatch for SQL that Gaman should execute but
-not model. It participates in migration ordering and transaction handling, but
-it does not alter the replayed `Schema`.
+`Statement` is the only migration-file escape hatch. It embeds literal SQL in a
+migration and participates in ordering, transaction handling, SQL rendering, and
+rollback when a `down` statement exists.
 
-That means a `Statement` can be used for explicit data fixes, specialized
-indexes, database-specific clauses, triggers, or one-off DDL. If the statement
-changes objects that Gaman also models, the authored schema and later migrations
-must account for the resulting state explicitly.
+`Statement` does not mutate the replayed `Schema`. If it changes modeled schema
+objects, the authored schema and later migrations must account for that state
+explicitly.
 
-Gaman should not define first-class data migration operations or external
-CSV/JSON data-file references. Frontends may read data files or domain inputs
-and compile them into explicit `Statement` operations before handing migrations
-to Gaman, but the migration file itself must remain self-contained.
+Gaman should not define first-class data migration operations. Frontends may read
+CSV, JSON, application metadata, or domain inputs and compile them into explicit
+`Statement` operations before handing migrations to Gaman. Migration files
+themselves must remain self-contained.
 
-External process invocation is outside Gaman's migration contract. `Invoke`,
-invoker traits, subprocess execution, and related entities are not part of the
-operation model or native execution layer. Migration application must
-execute database operations only; external tooling belongs before migration
-generation, not inside migration application.
+External process invocation is outside the migration contract. Invoker traits,
+remote execution, subprocess execution, and related entities are not part of the
+operation model or native execution layer.
 
-## Planned Features
+## Roadmap Boundaries
 
-The planned feature set is bounded by the strict superset. Planned work should
-improve correctness, coverage, and robustness inside that superset rather than
-add new schema object types.
+Planned work should improve correctness, coverage, and robustness inside the
+strict superset rather than add new schema object families.
 
-### High Priority
+High-priority work:
 
-- Harden SQLite canonicalization:
-  - reject schema-qualified SQLite objects before shared schema normalization;
-  - compare SQLite types by affinity where appropriate;
-  - preserve authored type declarations for rendering;
-  - normalize defaults and generated expressions conservatively.
-- Improve SQLite introspection:
-  - parse `sqlite_master.sql` for table constraints and generated columns;
-  - parse stable view metadata where supported;
-  - detect unsupported table shapes instead of silently dropping metadata;
-  - cover supported relational-core inspect/verify with live in-memory tests.
-- Mature SQLite rebuilds:
-  - keep parent-table rebuilds with inbound foreign keys covered by live tests;
-  - preserve modeled indexes and constraints across more rebuild scenarios;
-  - keep primary-key changes explicitly unsupported until designed.
-- Make `sql_migrate` and live migration rendering share the same renderer for
-  every dialect, including context-aware paths.
-- Improve opaque schema object tracking:
-  - track signatures and stable metadata through introspection;
-  - keep authored source preservation separate from live metadata verification.
-
-### Medium Priority
-
-- Add SQLite trigger rendering as an opaque schema object if it can be kept
-  separate from PostgreSQL trigger-function semantics.
-- Add or harden view rendering and introspection for dialects where view
-  definitions can be represented deterministically as opaque schema objects.
+- Improve live introspection and `verify_db` coverage for supported relational
+  metadata.
+- Harden opaque schema object signatures and stable metadata comparison.
+- Expand SQLite introspection for generated columns, constraints, indexes, views,
+  and supported rebuild scenarios.
 - Add more round-trip tests:
   - schema to migration to replay;
   - migration to SQL golden output;
   - live inspect to verify no drift for supported objects.
-- Improve generated migration durability:
-  - temp-file writes;
-  - atomic rename;
-  - parent-directory creation;
-  - refusal to overwrite existing migration IDs.
-- Expand benchmark coverage for large diffs, long histories, SQL rendering, and
-  replay.
+- Expand benchmarks for large diffs, long histories, replay, SQL rendering, and
+  SQLite rebuild planning.
 
-### Lower Priority
+Lower-priority work:
 
 - MySQL / MariaDB dialect and executor support.
-- Deep body-drift verification for opaque schema objects where canonical source
-  text can be recovered deterministically from the live database.
+- Deeper dialect-specific body verification for opaque schema objects where
+  deterministic catalog source can be recovered.
 - Richer behavior inside existing schema object types, as long as it does not
   expand the strict superset.
 
@@ -464,13 +460,15 @@ add new schema object types.
 
 Tests should match the architecture:
 
-- Shared tests cover replay, graph ordering, validation, diffing, file loading,
-  embedded migrations, and the public engine API.
+- Shared tests cover schema preparation, replay, graph ordering, diffing,
+  disambiguation, SQL planning, embedded migrations, and public API behavior.
+- Dialect catalog tests cover alias canonicalization, extension-type recognition,
+  typo suggestions, and unknown-type preservation.
 - PostgreSQL tests cover SQL rendering, schema-qualified behavior, live
-  introspection, relational-core verify, opaque schema object signatures, and
-  deterministic errors for unsupported catalog shapes.
-- SQLite tests are feature-gated and cover both offline rendering and live
-  in-memory execution, especially rebuilds and rollback.
+  introspection, relational-core verification, opaque metadata, and deterministic
+  errors for unsupported catalog shapes.
+- SQLite tests are feature-gated and cover offline rendering, live in-memory
+  execution, rebuild planning, rollback, and unsupported-feature failures.
 - Negative tests are as important as positive tests: unsupported operations must
   fail before SQL execution when possible.
 - `sql_migrate` golden tests should match the statements used by live migration
@@ -482,6 +480,8 @@ Required checks for broad changes:
 cargo test
 cargo test --features sqlite
 cargo test --no-default-features --features sqlite
+cargo check -p gaman --no-default-features --features offline --target wasm32-unknown-unknown
+cargo check -p gaman --no-default-features --features offline-sqlite --target wasm32-unknown-unknown
 cargo clippy --all-targets
 cargo clippy --features sqlite --all-targets
 cargo clippy --no-default-features --features sqlite --all-targets

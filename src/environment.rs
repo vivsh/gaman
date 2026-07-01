@@ -3,8 +3,8 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::conf::Config;
-use crate::dialects::Dialect;
 use crate::executor::{BoxFuture, Executor, Introspectable};
+use gaman_core::dialects::Dialect;
 
 #[derive(Debug, Error)]
 pub enum EnvironmentError {

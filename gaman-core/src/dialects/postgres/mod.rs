@@ -4,10 +4,13 @@ use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::states::{
     Column, Constraint, ForeignKey, Index, Schema, SchemaValidationError, Table, ViewDef,
-    Volatility, schema_qualified_key,
+    Volatility,
 };
 
 use super::DialectError;
+
+mod data_types;
+mod extension_types;
 
 // PostgreSQL-specific constraint: DROP FUNCTION fails when dependent triggers still exist.
 // This arises when a function's argument signature changes, because the old signature cannot
@@ -134,138 +137,62 @@ pub fn reorder_ops(ops: Vec<Operation>, previous: &Schema, current: &Schema) -> 
     result
 }
 
-const TYPE_ALIASES: &[(&str, &str)] = &[
-    ("int", "integer"),
-    ("int2", "smallint"),
-    ("int4", "integer"),
-    ("int8", "bigint"),
-    ("bool", "boolean"),
-    ("float4", "real"),
-    ("float8", "double precision"),
-    ("bpchar", "char"),
-    ("character", "char"),
-    ("character varying", "varchar"),
-    ("timestamp", "timestamp without time zone"),
-    ("timestamptz", "timestamp with time zone"),
-    ("decimal", "numeric"),
-];
-
-const BUILTIN_TYPES: &[&str] = &[
-    "bigint",
-    "bigserial",
-    "bit",
-    "bit varying",
-    "boolean",
-    "box",
-    "bytea",
-    "char",
-    "cidr",
-    "circle",
-    "date",
-    "double precision",
-    "inet",
-    "integer",
-    "interval",
-    "json",
-    "jsonb",
-    "line",
-    "lseg",
-    "macaddr",
-    "macaddr8",
-    "money",
-    "numeric",
-    "path",
-    "point",
-    "polygon",
-    "real",
-    "serial",
-    "smallint",
-    "smallserial",
-    "text",
-    "time with time zone",
-    "time without time zone",
-    "timestamp with time zone",
-    "timestamp without time zone",
-    "tsquery",
-    "tsvector",
-    "uuid",
-    "varchar",
-    "xml",
-];
-
 pub fn normalize_type(t: &str) -> &str {
-    TYPE_ALIASES
-        .iter()
-        .find_map(|(alias, canonical)| (*alias == t).then_some(*canonical))
-        .unwrap_or(t)
+    data_types::normalize_type(t)
 }
 
 pub fn canonical_type(t: &str) -> String {
-    canonical_type_inner(t).unwrap_or_else(|| normalize_type_text(t))
+    if extension_types::is_extension_type(t) {
+        t.to_string()
+    } else {
+        data_types::canonical_type(t)
+    }
 }
 
-pub fn validate_schema(schema: &Schema) -> Result<(), SchemaValidationError> {
-    for (table_name, table) in &schema.tables {
-        for column in &table.columns {
-            if !is_supported_type(schema, &column.col_type) {
-                return Err(SchemaValidationError::Invalid(format!(
-                    "table {table_name} column {}: unknown Postgres type '{}'",
-                    column.name, column.col_type
-                )));
-            }
-        }
-    }
+pub fn validate_schema(_schema: &Schema) -> Result<(), SchemaValidationError> {
     Ok(())
 }
 
-fn canonical_type_inner(t: &str) -> Option<String> {
-    let normalized = normalize_type_text(t);
-    if let Some((base, suffix)) = normalized.strip_suffix("[]").map(|base| (base, "[]")) {
-        return canonical_type_inner(base).map(|base| format!("{base}{suffix}"));
-    }
-
-    let (base, modifier) = split_type_modifier(&normalized);
-    let canonical_base = TYPE_ALIASES
-        .iter()
-        .find_map(|(alias, canonical)| (*alias == base).then_some(*canonical))
-        .unwrap_or(base);
-
-    if is_builtin_type_name(canonical_base) {
-        Some(format!("{canonical_base}{modifier}"))
-    } else {
-        None
-    }
+pub fn is_catalog_type(t: &str) -> bool {
+    data_types::canonical_known_type(t).is_some() || extension_types::is_extension_type(t)
 }
 
-fn is_supported_type(schema: &Schema, t: &str) -> bool {
-    let canonical = canonical_type(t);
-    if canonical_type_inner(&canonical).is_some() {
-        return true;
+pub fn type_suggestions(t: &str) -> Vec<String> {
+    type_suggestions_from_catalogs(
+        t,
+        data_types::known_type_names().chain(extension_types::extension_type_names()),
+    )
+}
+
+fn type_suggestions_from_catalogs(
+    t: &str,
+    names: impl Iterator<Item = &'static str>,
+) -> Vec<String> {
+    let needle = data_types::normalize_type_text(t);
+    let max_distance = if needle.len() <= 5 { 1 } else { 2 };
+    let mut suggestions = names
+        .filter(|name| edit_distance(&needle, name) <= max_distance)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    suggestions.sort();
+    suggestions.dedup();
+    suggestions
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let mut previous = (0..=right.len()).collect::<Vec<_>>();
+    let mut current = vec![0; right.len() + 1];
+    for (i, left_byte) in left.bytes().enumerate() {
+        current[0] = i + 1;
+        for (j, right_byte) in right.bytes().enumerate() {
+            let substitution = previous[j] + usize::from(left_byte != right_byte);
+            let insertion = current[j] + 1;
+            let deletion = previous[j + 1] + 1;
+            current[j + 1] = substitution.min(insertion).min(deletion);
+        }
+        std::mem::swap(&mut previous, &mut current);
     }
-
-    schema.enums.values().any(|enum_def| {
-        enum_def.name == canonical
-            || enum_def.qualified_name() == canonical
-            || schema_qualified_key(&enum_def.name, enum_def.schema.as_deref()) == canonical
-    })
-}
-
-fn is_builtin_type_name(base: &str) -> bool {
-    BUILTIN_TYPES.binary_search(&base).is_ok()
-}
-
-fn split_type_modifier(t: &str) -> (&str, &str) {
-    match t.find('(') {
-        Some(start) if t.ends_with(')') => (&t[..start], &t[start..]),
-        _ => (t, ""),
-    }
-}
-
-fn normalize_type_text(t: &str) -> String {
-    t.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase()
+    previous[right.len()]
 }
 
 fn quote_ident(s: &str) -> String {
@@ -374,9 +301,9 @@ fn foreign_key_clause(foreign_key: &ForeignKey) -> String {
     format!(
         "CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({})",
         quote_ident(&foreign_key.name),
-        quote_ident(&foreign_key.from_column),
+        quoted_columns(&foreign_key.columns),
         quote_table_name(&foreign_key.to_table),
-        quote_ident(&foreign_key.to_column),
+        quoted_columns(&foreign_key.to_columns),
     )
 }
 
@@ -919,686 +846,4 @@ EXECUTE FUNCTION {}()",
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::operations::Operation;
-    use crate::states::{Column, EnumDef, ForeignKey, Index, PrimaryKey, Table};
-
-    fn col(name: &str, t: &str) -> Column {
-        Column {
-            name: name.to_string(),
-            col_type: t.to_string(),
-            nullable: false,
-            primary_key: false,
-            default: None,
-            ..Default::default()
-        }
-    }
-
-    fn nullable_col(name: &str, t: &str) -> Column {
-        Column {
-            name: name.to_string(),
-            col_type: t.to_string(),
-            nullable: true,
-            primary_key: false,
-            default: None,
-            ..Default::default()
-        }
-    }
-
-    fn empty_table(name: &str) -> Table {
-        Table {
-            name: name.to_string(),
-            schema: None,
-            primary_key: None,
-            columns: vec![],
-            foreign_keys: vec![],
-            indexes: vec![],
-            constraints: vec![],
-            triggers: vec![],
-        }
-    }
-
-    fn enum_def(values: &[&str]) -> EnumDef {
-        EnumDef {
-            name: "status".to_string(),
-            schema: None,
-            values: values.iter().map(|value| value.to_string()).collect(),
-        }
-    }
-
-    #[test]
-    fn quote_ident_plain() {
-        assert_eq!(quote_ident("users"), "\"users\"");
-    }
-
-    #[test]
-    fn quote_ident_reserved_words() {
-        assert_eq!(quote_ident("order"), "\"order\"");
-        assert_eq!(quote_ident("user"), "\"user\"");
-        assert_eq!(quote_ident("table"), "\"table\"");
-    }
-
-    #[test]
-    fn quote_ident_spaces_and_hyphens() {
-        assert_eq!(quote_ident("my table"), "\"my table\"");
-        assert_eq!(quote_ident("my-table"), "\"my-table\"");
-    }
-
-    #[test]
-    fn quote_ident_embedded_double_quote() {
-        let result = quote_ident("it\"s");
-        assert_eq!(result, "\"it\"\"s\"");
-    }
-
-    #[test]
-    fn create_table_basic() {
-        let table = Table {
-            name: "users".to_string(),
-            schema: None,
-            primary_key: None,
-            columns: vec![col("id", "serial"), col("name", "text")],
-            foreign_keys: vec![],
-            indexes: vec![],
-            constraints: vec![],
-            triggers: vec![],
-        };
-        let sql = operation_to_sql(&Operation::CreateTable { table }).unwrap();
-        assert_eq!(sql.len(), 1);
-        assert!(
-            sql[0].starts_with("CREATE TABLE \"users\" ("),
-            "got: {}",
-            sql[0]
-        );
-        assert!(sql[0].contains("\"id\" serial"), "got: {}", sql[0]);
-        assert!(sql[0].contains("\"name\" text"), "got: {}", sql[0]);
-    }
-
-    #[test]
-    fn create_table_composite_primary_key() {
-        let table = Table {
-            name: "order_lines".to_string(),
-            schema: None,
-            primary_key: Some(PrimaryKey {
-                name: "order_lines_identity".to_string(),
-                columns: vec!["tenant_id".to_string(), "order_id".to_string()],
-            }),
-            columns: vec![col("order_id", "bigint"), col("tenant_id", "bigint")],
-            foreign_keys: vec![],
-            indexes: vec![],
-            constraints: vec![],
-            triggers: vec![],
-        };
-
-        let sql = operation_to_sql(&Operation::CreateTable { table }).unwrap();
-
-        assert_eq!(sql.len(), 1);
-        assert!(sql[0].contains(
-            "CONSTRAINT \"order_lines_identity\" PRIMARY KEY (\"tenant_id\", \"order_id\")"
-        ));
-        assert!(!sql[0].contains("\"tenant_id\" bigint PRIMARY KEY"));
-    }
-
-    #[test]
-    fn create_table_reserved_word_name() {
-        let table = Table {
-            name: "order".to_string(),
-            schema: None,
-            primary_key: None,
-            columns: vec![col("id", "serial")],
-            foreign_keys: vec![],
-            indexes: vec![],
-            constraints: vec![],
-            triggers: vec![],
-        };
-        let sql = operation_to_sql(&Operation::CreateTable { table }).unwrap();
-        assert!(
-            sql[0].starts_with("CREATE TABLE \"order\" ("),
-            "got: {}",
-            sql[0]
-        );
-    }
-
-    #[test]
-    fn drop_table_sql() {
-        let sql = operation_to_sql(&Operation::DropTable {
-            table: empty_table("users"),
-        })
-        .unwrap();
-        assert_eq!(sql, vec!["DROP TABLE \"users\""]);
-    }
-
-    #[test]
-    fn rename_table_sql() {
-        let sql = operation_to_sql(&Operation::RenameTable {
-            old_name: "users".to_string(),
-            new_name: "accounts".to_string(),
-        })
-        .unwrap();
-        assert_eq!(sql, vec!["ALTER TABLE \"users\" RENAME TO \"accounts\""]);
-    }
-
-    #[test]
-    fn add_column_sql() {
-        let sql = operation_to_sql(&Operation::AddColumn {
-            table_name: "users".to_string(),
-            column: col("email", "text"),
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec!["ALTER TABLE \"users\" ADD COLUMN \"email\" text NOT NULL"]
-        );
-    }
-
-    #[test]
-    fn drop_column_no_cascade() {
-        let sql = operation_to_sql(&Operation::DropColumn {
-            table_name: "users".to_string(),
-            column: col("email", "text"),
-            cascade: false,
-        })
-        .unwrap();
-        assert_eq!(sql, vec!["ALTER TABLE \"users\" DROP COLUMN \"email\""]);
-    }
-
-    #[test]
-    fn drop_column_with_cascade() {
-        let sql = operation_to_sql(&Operation::DropColumn {
-            table_name: "users".to_string(),
-            column: col("email", "text"),
-            cascade: true,
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec!["ALTER TABLE \"users\" DROP COLUMN \"email\" CASCADE"]
-        );
-    }
-
-    #[test]
-    fn alter_column_type_no_cast() {
-        let old = col("status", "varchar(50)");
-        let new = col("status", "text");
-        let sql = operation_to_sql(&Operation::AlterColumn {
-            table_name: "users".to_string(),
-            old,
-            new,
-            cast_expr: None,
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec!["ALTER TABLE \"users\" ALTER COLUMN \"status\" TYPE text"]
-        );
-    }
-
-    #[test]
-    fn alter_column_type_with_cast() {
-        let old = col("age", "text");
-        let new = col("age", "integer");
-        let sql = operation_to_sql(&Operation::AlterColumn {
-            table_name: "users".to_string(),
-            old,
-            new,
-            cast_expr: Some("age::integer".to_string()),
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec!["ALTER TABLE \"users\" ALTER COLUMN \"age\" TYPE integer USING age::integer"]
-        );
-    }
-
-    #[test]
-    fn alter_column_nullable_change() {
-        let old = col("email", "text");
-        let new = nullable_col("email", "text");
-        let sql = operation_to_sql(&Operation::AlterColumn {
-            table_name: "users".to_string(),
-            old,
-            new,
-            cast_expr: None,
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec!["ALTER TABLE \"users\" ALTER COLUMN \"email\" DROP NOT NULL"]
-        );
-    }
-
-    #[test]
-    fn alter_column_drops_schema_qualified_primary_key_by_bare_table_name() {
-        let mut old = col("id", "integer");
-        old.primary_key = true;
-        let new = col("id", "integer");
-        let sql = operation_to_sql(&Operation::AlterColumn {
-            table_name: "app.users".to_string(),
-            old,
-            new,
-            cast_expr: None,
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec!["ALTER TABLE \"app\".\"users\" DROP CONSTRAINT \"users_pkey\""]
-        );
-    }
-
-    #[test]
-    fn add_foreign_key_sql() {
-        let fk = ForeignKey {
-            name: "posts_user_id_fkey".to_string(),
-            from_column: "user_id".to_string(),
-            to_table: "users".to_string(),
-            to_column: "id".to_string(),
-        };
-        let sql = operation_to_sql(&Operation::AddForeignKey {
-            table_name: "posts".to_string(),
-            foreign_key: fk,
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec![
-                "ALTER TABLE \"posts\" ADD CONSTRAINT \"posts_user_id_fkey\" FOREIGN KEY (\"user_id\") REFERENCES \"users\" (\"id\")"
-            ]
-        );
-    }
-
-    #[test]
-    fn drop_foreign_key_no_cascade() {
-        let fk = ForeignKey {
-            name: "posts_user_id_fkey".to_string(),
-            from_column: "user_id".to_string(),
-            to_table: "users".to_string(),
-            to_column: "id".to_string(),
-        };
-        let sql = operation_to_sql(&Operation::DropForeignKey {
-            table_name: "posts".to_string(),
-            foreign_key: fk,
-            cascade: false,
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec!["ALTER TABLE \"posts\" DROP CONSTRAINT \"posts_user_id_fkey\""]
-        );
-    }
-
-    #[test]
-    fn drop_foreign_key_with_cascade() {
-        let fk = ForeignKey {
-            name: "posts_user_id_fkey".to_string(),
-            from_column: "user_id".to_string(),
-            to_table: "users".to_string(),
-            to_column: "id".to_string(),
-        };
-        let sql = operation_to_sql(&Operation::DropForeignKey {
-            table_name: "posts".to_string(),
-            foreign_key: fk,
-            cascade: true,
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec!["ALTER TABLE \"posts\" DROP CONSTRAINT \"posts_user_id_fkey\" CASCADE"]
-        );
-    }
-
-    #[test]
-    fn add_index_sql() {
-        let index = Index {
-            name: "users_email_idx".to_string(),
-            columns: vec!["email".to_string()],
-            unique: false,
-            predicate: None,
-        };
-        let sql = operation_to_sql(&Operation::AddIndex {
-            table_name: "users".to_string(),
-            index,
-            concurrent: false,
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec!["CREATE INDEX \"users_email_idx\" ON \"users\" (\"email\")"]
-        );
-    }
-
-    #[test]
-    fn add_unique_index_sql() {
-        let index = Index {
-            name: "users_email_idx".to_string(),
-            columns: vec!["email".to_string()],
-            unique: true,
-            predicate: None,
-        };
-        let sql = operation_to_sql(&Operation::AddIndex {
-            table_name: "users".to_string(),
-            index,
-            concurrent: false,
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec!["CREATE UNIQUE INDEX \"users_email_idx\" ON \"users\" (\"email\")"]
-        );
-    }
-
-    #[test]
-    fn drop_index_sql() {
-        let index = Index {
-            name: "users_email_idx".to_string(),
-            columns: vec!["email".to_string()],
-            unique: false,
-            predicate: None,
-        };
-        let sql = operation_to_sql(&Operation::DropIndex {
-            table_name: "users".to_string(),
-            index,
-            concurrent: false,
-        })
-        .unwrap();
-        assert_eq!(sql, vec!["DROP INDEX \"users_email_idx\""]);
-    }
-
-    #[test]
-    fn drop_index_sql_schema_qualifies_index_from_table_schema() {
-        let index = Index {
-            name: "users_email_idx".to_string(),
-            columns: vec!["email".to_string()],
-            unique: false,
-            predicate: None,
-        };
-        let sql = operation_to_sql(&Operation::DropIndex {
-            table_name: "app.users".to_string(),
-            index,
-            concurrent: true,
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec!["DROP INDEX CONCURRENTLY \"app\".\"users_email_idx\""]
-        );
-    }
-
-    #[test]
-    fn tracking_table_has_two_statements() {
-        let sqls = create_tracking_table_sql();
-        assert_eq!(sqls.len(), 2);
-        assert!(
-            sqls[0].contains("CREATE TABLE IF NOT EXISTS"),
-            "got: {}",
-            sqls[0]
-        );
-        assert!(
-            sqls[1].contains("CREATE INDEX IF NOT EXISTS"),
-            "got: {}",
-            sqls[1]
-        );
-        assert!(
-            sqls[1].contains("gaman_migrations_id_idx"),
-            "got: {}",
-            sqls[1]
-        );
-    }
-
-    #[test]
-    fn alter_enum_append_only_adds_values() {
-        let sql = operation_to_sql(&Operation::AlterEnum {
-            old: enum_def(&["draft", "published"]),
-            new: enum_def(&["draft", "published", "archived"]),
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec!["ALTER TYPE \"status\" ADD VALUE 'archived' AFTER 'published'"]
-        );
-    }
-
-    #[test]
-    fn alter_enum_inserted_value_uses_before_or_after() {
-        let sql = operation_to_sql(&Operation::AlterEnum {
-            old: enum_def(&["draft", "published"]),
-            new: enum_def(&["queued", "draft", "review", "published"]),
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec![
-                "ALTER TYPE \"status\" ADD VALUE 'queued' BEFORE 'draft'",
-                "ALTER TYPE \"status\" ADD VALUE 'review' AFTER 'draft'",
-            ]
-        );
-    }
-
-    #[test]
-    fn rename_enum_value_sql() {
-        let sql = operation_to_sql(&Operation::RenameEnumValue {
-            enum_name: "status".to_string(),
-            schema: Some("app".to_string()),
-            old_value: "live".to_string(),
-            new_value: "published".to_string(),
-        })
-        .unwrap();
-        assert_eq!(
-            sql,
-            vec!["ALTER TYPE \"app\".\"status\" RENAME VALUE 'live' TO 'published'"]
-        );
-    }
-
-    #[test]
-    fn alter_enum_value_removal_is_unsupported() {
-        let err = operation_to_sql(&Operation::AlterEnum {
-            old: enum_def(&["draft", "published", "archived"]),
-            new: enum_def(&["draft", "published"]),
-        })
-        .unwrap_err();
-        assert!(err.to_string().contains("cannot remove enum values"));
-    }
-
-    fn basic_function(name: &str) -> crate::states::FunctionDef {
-        crate::states::FunctionDef {
-            name: name.to_string(),
-            schema: None,
-            arguments: String::new(),
-            returns: "void".to_string(),
-            language: "sql".to_string(),
-            body: "SELECT 1".to_string(),
-            volatility: crate::states::Volatility::Volatile,
-            security_definer: false,
-        }
-    }
-
-    fn basic_trigger(name: &str) -> crate::states::TriggerDef {
-        crate::states::TriggerDef {
-            name: Some(name.to_string()),
-            timing: crate::states::TriggerTiming::After,
-            events: vec![crate::states::TriggerEvent::Insert],
-            scope: crate::states::TriggerScope::Row,
-            function_name: Some("audit_fn".to_string()),
-            when: None,
-            body: None,
-            language: None,
-        }
-    }
-
-    /// Volatile function omits the volatility keyword.
-    #[test]
-    fn create_function_volatile_no_keyword() {
-        let sql = operation_to_sql(&Operation::CreateFunction {
-            function: basic_function("notify"),
-        })
-        .unwrap();
-        assert_eq!(sql.len(), 1);
-        assert!(
-            sql[0].contains("CREATE OR REPLACE FUNCTION"),
-            "got: {}",
-            sql[0]
-        );
-        assert!(!sql[0].contains("VOLATILE"), "should not contain VOLATILE");
-        assert!(sql[0].contains("SELECT 1"), "should contain body");
-    }
-
-    /// Stable function includes the STABLE keyword.
-    #[test]
-    fn create_function_stable_keyword() {
-        let mut f = basic_function("get_config");
-        f.volatility = crate::states::Volatility::Stable;
-        let sql = operation_to_sql(&Operation::CreateFunction { function: f }).unwrap();
-        assert!(sql[0].contains("STABLE"), "got: {}", sql[0]);
-    }
-
-    /// security_definer function includes SECURITY DEFINER.
-    #[test]
-    fn create_function_security_definer() {
-        let mut f = basic_function("run_as_owner");
-        f.security_definer = true;
-        let sql = operation_to_sql(&Operation::CreateFunction { function: f }).unwrap();
-        assert!(sql[0].contains("SECURITY DEFINER"), "got: {}", sql[0]);
-    }
-
-    /// DropFunction SQL includes parenthesized arguments.
-    #[test]
-    fn drop_function_includes_args() {
-        let mut f = basic_function("process");
-        f.arguments = "user_id integer".to_string();
-        let sql = operation_to_sql(&Operation::DropFunction { function: f }).unwrap();
-        assert_eq!(sql, vec!["DROP FUNCTION \"process\"(user_id integer)"]);
-    }
-
-    #[test]
-    fn custom_schema_function_sql_is_qualified() {
-        let mut f = basic_function("process");
-        f.schema = Some("app".to_string());
-        f.arguments = "user_id integer".to_string();
-
-        let create_sql = operation_to_sql(&Operation::CreateFunction {
-            function: f.clone(),
-        })
-        .unwrap();
-        assert!(create_sql[0].starts_with("CREATE OR REPLACE FUNCTION \"app\".\"process\"("));
-
-        let drop_sql = operation_to_sql(&Operation::DropFunction { function: f }).unwrap();
-        assert_eq!(
-            drop_sql,
-            vec!["DROP FUNCTION \"app\".\"process\"(user_id integer)"]
-        );
-    }
-
-    /// AlterFunction with same arguments produces a single CREATE OR REPLACE.
-    #[test]
-    fn alter_function_same_args_produces_replace() {
-        let old = basic_function("notify");
-        let mut new = basic_function("notify");
-        new.body = "SELECT 2".to_string();
-        let sql = operation_to_sql(&Operation::AlterFunction { old, new }).unwrap();
-        assert_eq!(sql.len(), 1);
-        assert!(
-            sql[0].starts_with("CREATE OR REPLACE FUNCTION"),
-            "got: {}",
-            sql[0]
-        );
-    }
-
-    /// AlterFunction with different arguments produces DROP + CREATE (two statements).
-    #[test]
-    fn alter_function_different_args_produces_drop_and_create() {
-        let old = basic_function("process");
-        let mut new = basic_function("process");
-        new.arguments = "user_id integer".to_string();
-        let sql = operation_to_sql(&Operation::AlterFunction { old, new }).unwrap();
-        assert_eq!(sql.len(), 2);
-        assert!(sql[0].starts_with("DROP FUNCTION"), "got: {}", sql[0]);
-        assert!(
-            sql[1].starts_with("CREATE OR REPLACE FUNCTION"),
-            "got: {}",
-            sql[1]
-        );
-    }
-
-    #[test]
-    fn alter_function_different_args_preserves_schema() {
-        let mut old = basic_function("process");
-        old.schema = Some("app".to_string());
-        let mut new = old.clone();
-        new.arguments = "user_id integer".to_string();
-
-        let sql = operation_to_sql(&Operation::AlterFunction { old, new }).unwrap();
-
-        assert_eq!(sql[0], "DROP FUNCTION \"app\".\"process\"()");
-        assert!(sql[1].starts_with("CREATE OR REPLACE FUNCTION \"app\".\"process\"("));
-    }
-
-    /// CreateTrigger SQL has correct BEFORE/AFTER and FOR EACH ROW.
-    #[test]
-    fn create_trigger_sql() {
-        let sql = operation_to_sql(&Operation::CreateTrigger {
-            table_name: "users".to_string(),
-            trigger: basic_trigger("audit_trg"),
-        })
-        .unwrap();
-        assert_eq!(sql.len(), 1);
-        assert!(
-            sql[0].contains("CREATE OR REPLACE TRIGGER"),
-            "got: {}",
-            sql[0]
-        );
-        assert!(sql[0].contains("AFTER"), "got: {}", sql[0]);
-        assert!(sql[0].contains("INSERT"), "got: {}", sql[0]);
-        assert!(sql[0].contains("FOR EACH ROW"), "got: {}", sql[0]);
-        assert!(sql[0].contains("EXECUTE FUNCTION"), "got: {}", sql[0]);
-    }
-
-    #[test]
-    fn create_trigger_sql_qualifies_function_name() {
-        let mut trigger = basic_trigger("audit_trg");
-        trigger.function_name = Some("audit.audit_fn".to_string());
-
-        let sql = operation_to_sql(&Operation::CreateTrigger {
-            table_name: "app.users".to_string(),
-            trigger,
-        })
-        .unwrap();
-
-        assert!(sql[0].contains("ON \"app\".\"users\""), "got: {}", sql[0]);
-        assert!(
-            sql[0].contains("EXECUTE FUNCTION \"audit\".\"audit_fn\"()"),
-            "got: {}",
-            sql[0]
-        );
-    }
-
-    /// AlterTrigger SQL is CREATE OR REPLACE TRIGGER (PG14+).
-    #[test]
-    fn alter_trigger_sql_is_create_or_replace() {
-        let old = basic_trigger("audit_trg");
-        let mut new = basic_trigger("audit_trg");
-        new.function_name = Some("new_fn".to_string());
-        let sql = operation_to_sql(&Operation::AlterTrigger {
-            table_name: "users".to_string(),
-            old,
-            new,
-        })
-        .unwrap();
-        assert_eq!(sql.len(), 1);
-        assert!(
-            sql[0].starts_with("CREATE OR REPLACE TRIGGER"),
-            "got: {}",
-            sql[0]
-        );
-        assert!(sql[0].contains("\"new_fn\""), "got: {}", sql[0]);
-    }
-
-    /// DropTrigger SQL includes the table name.
-    #[test]
-    fn drop_trigger_sql() {
-        let sql = operation_to_sql(&Operation::DropTrigger {
-            table_name: "users".to_string(),
-            trigger: basic_trigger("audit_trg"),
-        })
-        .unwrap();
-        assert_eq!(sql, vec!["DROP TRIGGER \"audit_trg\" ON \"users\""]);
-    }
-}
+mod tests;

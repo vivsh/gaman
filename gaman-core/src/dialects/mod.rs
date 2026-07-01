@@ -10,6 +10,17 @@ pub enum DialectError {
     Unsupported(String, String),
 }
 
+/// Database dialect selection and dialect-specific behavior.
+///
+/// Type catalogs under each dialect are intentionally incomplete and frequently updated.
+/// `data_types.rs` lists native built-in types, aliases, and canonicalization rules;
+/// `extension_types.rs` lists popular extension or externally provided types. These
+/// catalogs exist for deterministic canonicalization, typo suggestions, and helpful
+/// prompts. They are not a claim that Gaman knows the full database type universe.
+/// Unknown types must not be rejected solely because they are absent from these catalogs;
+/// migration history and explicit user decisions are the project-local trust boundary.
+/// New dialect implementations must keep native data types and extension/popular
+/// external types in separate files following this layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialect {
     Postgres,
@@ -151,6 +162,22 @@ impl Dialect {
             Dialect::Postgres => postgres::canonical_type(t),
             #[cfg(feature = "sqlite")]
             Dialect::Sqlite => sqlite::canonical_type(t),
+        }
+    }
+
+    pub fn is_catalog_type(&self, t: &str) -> bool {
+        match self {
+            Dialect::Postgres => postgres::is_catalog_type(t),
+            #[cfg(feature = "sqlite")]
+            Dialect::Sqlite => sqlite::is_catalog_type(t),
+        }
+    }
+
+    pub fn type_suggestions(&self, t: &str) -> Vec<String> {
+        match self {
+            Dialect::Postgres => postgres::type_suggestions(t),
+            #[cfg(feature = "sqlite")]
+            Dialect::Sqlite => sqlite::type_suggestions(t),
         }
     }
 

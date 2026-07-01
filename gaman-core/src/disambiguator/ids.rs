@@ -28,7 +28,18 @@ pub fn clarification_id(kind: &ClarificationKind) -> String {
         ClarificationKind::TypeCast { table, column, .. } => {
             format!("typecast:{}:{}", encode_part(table), encode_part(column))
         }
+        ClarificationKind::UnknownType { table, column, .. } => {
+            format!(
+                "unknown_type:{}:{}",
+                encode_part(table),
+                encode_part(column)
+            )
+        }
     }
+}
+
+pub fn is_unknown_type_id(id: &str) -> bool {
+    id.starts_with("unknown_type:")
 }
 
 fn encode_part(value: &str) -> String {

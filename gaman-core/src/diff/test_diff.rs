@@ -249,12 +249,8 @@ fn gen_new_table_suppresses_sub_entity_adds() {
 fn gen_drop_table_suppresses_sub_entity_drops() {
     let mut t = empty_table("users");
     t.columns.push(text_col("name"));
-    t.foreign_keys.push(ForeignKey {
-        name: "fk".into(),
-        from_column: "name".into(),
-        to_table: "other".into(),
-        to_column: "id".into(),
-    });
+    t.foreign_keys
+        .push(ForeignKey::single("fk", "name", "other", "id"));
     let ops = generate_diff(&empty_schema(), &schema_with_table(t));
     assert_eq!(
         ops.len(),
@@ -434,12 +430,12 @@ fn decompose_breaks_self_ref_fk() {
         ..Default::default()
     });
     t.columns.push(int_col("parent_id"));
-    t.foreign_keys.push(ForeignKey {
-        name: "nodes_parent_fkey".into(),
-        from_column: "parent_id".into(),
-        to_table: "nodes".into(),
-        to_column: "id".into(),
-    });
+    t.foreign_keys.push(ForeignKey::single(
+        "nodes_parent_fkey",
+        "parent_id",
+        "nodes",
+        "id",
+    ));
     let ops = vec![Operation::CreateTable { table: t }];
     let result = decompose(ops);
 
@@ -466,12 +462,8 @@ fn decompose_breaks_mutual_fk_cycle() {
         ..Default::default()
     });
     a.columns.push(int_col("b_id"));
-    a.foreign_keys.push(ForeignKey {
-        name: "a_b_fkey".into(),
-        from_column: "b_id".into(),
-        to_table: "b".into(),
-        to_column: "id".into(),
-    });
+    a.foreign_keys
+        .push(ForeignKey::single("a_b_fkey", "b_id", "b", "id"));
     let mut b = empty_table("b");
     b.columns.push(Column {
         name: "id".into(),
@@ -480,12 +472,8 @@ fn decompose_breaks_mutual_fk_cycle() {
         ..Default::default()
     });
     b.columns.push(int_col("a_id"));
-    b.foreign_keys.push(ForeignKey {
-        name: "b_a_fkey".into(),
-        from_column: "a_id".into(),
-        to_table: "a".into(),
-        to_column: "id".into(),
-    });
+    b.foreign_keys
+        .push(ForeignKey::single("b_a_fkey", "a_id", "a", "id"));
     let ops = vec![
         Operation::CreateTable { table: a },
         Operation::CreateTable { table: b },
@@ -584,12 +572,7 @@ fn sort_drop_fk_before_drop_table() {
         },
         Operation::DropForeignKey {
             table_name: "items".into(),
-            foreign_key: ForeignKey {
-                name: "items_order_fkey".into(),
-                from_column: "order_id".into(),
-                to_table: "orders".into(),
-                to_column: "id".into(),
-            },
+            foreign_key: ForeignKey::single("items_order_fkey", "order_id", "orders", "id"),
             cascade: false,
         },
     ];
@@ -1290,12 +1273,12 @@ fn drop_order_respects_fk_dependencies() {
                     ..Default::default()
                 },
             ],
-            foreign_keys: vec![ForeignKey {
-                name: "children_parent_fkey".into(),
-                from_column: "parent_id".into(),
-                to_table: "parents".into(),
-                to_column: "id".into(),
-            }],
+            foreign_keys: vec![ForeignKey::single(
+                "children_parent_fkey",
+                "parent_id",
+                "parents",
+                "id",
+            )],
             indexes: vec![],
             constraints: vec![],
             triggers: vec![],

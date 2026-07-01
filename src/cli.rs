@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use crate::adapters::YamlAdapter;
 use crate::conf::Config;
-use crate::dialects::Dialect;
-use crate::disambiguator::{Decision, PromptEngine};
 use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
 use crate::executor::{BoxFuture, connect_environment_executor};
 use crate::migrator::{Migrator, MigratorError};
 use crate::prompter::CliPromptEngine;
-use crate::states::Schema;
 use argh::FromArgs;
+use gaman_core::dialects::Dialect;
+use gaman_core::disambiguator::{Decision, PromptEngine};
+use gaman_core::states::Schema;
 
 /// Gaman CLI.
 #[derive(FromArgs, Debug)]

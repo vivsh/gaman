@@ -107,8 +107,8 @@ impl IntoTable for PreparedUser {
 }
 
 #[test]
-fn prepare_rejects_unknown_postgres_type_with_column_context() {
-    let err = Schema::from_yaml_str_for_dialect(
+fn prepare_preserves_unknown_postgres_type_for_later_disambiguation() {
+    let schema = Schema::from_yaml_str_for_dialect(
         r#"
 tables:
   users:
@@ -118,11 +118,9 @@ tables:
 "#,
         Dialect::Postgres,
     )
-    .unwrap_err();
+    .expect("unknown type should remain flexible schema IR");
 
-    let message = err.to_string();
-    assert!(message.contains("table users column age"));
-    assert!(message.contains("unknown Postgres type 'intger'"));
+    assert_eq!(schema.tables["users"].columns[0].col_type, "intger");
 }
 
 #[test]
@@ -622,12 +620,7 @@ fn add_foreign_key() {
             table: basic_table("posts"),
         },
     );
-    let fk = ForeignKey {
-        name: "fk_user".to_string(),
-        from_column: "user_id".to_string(),
-        to_table: "users".to_string(),
-        to_column: "id".to_string(),
-    };
+    let fk = ForeignKey::single("fk_user", "user_id", "users", "id");
     apply_ok(
         &mut s,
         Operation::AddForeignKey {
@@ -648,12 +641,7 @@ fn add_foreign_key_duplicate() {
             table: basic_table("posts"),
         },
     );
-    let fk = ForeignKey {
-        name: "fk_user".to_string(),
-        from_column: "user_id".to_string(),
-        to_table: "users".to_string(),
-        to_column: "id".to_string(),
-    };
+    let fk = ForeignKey::single("fk_user", "user_id", "users", "id");
     apply_ok(
         &mut s,
         Operation::AddForeignKey {
@@ -680,12 +668,7 @@ fn drop_foreign_key() {
             table: basic_table("posts"),
         },
     );
-    let fk = ForeignKey {
-        name: "fk_user".to_string(),
-        from_column: "user_id".to_string(),
-        to_table: "users".to_string(),
-        to_column: "id".to_string(),
-    };
+    let fk = ForeignKey::single("fk_user", "user_id", "users", "id");
     apply_ok(
         &mut s,
         Operation::AddForeignKey {
@@ -697,12 +680,7 @@ fn drop_foreign_key() {
         &mut s,
         Operation::DropForeignKey {
             table_name: "posts".to_string(),
-            foreign_key: ForeignKey {
-                name: "fk_user".to_string(),
-                from_column: "user_id".to_string(),
-                to_table: "users".to_string(),
-                to_column: "id".to_string(),
-            },
+            foreign_key: ForeignKey::single("fk_user", "user_id", "users", "id"),
             cascade: false,
         },
     );
@@ -1209,9 +1187,9 @@ fn normalize_moves_inline_fk_to_foreign_keys() {
     let t = &s.tables["posts"];
     assert_eq!(t.foreign_keys.len(), 1);
     assert_eq!(t.foreign_keys[0].name, "posts_user_id_fkey");
-    assert_eq!(t.foreign_keys[0].from_column, "user_id");
+    assert_eq!(t.foreign_keys[0].columns, ["user_id"]);
     assert_eq!(t.foreign_keys[0].to_table, "users");
-    assert_eq!(t.foreign_keys[0].to_column, "id");
+    assert_eq!(t.foreign_keys[0].to_columns, ["id"]);
     assert!(t.columns[0].references.is_none());
 }
 
@@ -1246,6 +1224,123 @@ fn normalize_inline_fk_uses_explicit_name_when_provided() {
     s.tables.insert("posts".to_string(), table);
     s.normalize();
     assert_eq!(s.tables["posts"].foreign_keys[0].name, "fk_posts_user");
+}
+
+#[test]
+fn yaml_accepts_composite_foreign_key_metadata() {
+    let schema = Schema::from_yaml_str_for_dialect(
+        r#"
+tables:
+  users:
+    columns:
+      - name: tenant_id
+        type: integer
+        primary_key: true
+      - name: id
+        type: integer
+        primary_key: true
+  orders:
+    columns:
+      - name: tenant_id
+        type: integer
+      - name: user_id
+        type: integer
+    foreign_keys:
+      - name: orders_user_fkey
+        columns: [tenant_id, user_id]
+        to_table: users
+        to_columns: [tenant_id, id]
+"#,
+        Dialect::Postgres,
+    )
+    .expect("prepared schema");
+
+    let fk = &schema.tables["orders"].foreign_keys[0];
+    assert_eq!(fk.name, "orders_user_fkey");
+    assert_eq!(fk.columns, ["tenant_id", "user_id"]);
+    assert_eq!(fk.to_table, "users");
+    assert_eq!(fk.to_columns, ["tenant_id", "id"]);
+}
+
+#[test]
+fn yaml_accepts_legacy_single_column_foreign_key_metadata() {
+    let schema = Schema::from_yaml_str_for_dialect(
+        r#"
+tables:
+  users:
+    columns:
+      - name: id
+        type: integer
+        primary_key: true
+  posts:
+    columns:
+      - name: user_id
+        type: integer
+    foreign_keys:
+      - name: posts_user_fkey
+        from_column: user_id
+        to_table: users
+        to_column: id
+"#,
+        Dialect::Postgres,
+    )
+    .expect("prepared schema");
+
+    let fk = &schema.tables["posts"].foreign_keys[0];
+    assert_eq!(fk.columns, ["user_id"]);
+    assert_eq!(fk.to_columns, ["id"]);
+}
+
+#[test]
+fn prepare_rejects_invalid_composite_foreign_key_metadata() {
+    let err = Schema::from_yaml_str_for_dialect(
+        r#"
+tables:
+  users:
+    columns:
+      - name: tenant_id
+        type: integer
+      - name: id
+        type: integer
+  orders:
+    columns:
+      - name: tenant_id
+        type: integer
+      - name: user_id
+        type: integer
+    foreign_keys:
+      - name: orders_user_fkey
+        columns: [tenant_id, user_id]
+        to_table: users
+        to_columns: [tenant_id, id]
+"#,
+        Dialect::Postgres,
+    )
+    .expect_err("non-unique target should fail");
+
+    assert!(
+        err.to_string()
+            .contains("referenced columns 'users(tenant_id, id)' are not a primary key")
+    );
+}
+
+#[test]
+fn builder_composite_foreign_key_preserves_order() {
+    let table = TableBuilder::new("orders")
+        .column("tenant_id", "integer", |c| c)
+        .column("user_id", "integer", |c| c)
+        .foreign_key_named_columns(
+            "orders_user_fkey",
+            &["tenant_id", "user_id"],
+            "users",
+            &["tenant_id", "id"],
+        )
+        .build();
+
+    let fk = &table.foreign_keys[0];
+    assert_eq!(fk.name, "orders_user_fkey");
+    assert_eq!(fk.columns, ["tenant_id", "user_id"]);
+    assert_eq!(fk.to_columns, ["tenant_id", "id"]);
 }
 
 /// normalize() moves an inline `check` into `table.constraints` and clears the column field.
@@ -1798,12 +1893,7 @@ fn create_table_inline_vs_incremental_are_equal() {
 /// Applying inverse(op) immediately after op restores the original state for all invertible ops.
 #[test]
 fn inverse_restores_state_for_all_invertible_ops() {
-    let fk = ForeignKey {
-        name: "fk_x".to_string(),
-        from_column: "col".to_string(),
-        to_table: "other".to_string(),
-        to_column: "id".to_string(),
-    };
+    let fk = ForeignKey::single("fk_x", "col", "other", "id");
     let idx = Index {
         name: "idx_col".to_string(),
         columns: vec!["col".to_string()],
@@ -2018,12 +2108,7 @@ fn replay_is_idempotent() {
         },
         Operation::AddForeignKey {
             table_name: "posts".to_string(),
-            foreign_key: ForeignKey {
-                name: "fk_posts_user".to_string(),
-                from_column: "user_id".to_string(),
-                to_table: "users".to_string(),
-                to_column: "id".to_string(),
-            },
+            foreign_key: ForeignKey::single("fk_posts_user", "user_id", "users", "id"),
         },
     ];
     let mut s1 = Schema::default();
@@ -2088,12 +2173,7 @@ fn full_replay_produces_exact_state() {
         &mut s,
         Operation::AddForeignKey {
             table_name: "posts".to_string(),
-            foreign_key: ForeignKey {
-                name: "fk_posts_user_id".to_string(),
-                from_column: "user_id".to_string(),
-                to_table: "users".to_string(),
-                to_column: "id".to_string(),
-            },
+            foreign_key: ForeignKey::single("fk_posts_user_id", "user_id", "users", "id"),
         },
     );
     apply_ok(

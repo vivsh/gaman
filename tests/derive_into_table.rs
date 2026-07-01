@@ -42,6 +42,21 @@ struct ExplicitOrderLine {
     tenant_id: i64,
 }
 
+#[allow(dead_code)]
+#[derive(IntoTable)]
+#[table(
+    name = "orders",
+    foreign_key(
+        name = "orders_user_fkey",
+        columns("tenant_id", "user_id"),
+        references(table = "users", columns("tenant_id", "id"))
+    )
+)]
+struct Order {
+    tenant_id: i64,
+    user_id: i64,
+}
+
 fn table<T: gaman::schema::IntoTable>() -> Table {
     T::into_table(&Dialect::Postgres)
 }
@@ -110,4 +125,15 @@ fn derive_into_table_uses_explicit_primary_key_order_and_name() {
 
     assert_eq!(pk.name, "order_lines_identity");
     assert_eq!(pk.columns, ["tenant_id", "order_id"]);
+}
+
+#[test]
+fn derive_into_table_emits_composite_foreign_key() {
+    let table = table::<Order>();
+    let fk = &table.foreign_keys[0];
+
+    assert_eq!(fk.name, "orders_user_fkey");
+    assert_eq!(fk.columns, ["tenant_id", "user_id"]);
+    assert_eq!(fk.to_table, "users");
+    assert_eq!(fk.to_columns, ["tenant_id", "id"]);
 }

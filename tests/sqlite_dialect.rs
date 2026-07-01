@@ -111,6 +111,41 @@ fn create_table_composite_primary_key() {
     assert!(!sql[0].contains("\"order_id\" integer PRIMARY KEY"));
 }
 
+#[test]
+fn create_table_composite_foreign_key() {
+    let table = Table {
+        name: "orders".to_string(),
+        schema: None,
+        primary_key: None,
+        columns: vec![
+            col("tenant_id", "integer", false),
+            col("user_id", "integer", false),
+        ],
+        foreign_keys: vec![ForeignKey::new(
+            "orders_user_fkey",
+            ["tenant_id", "user_id"],
+            "users",
+            ["tenant_id", "id"],
+        )],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![],
+    };
+
+    let sql = Dialect::Sqlite
+        .operation_to_sql(&Operation::CreateTable { table })
+        .unwrap();
+
+    assert_eq!(sql.len(), 1);
+    assert!(
+        sql[0].contains(
+            "CONSTRAINT \"orders_user_fkey\" FOREIGN KEY (\"tenant_id\", \"user_id\") REFERENCES \"users\" (\"tenant_id\", \"id\")"
+        ),
+        "got: {}",
+        sql[0]
+    );
+}
+
 fn migration_atomic(id: &str, atomic: bool, operations: Vec<Operation>) -> Migration {
     Migration {
         id: id.to_string(),
@@ -388,12 +423,12 @@ fn sqlite_rebuilds_foreign_key_and_unique_constraint_changes() {
             vec![
                 Operation::AddForeignKey {
                     table_name: "users".to_string(),
-                    foreign_key: ForeignKey {
-                        name: "users_account_id_fkey".to_string(),
-                        from_column: "account_id".to_string(),
-                        to_table: "accounts".to_string(),
-                        to_column: "id".to_string(),
-                    },
+                    foreign_key: ForeignKey::single(
+                        "users_account_id_fkey",
+                        "account_id",
+                        "accounts",
+                        "id",
+                    ),
                 },
                 Operation::AddConstraint {
                     table_name: "users".to_string(),
@@ -568,7 +603,7 @@ fn sqlite_rebuild_rejects_unsafe_cases() {
     .unwrap_err();
     assert!(
         err.to_string()
-            .contains("unknown SQLite type 'email_address'")
+            .contains("cannot automatically cast to ambiguous type 'email_address'")
     );
 }
 
@@ -852,12 +887,7 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
         constraints: vec![],
         triggers: vec![],
     };
-    let fk = ForeignKey {
-        name: "users_account_id_fkey".to_string(),
-        from_column: "account_id".to_string(),
-        to_table: "accounts".to_string(),
-        to_column: "id".to_string(),
-    };
+    let fk = ForeignKey::single("users_account_id_fkey", "account_id", "accounts", "id");
 
     let migrations = vec![
         migration(
@@ -935,12 +965,12 @@ async fn sqlite_rebuild_live_preserves_child_rows_when_parent_is_rebuilt() {
         schema: None,
         primary_key: None,
         columns: vec![pk_col("id"), col("account_id", "integer", false)],
-        foreign_keys: vec![ForeignKey {
-            name: "users_account_id_fkey".to_string(),
-            from_column: "account_id".to_string(),
-            to_table: "accounts".to_string(),
-            to_column: "id".to_string(),
-        }],
+        foreign_keys: vec![ForeignKey::single(
+            "users_account_id_fkey",
+            "account_id",
+            "accounts",
+            "id",
+        )],
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
@@ -1059,12 +1089,12 @@ async fn sqlite_rebuild_live_fails_foreign_key_check_for_existing_bad_data() {
             "0003_seed_bad_user",
             vec![Operation::AddForeignKey {
                 table_name: "users".to_string(),
-                foreign_key: ForeignKey {
-                    name: "users_account_id_fkey".to_string(),
-                    from_column: "account_id".to_string(),
-                    to_table: "accounts".to_string(),
-                    to_column: "id".to_string(),
-                },
+                foreign_key: ForeignKey::single(
+                    "users_account_id_fkey",
+                    "account_id",
+                    "accounts",
+                    "id",
+                ),
             }],
         ),
     ];

@@ -43,6 +43,12 @@ pub enum ClarificationKind {
         from: String,
         to: String,
     },
+    UnknownType {
+        table: String,
+        column: String,
+        type_name: String,
+        suggested: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -62,6 +68,8 @@ pub enum Answer {
     NotNullManual,
     TypeCast(String),
     TypeCastImplicit,
+    UseType(String),
+    KeepType,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

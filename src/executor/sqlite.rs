@@ -1,7 +1,7 @@
 use sqlx::{Row, SqliteConnection};
 
 use super::{BoxFuture, Executor, ExecutorError, Introspectable};
-use crate::states::{Column, ForeignKey, Index, PrimaryKey, Schema, Table};
+use gaman_core::states::{Column, ForeignKey, Index, PrimaryKey, Schema, Table};
 
 /// Wraps a live SQLite connection and manages transaction boundaries explicitly.
 pub struct SqliteExecutor {
@@ -81,6 +81,9 @@ fn quote_ident(s: &str) -> String {
 fn synth_fk_name(table: &str, from_column: &str) -> String {
     format!("{table}_{from_column}_fkey")
 }
+
+type SqliteFkColumns = Vec<(i64, String, String)>;
+type SqliteFkGroups = std::collections::BTreeMap<i64, (String, SqliteFkColumns)>;
 
 impl Introspectable for SqliteExecutor {
     fn inspect_db<'a>(
@@ -171,7 +174,14 @@ impl Introspectable for SqliteExecutor {
                     .fetch_all(&mut self.conn)
                     .await
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let mut fk_map: SqliteFkGroups = std::collections::BTreeMap::new();
                 for fkr in fk_rows {
+                    let id: i64 = fkr
+                        .try_get("id")
+                        .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                    let seq: i64 = fkr
+                        .try_get("seq")
+                        .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                     let from_column: String = fkr
                         .try_get("from")
                         .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
@@ -181,12 +191,25 @@ impl Introspectable for SqliteExecutor {
                     let to_column: String = fkr
                         .try_get("to")
                         .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                    table.foreign_keys.push(ForeignKey {
-                        name: synth_fk_name(&table_name, &from_column),
-                        from_column,
+                    let entry = fk_map.entry(id).or_insert_with(|| (to_table, Vec::new()));
+                    entry.1.push((seq, from_column, to_column));
+                }
+                for (_, (to_table, mut columns)) in fk_map {
+                    columns.sort_by_key(|(seq, _, _)| *seq);
+                    let from_columns: Vec<String> = columns
+                        .iter()
+                        .map(|(_, from_column, _)| from_column.clone())
+                        .collect();
+                    let to_columns: Vec<String> = columns
+                        .into_iter()
+                        .map(|(_, _, to_column)| to_column)
+                        .collect();
+                    table.foreign_keys.push(ForeignKey::new(
+                        synth_fk_name(&table_name, &from_columns.join("_")),
+                        from_columns,
                         to_table,
-                        to_column,
-                    });
+                        to_columns,
+                    ));
                 }
 
                 let idx_rows = sqlx::query(&format!("PRAGMA index_list({quoted_table})"))

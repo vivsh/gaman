@@ -2,7 +2,7 @@ use sqlx::PgConnection;
 use sqlx::Row;
 
 use super::{BoxFuture, Executor, ExecutorError, Introspectable};
-use crate::states::{
+use gaman_core::states::{
     Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, PrimaryKey, Schema,
     Table, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming, ViewDef, Volatility,
     schema_qualified_key,
@@ -379,16 +379,19 @@ impl Introspectable for PostgresExecutor {
                          a.attname AS from_col, \
                          fn.nspname AS ref_schema, \
                          fc.relname AS ref_table, \
-                         fa.attname AS ref_col \
+                         fa.attname AS ref_col, \
+                         keys.ordinality AS col_ordinality \
                          FROM pg_constraint c \
                          JOIN pg_class t ON t.oid = c.conrelid \
                          JOIN pg_namespace tn ON tn.oid = t.relnamespace \
-                         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey) \
                          JOIN pg_class fc ON fc.oid = c.confrelid \
                          JOIN pg_namespace fn ON fn.oid = fc.relnamespace \
-                         JOIN pg_attribute fa ON fa.attrelid = fc.oid AND fa.attnum = ANY(c.confkey) \
+                         JOIN unnest(c.conkey, c.confkey) WITH ORDINALITY \
+                           AS keys(from_attnum, ref_attnum, ordinality) ON TRUE \
+                         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = keys.from_attnum \
+                         JOIN pg_attribute fa ON fa.attrelid = fc.oid AND fa.attnum = keys.ref_attnum \
                          WHERE c.contype = 'f' AND tn.nspname = $1 AND t.relname = $2 \
-                         ORDER BY c.conname, array_position(c.conkey, a.attnum)",
+                         ORDER BY c.conname, keys.ordinality",
                     )
                     .bind(schema)
                     .bind(&table_name)
@@ -396,6 +399,10 @@ impl Introspectable for PostgresExecutor {
                     .await
                     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
+                    let mut fk_map: std::collections::BTreeMap<
+                        String,
+                        (String, Vec<String>, Vec<String>),
+                    > = std::collections::BTreeMap::new();
                     for fkr in &fk_rows {
                         let fk_name: String = fkr
                             .try_get(0)
@@ -412,12 +419,17 @@ impl Introspectable for PostgresExecutor {
                         let ref_col: String = fkr
                             .try_get(4)
                             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        table.foreign_keys.push(ForeignKey {
-                            name: fk_name,
-                            from_column: from_col,
-                            to_table: schema_qualified_key(&ref_table, Some(&ref_schema)),
-                            to_column: ref_col,
-                        });
+                        let to_table = schema_qualified_key(&ref_table, Some(&ref_schema));
+                        let entry = fk_map
+                            .entry(fk_name)
+                            .or_insert_with(|| (to_table, Vec::new(), Vec::new()));
+                        entry.1.push(from_col);
+                        entry.2.push(ref_col);
+                    }
+                    for (name, (to_table, columns, to_columns)) in fk_map {
+                        table
+                            .foreign_keys
+                            .push(ForeignKey::new(name, columns, to_table, to_columns));
                     }
 
                     let uq_rows = sqlx::query(

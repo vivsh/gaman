@@ -3,6 +3,9 @@ use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::states::{Column, Constraint, Index, Schema, SchemaValidationError, Table, ViewDef};
 
+mod data_types;
+mod extension_types;
+
 fn unsupported(op: &str, reason: impl Into<String>) -> DialectError {
     DialectError::Unsupported(op.to_string(), reason.into())
 }
@@ -69,9 +72,9 @@ fn foreign_key_clause(foreign_key: &crate::states::ForeignKey) -> Result<String,
     Ok(format!(
         "CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({})",
         quote_ident(&foreign_key.name),
-        quote_ident(&foreign_key.from_column),
+        quoted_columns(&foreign_key.columns),
         quote_table_name(&foreign_key.to_table)?,
-        quote_ident(&foreign_key.to_column),
+        quoted_columns(&foreign_key.to_columns),
     ))
 }
 
@@ -610,14 +613,16 @@ fn validate_target_references(state: &Schema, table: &Table) -> Result<(), Diale
         }
     }
     for fk in &table.foreign_keys {
-        if !column_exists(&fk.from_column) {
-            return Err(unsupported(
-                "table_rebuild",
-                format!(
-                    "SQLite rebuild target foreign key '{}' references missing column '{}'",
-                    fk.name, fk.from_column
-                ),
-            ));
+        for column in &fk.columns {
+            if !column_exists(column) {
+                return Err(unsupported(
+                    "table_rebuild",
+                    format!(
+                        "SQLite rebuild target foreign key '{}' references missing column '{}'",
+                        fk.name, column
+                    ),
+                ));
+            }
         }
         if fk.to_table != table.name && !state.tables.contains_key(&fk.to_table) {
             return Err(unsupported(
@@ -780,37 +785,15 @@ pub fn create_tracking_table_sql() -> Vec<String> {
 }
 
 pub fn normalize_type(t: &str) -> &str {
-    TYPE_ALIASES
-        .iter()
-        .find_map(|(alias, canonical)| (*alias == t).then_some(*canonical))
-        .unwrap_or(t)
+    data_types::normalize_type(t)
 }
 
-const TYPE_ALIASES: &[(&str, &str)] = &[
-    ("bigint", "integer"),
-    ("bool", "integer"),
-    ("boolean", "integer"),
-    ("character varying", "text"),
-    ("clob", "text"),
-    ("double", "real"),
-    ("double precision", "real"),
-    ("float", "real"),
-    ("int", "integer"),
-    ("int2", "integer"),
-    ("int4", "integer"),
-    ("int8", "integer"),
-    ("mediumint", "integer"),
-    ("native character", "text"),
-    ("nvarchar", "text"),
-    ("smallint", "integer"),
-    ("varchar", "text"),
-    ("varying character", "text"),
-];
-
-const STORAGE_CLASSES: &[&str] = &["blob", "integer", "numeric", "real", "text"];
-
 pub fn canonical_type(t: &str) -> String {
-    canonical_type_inner(t).unwrap_or_else(|| normalize_type_text(t))
+    if extension_types::is_extension_type(t) {
+        t.to_string()
+    } else {
+        data_types::canonical_type(t)
+    }
 }
 
 pub fn validate_schema(schema: &Schema) -> Result<(), SchemaValidationError> {
@@ -860,43 +843,52 @@ pub fn validate_schema(schema: &Schema) -> Result<(), SchemaValidationError> {
                 "SQLite does not support modeled triggers on table {table_name}: {names}"
             )));
         }
-        for column in &table.columns {
-            if canonical_type_inner(&column.col_type).is_none() {
-                return Err(SchemaValidationError::Invalid(format!(
-                    "table {table_name} column {}: unknown SQLite type '{}'",
-                    column.name, column.col_type
-                )));
-            }
-        }
     }
 
     Ok(())
 }
 
-fn canonical_type_inner(t: &str) -> Option<String> {
-    let normalized = normalize_type_text(t);
-    let (base, _) = split_type_modifier(&normalized);
-    let canonical_base = TYPE_ALIASES
-        .iter()
-        .find_map(|(alias, canonical)| (*alias == base).then_some(*canonical))
-        .unwrap_or(base);
-
-    STORAGE_CLASSES
-        .binary_search(&canonical_base)
-        .is_ok()
-        .then(|| canonical_base.to_string())
+pub fn is_catalog_type(t: &str) -> bool {
+    data_types::canonical_known_type(t).is_some() || extension_types::is_extension_type(t)
 }
 
-fn split_type_modifier(t: &str) -> (&str, &str) {
-    match t.find('(') {
-        Some(start) if t.ends_with(')') => (&t[..start], &t[start..]),
-        _ => (t, ""),
+pub fn type_suggestions(t: &str) -> Vec<String> {
+    type_suggestions_from_catalogs(
+        t,
+        data_types::known_type_names().chain(extension_types::extension_type_names()),
+    )
+}
+
+fn type_suggestions_from_catalogs(
+    t: &str,
+    names: impl Iterator<Item = &'static str>,
+) -> Vec<String> {
+    let needle = data_types::normalize_type_text(t);
+    let max_distance = if needle.len() <= 5 { 1 } else { 2 };
+    let mut suggestions = names
+        .filter(|name| edit_distance(&needle, name) <= max_distance)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    suggestions.sort();
+    suggestions.dedup();
+    suggestions
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let mut previous = (0..=right.len()).collect::<Vec<_>>();
+    let mut current = vec![0; right.len() + 1];
+    for (i, left_byte) in left.bytes().enumerate() {
+        current[0] = i + 1;
+        for (j, right_byte) in right.bytes().enumerate() {
+            let substitution = previous[j] + usize::from(left_byte != right_byte);
+            let insertion = current[j] + 1;
+            let deletion = previous[j + 1] + 1;
+            current[j + 1] = substitution.min(insertion).min(deletion);
+        }
+        std::mem::swap(&mut previous, &mut current);
     }
+    previous[right.len()]
 }
 
-fn normalize_type_text(t: &str) -> String {
-    t.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase()
-}
+#[cfg(test)]
+mod tests;

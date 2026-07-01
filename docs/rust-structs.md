@@ -52,9 +52,28 @@ If you do not specify `type = "..."`, Gaman uses the `ColumnType` trait for the 
 - `#[column(unique)]` adds a single-column unique constraint named `{table}_{column}_key`.
 - `#[column(unique_name = "constraint_name")]` adds a single-column unique constraint with an explicit name.
 - `#[column(default = "expr")]` sets a SQL default expression.
-- `#[column(references = "table.column")]` adds an inline foreign key.
+- `#[column(references = "table.column")]` adds an inline single-column foreign key.
 - `#[column(references_name = "fk_name")]` names that foreign key explicitly.
 - `#[column(check = "expr")]` adds an inline check constraint.
+
+For composite foreign keys, use table-level metadata so Gaman can preserve the
+constraint name and ordered source/target columns:
+
+```rust
+#[derive(gaman::IntoTable)]
+#[table(
+    name = "orders",
+    foreign_key(
+        name = "orders_user_fkey",
+        columns("tenant_id", "user_id"),
+        references(table = "users", columns("tenant_id", "id"))
+    )
+)]
+struct Order {
+    tenant_id: i64,
+    user_id: i64,
+}
+```
 
 ## Custom column types
 

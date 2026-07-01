@@ -107,9 +107,9 @@ fn test_column_level_foreign_key() {
     let t = table(&schema, "posts");
     assert_eq!(t.foreign_keys.len(), 1);
     let fk = &t.foreign_keys[0];
-    assert_eq!(fk.from_column, "user_id");
+    assert_eq!(fk.columns, ["user_id"]);
     assert_eq!(fk.to_table, "users");
-    assert_eq!(fk.to_column, "id");
+    assert_eq!(fk.to_columns, ["id"]);
     assert_eq!(fk.name, "posts_user_id_fkey");
 }
 
@@ -125,6 +125,51 @@ fn test_table_level_foreign_key_named() {
     let t = table(&schema, "posts");
     assert_eq!(t.foreign_keys.len(), 1);
     assert_eq!(t.foreign_keys[0].name, "fk_posts_user");
+}
+
+#[test]
+fn test_named_composite_foreign_key_preserves_order() {
+    let sql = "CREATE TABLE orders (
+        tenant_id bigint,
+        user_id bigint,
+        CONSTRAINT orders_user_fkey FOREIGN KEY (tenant_id, user_id) REFERENCES users(tenant_id, id)
+    );";
+    let schema = parse_sql(sql).unwrap();
+    let fk = &table(&schema, "orders").foreign_keys[0];
+
+    assert_eq!(fk.name, "orders_user_fkey");
+    assert_eq!(fk.columns, ["tenant_id", "user_id"]);
+    assert_eq!(fk.to_table, "users");
+    assert_eq!(fk.to_columns, ["tenant_id", "id"]);
+}
+
+#[test]
+fn test_unnamed_composite_foreign_key_uses_deterministic_name() {
+    let sql = "CREATE TABLE orders (
+        tenant_id bigint,
+        user_id bigint,
+        FOREIGN KEY (tenant_id, user_id) REFERENCES users(tenant_id, id)
+    );";
+    let schema = parse_sql(sql).unwrap();
+    let fk = &table(&schema, "orders").foreign_keys[0];
+
+    assert_eq!(fk.name, "orders_tenant_id_user_id_fkey");
+    assert_eq!(fk.columns, ["tenant_id", "user_id"]);
+    assert_eq!(fk.to_columns, ["tenant_id", "id"]);
+}
+
+#[test]
+fn test_composite_foreign_key_preserves_schema_qualified_target() {
+    let sql = "CREATE TABLE orders (
+        tenant_id bigint,
+        user_id bigint,
+        FOREIGN KEY (tenant_id, user_id) REFERENCES auth.users(tenant_id, id)
+    );";
+    let schema = parse_sql(sql).unwrap();
+    let fk = &table(&schema, "orders").foreign_keys[0];
+
+    assert_eq!(fk.to_table, "auth.users");
+    assert_eq!(fk.to_columns, ["tenant_id", "id"]);
 }
 
 /// Parses a table-level UNIQUE constraint and maps it to `Constraint::Unique`.

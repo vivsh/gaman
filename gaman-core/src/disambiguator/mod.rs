@@ -1,8 +1,10 @@
 mod analyze;
-mod ids;
+pub(crate) mod ids;
 pub mod messages;
 mod model;
 mod resolve;
+#[doc(hidden)]
+pub mod type_resolution;
 mod types;
 
 pub use messages::{
@@ -12,6 +14,8 @@ pub use model::{
     Answer, Clarification, ClarificationKind, Decision, DisambiguationResult, DisambiguatorError,
     PromptEngine, PromptError, Severity,
 };
+#[doc(hidden)]
+pub use type_resolution::{TypeResolution, non_type_decisions, resolve_unknown_types};
 
 use crate::operations::Operation;
 use resolve::DisambiguationPlan;

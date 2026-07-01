@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::dialects::Dialect;
+use gaman_core::dialects::Dialect;
 
 #[derive(Clone, Copy, Default)]
 pub enum TlsMode {
@@ -61,7 +61,7 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::Config;
-    use crate::dialects::Dialect;
+    use gaman_core::dialects::Dialect;
 
     fn config_with_url(database_url: Option<&str>) -> Config {
         Config::new(

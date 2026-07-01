@@ -24,9 +24,6 @@ pub(crate) mod adapters;
 pub mod cli;
 #[cfg(feature = "native")]
 pub(crate) mod conf;
-#[cfg(feature = "native")]
-#[allow(dead_code)]
-pub(crate) mod diff_legacy;
 #[cfg(feature = "cli")]
 pub(crate) mod engine;
 #[cfg(feature = "db")]
@@ -39,47 +36,8 @@ pub(crate) mod migrator;
 pub(crate) mod prompter;
 
 #[cfg(feature = "native")]
-pub(crate) mod dialects {
-    pub use gaman_core::dialects::*;
-}
-
-#[cfg(feature = "native")]
-pub(crate) mod diff {
-    pub use gaman_core::diff::*;
-}
-
-#[cfg(feature = "native")]
-pub(crate) mod disambiguator {
-    pub use gaman_core::disambiguator::*;
-}
-
-#[cfg(feature = "native")]
-pub(crate) mod graphs {
-    pub use gaman_core::graphs::*;
-}
-
-#[cfg(feature = "native")]
-pub(crate) mod migrations {
-    pub use gaman_core::migrations::*;
-}
-
-#[cfg(feature = "native")]
-pub(crate) mod operations {
-    pub use gaman_core::operations::*;
-}
-
-#[cfg(feature = "native")]
 pub mod sql {
     pub use gaman_core::sql::*;
-}
-
-#[cfg(feature = "native")]
-pub(crate) mod states {
-    pub use gaman_core::states::*;
-
-    pub mod types {
-        pub use gaman_core::states::types::*;
-    }
 }
 
 // Everyday API.

@@ -4,3 +4,5 @@
 /playground
 .env
 output.txt
+.DS_Store
+*.log
