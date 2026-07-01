@@ -48,12 +48,20 @@ required-features = ["cli"]
 [[test]]
 name = "offline"
 path = "tests/offline.rs"
+harness = false
 required-features = ["native"]
 
 [[test]]
 name = "postgres"
 path = "tests/postgres.rs"
+harness = false
 required-features = ["postgres"]
+
+[[test]]
+name = "sqlite"
+path = "tests/sqlite.rs"
+harness = false
+required-features = ["sqlite"]
 
 [[test]]
 name = "sqlite_dialect"
@@ -91,4 +99,5 @@ thiserror = { version = "2.0.18", optional = true }
 
 [dev-dependencies]
 proptest = "1"
+sqlparser = "0.62.0"
 tempfile = "3"

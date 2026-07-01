@@ -1,49 +1,53 @@
 mod support;
 
 use gaman::schema::Schema;
+use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect, SQLiteDialect};
+use sqlparser::parser::Parser;
 
 use support::{
-    OfflineCase, OfflineSpec, TestSupportError, assert_error_contains, assert_ops_match,
-    assert_schema_matches_with_dialect, assert_sql_matches, build_migrator, case_label, case_name,
-    discover_cases, offline_cases_root, ordered_migrations, read_case_file, replay_schema,
+    LoweringExpectation, OfflineCase, OfflineSpec, ParseExpectation, ParserFixtureDialect,
+    TestSupportError, assert_error_contains, assert_ops_match, assert_schema_matches_with_dialect,
+    assert_sql_matches, build_migrator, case_label, offline_cases_root, ordered_migrations,
+    read_case_file, replay_schema, run_case_set, selected_cases,
 };
 
-/// Runs offline transform cases for SQL->schema, schema->migration, migration->replay, and migration->SQL.
-#[test]
-fn offline_cases() {
-    let files = discover_cases(&offline_cases_root()).expect("failed to discover offline cases");
-    let mut failures = Vec::new();
-
-    for file in files {
-        let name = match case_name(&file) {
-            Ok(name) => name,
-            Err(error) => {
-                failures.push(error.to_string());
-                continue;
-            }
-        };
-
-        let result = (|| -> Result<String, TestSupportError> {
-            let case: OfflineCase = read_case_file(&file)?;
-            let label = case_label(&name, case.description.as_deref());
-            run_offline_case(&name, &case)?;
+fn main() {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let root = offline_cases_root();
+    let result = selected_cases(&root, &args).and_then(|files| {
+        run_case_set("offline", files, |file, name| {
+            let case: OfflineCase = read_case_file(file)?;
+            let label = case_label(name, case.description.as_deref());
+            run_offline_case(name, &case)?;
             Ok(label)
-        })();
+        })
+    });
 
-        match result {
-            Ok(label) => println!("  ok: {label}"),
-            Err(error) => failures.push(error.to_string()),
-        }
-    }
-
-    if !failures.is_empty() {
-        panic!("offline cases failed:\n\n{}", failures.join("\n\n"));
+    if let Err(error) = result {
+        eprintln!("{error}");
+        std::process::exit(1);
     }
 }
 
 fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportError> {
     let dialect = case.dialect.to_dialect();
     match &case.spec {
+        OfflineSpec::SqlParse {
+            parser_dialect,
+            sql,
+            expect_parse,
+            expect_lowering,
+            expect_schema,
+            expect_error,
+        } => run_sql_parse_case(
+            name,
+            *parser_dialect,
+            sql,
+            *expect_parse,
+            *expect_lowering,
+            expect_schema,
+            expect_error.as_deref(),
+        ),
         OfflineSpec::SqlToSchema {
             sql,
             expect_schema,
@@ -167,6 +171,112 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
                 ))
             })?;
             assert_sql_matches(name, &actual, expected)
+        }
+    }
+}
+
+fn run_sql_parse_case(
+    name: &str,
+    dialect: ParserFixtureDialect,
+    sql: &str,
+    expect_parse: ParseExpectation,
+    expect_lowering: LoweringExpectation,
+    expect_schema: &Option<Schema>,
+    expect_error: Option<&str>,
+) -> Result<(), TestSupportError> {
+    let parse = parse_sql_only(dialect, sql);
+    match (expect_parse, parse) {
+        (ParseExpectation::Ok, Ok(_)) => {}
+        (ParseExpectation::Ok, Err(error)) => {
+            return Err(TestSupportError::message(format!(
+                "{name}: expected parser success but got {error}"
+            )));
+        }
+        (ParseExpectation::Error, Ok(_)) => {
+            return Err(TestSupportError::message(format!(
+                "{name}: expected parser failure but parse succeeded"
+            )));
+        }
+        (ParseExpectation::Error, Err(error)) => {
+            if let Some(expected) = expect_error {
+                let actual = error.to_string();
+                if !actual.contains(expected) {
+                    return Err(TestSupportError::message(format!(
+                        "{name}: expected parse error containing '{expected}' but got '{actual}'"
+                    )));
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    let lowering = lower_sql_to_schema(dialect, sql);
+    match expect_lowering {
+        LoweringExpectation::Ok => {
+            let actual = lowering.map_err(|error| {
+                TestSupportError::message(format!(
+                    "{name}: expected lowering success but got {error}"
+                ))
+            })?;
+            if let Some(expected) = expect_schema.clone() {
+                assert_schema_matches_with_dialect(
+                    name,
+                    "lowered schema",
+                    actual,
+                    expected,
+                    gaman::core::Dialect::Postgres,
+                )?;
+            }
+        }
+        LoweringExpectation::Unsupported => match lowering {
+            Ok(_) => {
+                return Err(TestSupportError::message(format!(
+                    "{name}: expected unsupported lowering but lowering succeeded"
+                )));
+            }
+            Err(error) => {
+                let actual = error.to_string();
+                let expected = expect_error.unwrap_or("unsupported");
+                if !actual.contains(expected) {
+                    return Err(TestSupportError::message(format!(
+                        "{name}: expected unsupported lowering error containing '{expected}' but got '{actual}'"
+                    )));
+                }
+            }
+        },
+        LoweringExpectation::Error => {
+            if let Some(expected) = expect_error {
+                assert_error_contains(name, lowering.map(|_| ()), expected)?;
+            } else if lowering.is_ok() {
+                return Err(TestSupportError::message(format!(
+                    "{name}: expected lowering error but lowering succeeded"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse_sql_only(dialect: ParserFixtureDialect, sql: &str) -> Result<usize, String> {
+    match dialect {
+        ParserFixtureDialect::Postgres => Parser::parse_sql(&PostgreSqlDialect {}, sql),
+        ParserFixtureDialect::Sqlite => Parser::parse_sql(&SQLiteDialect {}, sql),
+        ParserFixtureDialect::Mysql => Parser::parse_sql(&MySqlDialect {}, sql),
+    }
+    .map(|statements| statements.len())
+    .map_err(|error| error.to_string())
+}
+
+fn lower_sql_to_schema(dialect: ParserFixtureDialect, sql: &str) -> Result<Schema, String> {
+    match dialect {
+        ParserFixtureDialect::Postgres => {
+            Schema::from_sql_str(sql).map_err(|error| error.to_string())
+        }
+        ParserFixtureDialect::Sqlite => {
+            Err("unsupported SQL lowering for sqlite parser fixtures".to_string())
+        }
+        ParserFixtureDialect::Mysql => {
+            Err("unsupported SQL lowering for mysql parser fixtures".to_string())
         }
     }
 }

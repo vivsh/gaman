@@ -1,0 +1,36 @@
+description: SQLite rebuild migrations can drop a column and preserve the remaining schema.
+kind: migrate
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email
+              type: text
+            - name: legacy
+              type: text
+              nullable: true
+  - id: 0002_drop_legacy
+    dependencies: [0001_create_users]
+    operations:
+      - type: drop_column
+        table_name: users
+        column:
+          name: legacy
+          type: text
+          nullable: true
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+        - name: id
+          type: integer
+          primary_key: true
+        - name: email
+          type: text

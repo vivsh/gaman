@@ -1,0 +1,10 @@
+description: sqlparser parses part of materialized views but rejects WITH DATA tail syntax.
+kind: sql_parse
+parser_dialect: postgres
+sql: |
+  CREATE MATERIALIZED VIEW active_users
+  AS SELECT * FROM users WHERE deleted_at IS NULL
+  WITH DATA;
+expect_parse: error
+expect_lowering: error
+expect_error: "WITH"

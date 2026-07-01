@@ -1,0 +1,8 @@
+description: PostgreSQL parser accepts collations but Gaman does not model them.
+kind: sql_parse
+parser_dialect: postgres
+sql: |
+  CREATE COLLATION case_insensitive (provider = icu, locale = 'und-u-ks-level2');
+expect_parse: ok
+expect_lowering: unsupported
+expect_error: unsupported

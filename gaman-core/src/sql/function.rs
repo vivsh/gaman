@@ -1,5 +1,6 @@
 use sqlparser::ast::{
-    CreateFunction, CreateFunctionBody, FunctionBehavior, FunctionSecurity, Statement,
+    CreateFunction, CreateFunctionBody, FunctionBehavior, FunctionReturnType, FunctionSecurity,
+    Statement,
 };
 
 use super::error::SqlParseError;
@@ -37,7 +38,12 @@ pub(super) fn parse_create_function(
     let returns = cf
         .return_type
         .as_ref()
-        .map(|dt| data_type_to_str(dt))
+        .map(|return_type| match return_type {
+            FunctionReturnType::DataType(data_type) => data_type_to_str(data_type),
+            FunctionReturnType::SetOf(data_type) => {
+                format!("SETOF {}", data_type_to_str(data_type))
+            }
+        })
         .unwrap_or_else(|| "void".to_string());
 
     let language = cf

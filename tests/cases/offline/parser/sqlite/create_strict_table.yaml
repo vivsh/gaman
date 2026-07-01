@@ -1,0 +1,8 @@
+description: SQLite parser accepts STRICT tables; Gaman SQL lowering is PostgreSQL-only.
+kind: sql_parse
+parser_dialect: sqlite
+sql: |
+  CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL) STRICT;
+expect_parse: ok
+expect_lowering: unsupported
+expect_error: unsupported

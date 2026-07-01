@@ -5,14 +5,37 @@ mod support;
 use support::{
     PgHarness, PostgresCase, PostgresSpec, TestSupportError, assert_error_contains,
     assert_ops_match, assert_schema_matches, build_postgres_migrator, case_label, case_name,
-    discover_cases, postgres_cases_root, read_case_file, scope_schema_for_compare,
+    postgres_cases_root, read_case_file, scope_schema_for_compare, selected_cases,
 };
 
 /// Runs PostgreSQL-backed cases for migrate, verify, and inspect.
-#[tokio::test]
-#[ignore = "set TEST_DATABASE_URL and pass -- --include-ignored to run"]
-async fn postgres_cases() {
-    let files = discover_cases(&postgres_cases_root()).expect("failed to discover postgres cases");
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let root = postgres_cases_root();
+    let explicit = !args.is_empty();
+    let files = match selected_cases(&root, &args) {
+        Ok(files) => files,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+    if files.is_empty() {
+        eprintln!("postgres: no case files selected");
+        std::process::exit(1);
+    }
+
+    if std::env::var("TEST_DATABASE_URL").is_err() {
+        let message = "postgres cases skipped: TEST_DATABASE_URL is not set";
+        if explicit {
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+        println!("{message}");
+        return;
+    }
+
     let mut failures = Vec::new();
 
     for file in files {
@@ -39,15 +62,15 @@ async fn postgres_cases() {
     }
 
     if !failures.is_empty() {
-        panic!("postgres cases failed:\n\n{}", failures.join("\n\n"));
+        eprintln!("postgres cases failed:\n\n{}", failures.join("\n\n"));
+        std::process::exit(1);
     }
 }
 
 async fn run_postgres_case(name: &str, case: &PostgresCase) -> Result<(), TestSupportError> {
     let mut harness = PgHarness::new().await?;
     harness.reset().await?;
-
-    match &case.spec {
+    let result = match &case.spec {
         PostgresSpec::Migrate {
             migrations,
             setup_sql,
@@ -128,5 +151,15 @@ async fn run_postgres_case(name: &str, case: &PostgresCase) -> Result<(), TestSu
             })?;
             assert_schema_matches(name, "inspected schema", actual, expected)
         }
+    };
+
+    let cleanup = harness.cleanup().await;
+    match (result, cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), Err(cleanup)) => Err(cleanup),
+        (Err(error), Err(cleanup)) => Err(TestSupportError::message(format!(
+            "{error}\ncleanup also failed: {cleanup}"
+        ))),
     }
 }

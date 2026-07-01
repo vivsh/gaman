@@ -92,6 +92,8 @@ fn main() {
 
 `MigrationEngine` also exposes `check()`, `plan()`, `show_migrations()`, `verify()`, `inspect_db()`, `make_migration()`, and `handle_args()` for the full CLI surface. See [docs/embedding.md](docs/embedding.md) for the complete API reference.
 
+For test organization, fixture formats, and focused harness commands, see [TESTING.md](TESTING.md).
+
 ### Multi-crate migration composition
 
 Gaman supports composing migrations across crate boundaries at compile time.

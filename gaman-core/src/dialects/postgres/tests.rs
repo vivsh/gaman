@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::operations::Operation;
 use crate::states::{Column, EnumDef, ForeignKey, Index, PrimaryKey, Table};

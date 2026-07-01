@@ -1,0 +1,8 @@
+description: SQLite parser accepts DROP COLUMN syntax.
+kind: sql_parse
+parser_dialect: sqlite
+sql: |
+  ALTER TABLE users DROP COLUMN age;
+expect_parse: ok
+expect_lowering: unsupported
+expect_error: unsupported
