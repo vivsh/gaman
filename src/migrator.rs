@@ -10,12 +10,13 @@ use crate::disambiguator::{
     Clarification, Decision, DisambiguationResult, Disambiguator, DisambiguatorError,
 };
 use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
-use crate::executor::{Executor, ExecutorError, Invoker, InvokerError};
+use crate::executor::{Executor, ExecutorError};
 use crate::graphs::{GraphError, MigrationGraph};
 use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::states::types::EntityKind;
 use crate::states::{ReplayError, Schema};
+use gaman_core::sql_plan::{SqlPlanError, SqlPlanRenderer, render_migration_sql};
 
 #[derive(Debug, Error)]
 pub enum MigratorError {
@@ -31,8 +32,8 @@ pub enum MigratorError {
     Executor(#[from] ExecutorError),
     #[error("migration replay failed")]
     Replay(#[from] ReplayError),
-    #[error("subprocess invocation failed: {0}")]
-    Invoke(#[from] InvokerError),
+    #[error("sql plan failed: {0}")]
+    SqlPlan(#[from] SqlPlanError),
     #[error("{0}")]
     Environment(#[from] EnvironmentError),
     #[error("configuration error: {0}")]
@@ -51,6 +52,7 @@ pub struct Migrator {
     pub source: Box<dyn MigrationSource>,
     pub graph: MigrationGraph,
     ordered_ids: Vec<String>,
+    sql_renderer: SqlPlanRenderer,
     pub diff: DiffEngine,
 }
 
@@ -61,7 +63,7 @@ impl Migrator {
     ) -> Result<Self, MigratorError> {
         let mut graph = MigrationGraph::new();
         let migrations = source.load_all()?;
-        for migration in migrations {
+        for migration in migrations.iter().cloned() {
             graph.add(migration)?;
         }
         // Validate dependency integrity eagerly so broken repos fail at construction, not at migrate-time.
@@ -70,11 +72,13 @@ impl Migrator {
             .into_iter()
             .map(str::to_string)
             .collect();
+        let sql_renderer = SqlPlanRenderer::new(environment.dialect(), migrations)?;
         Ok(Self {
             environment,
             source,
             graph,
             ordered_ids,
+            sql_renderer,
             diff: DiffEngine::new(),
         })
     }
@@ -94,10 +98,6 @@ impl Migrator {
             .map_err(MigratorError::from)
     }
 
-    fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, MigratorError> {
-        self.environment.invoker().map_err(MigratorError::from)
-    }
-
     /// Generate a new migration by diffing `current` against the replayed previous state.
     /// Refuses if there are multiple heads — resolve with `make_merge_migration` first.
     /// Returns `None` when there are no changes.
@@ -111,9 +111,14 @@ impl Migrator {
         decisions: &[Decision],
     ) -> Result<Option<Migration>, MigratorError> {
         self.graph.detect_conflict()?;
-        current.validate().map_err(MigratorError::Config)?;
-        let (previous, last_per_ns, entity_ns) = self.replay_with_sources()?;
         let dialect = self.dialect();
+        let current = current
+            .prepare(dialect)
+            .map_err(|err| MigratorError::Config(err.to_string()))?;
+        let (previous, last_per_ns, entity_ns) = self.replay_with_sources()?;
+        let previous = previous
+            .prepare(dialect)
+            .map_err(|err| MigratorError::Config(err.to_string()))?;
         let raw_ops = self.diff.diff(&current, &previous, &dialect)?;
         if raw_ops.is_empty() {
             return Ok(None);
@@ -212,28 +217,11 @@ impl Migrator {
     /// The caller controls direction — pass operations as-is for forward, or pre-mapped
     /// inverses in reverse order for backward. Does not include tracking INSERT/DELETE.
     pub fn sql_migrate(&self, migrations: &[Migration]) -> Result<Vec<String>, MigratorError> {
-        let mut stmts = Vec::new();
-        let mut state = self.initial_state_for_sql_migrate(migrations)?;
-        for migration in migrations {
-            stmts.extend(self.render_migration_sql(migration, &state)?);
-            apply_migration_to_state(&mut state, migration)?;
-        }
-        Ok(stmts)
+        Ok(self.sql_renderer.render_migrations(migrations)?)
     }
 
-    fn initial_state_for_sql_migrate(
-        &self,
-        migrations: &[Migration],
-    ) -> Result<Schema, MigratorError> {
-        let first_graph_position = migrations
-            .iter()
-            .filter_map(|migration| self.ordered_ids.iter().position(|id| id == &migration.id))
-            .min();
-
-        match first_graph_position {
-            Some(position) => self.replay_prefix(position),
-            None => self.replay_prefix(self.ordered_ids.len()),
-        }
+    pub fn sql_rollback(&self, migrations: &[Migration]) -> Result<Vec<String>, MigratorError> {
+        Ok(self.sql_renderer.render_rollback_migrations(migrations)?)
     }
 
     fn replay_prefix(&self, end_exclusive: usize) -> Result<Schema, MigratorError> {
@@ -268,16 +256,7 @@ impl Migrator {
         migration: &Migration,
         start: &Schema,
     ) -> Result<Vec<String>, MigratorError> {
-        if migration
-            .operations
-            .iter()
-            .any(|op| matches!(op, Operation::Invoke { .. }))
-        {
-            return Err(MigratorError::Config(
-                "Invoke operations are not yet supported and cannot be executed".into(),
-            ));
-        }
-        Ok(self.dialect().migration_to_sql(migration, start)?)
+        Ok(render_migration_sql(self.dialect(), migration, start)?)
     }
 
     /// Validate a list of ordered migrations before any SQL is sent to the database.
@@ -294,18 +273,7 @@ impl Migrator {
     ) -> Result<(), MigratorError> {
         let dialect = self.dialect();
         if !direction_forward {
-            for m in migrations {
-                for (i, op) in m.operations.iter().enumerate() {
-                    if op.inverse().is_none() {
-                        return Err(MigratorError::Config(format!(
-                            "migration '{}' (operation {}): operation '{}' has no inverse",
-                            m.id,
-                            i + 1,
-                            op.type_name()
-                        )));
-                    }
-                }
-            }
+            gaman_core::sql_plan::rollback_migrations(migrations)?;
             return Ok(());
         }
 
@@ -318,16 +286,6 @@ impl Migrator {
         > = std::collections::HashMap::new();
 
         for m in migrations {
-            for (i, op) in m.operations.iter().enumerate() {
-                if matches!(op, crate::operations::Operation::Invoke { .. }) {
-                    return Err(MigratorError::Config(format!(
-                        "migration '{}' (operation {}): Invoke operations are not yet supported \
-                         and cannot be executed — remove or replace with a Statement operation",
-                        m.id,
-                        i + 1
-                    )));
-                }
-            }
             dialect.validate_migration_with_state(m, &state)?;
             for (i, op) in m.operations.iter().enumerate() {
                 match op {
@@ -437,7 +395,6 @@ impl Migrator {
         &self,
         sqls: &[String],
         executor: &mut dyn Executor,
-        _invoker: Option<&dyn Invoker>,
     ) -> Result<(), MigratorError> {
         for sql in sqls {
             executor.execute(sql).await?;
@@ -460,7 +417,6 @@ impl Migrator {
         &self,
         migration: &Migration,
         executor: &mut dyn Executor,
-        invoker: Option<&dyn Invoker>,
         fake: bool,
     ) -> Result<(), MigratorError> {
         let rendered = if fake {
@@ -473,7 +429,7 @@ impl Migrator {
             executor.begin().await?;
         }
         if let Some(sqls) = rendered.as_ref()
-            && let Err(e) = self.run_sql_statements(sqls, executor, invoker).await
+            && let Err(e) = self.run_sql_statements(sqls, executor).await
         {
             if migration.atomic {
                 let _ = executor.rollback().await;
@@ -507,15 +463,12 @@ impl Migrator {
     /// Returns the number of migrations applied (forward direction only).
     pub async fn migrate(&self, target: Option<&str>, fake: bool) -> Result<usize, MigratorError> {
         let mut executor = self.executor().await?;
-        let invoker = self.invoker()?;
-        self.migrate_with(executor.as_mut(), invoker.as_deref(), target, fake)
-            .await
+        self.migrate_with(executor.as_mut(), target, fake).await
     }
 
     pub async fn migrate_with(
         &self,
         executor: &mut dyn Executor,
-        invoker: Option<&dyn Invoker>,
         target: Option<&str>,
         fake: bool,
     ) -> Result<usize, MigratorError> {
@@ -546,7 +499,7 @@ impl Migrator {
         self.install(executor).await?;
         executor.acquire_lock().await?;
         let result = self
-            .migrate_locked(executor, invoker, target, fake, all_ordered)
+            .migrate_locked(executor, target, fake, all_ordered)
             .await;
         let release_result = executor.release_lock().await;
 
@@ -560,7 +513,6 @@ impl Migrator {
     async fn migrate_locked<'a>(
         &'a self,
         executor: &mut dyn Executor,
-        invoker: Option<&dyn Invoker>,
         target: Option<&str>,
         fake: bool,
         all_ordered: Vec<&'a str>,
@@ -593,33 +545,19 @@ impl Migrator {
                 let rendered = if fake {
                     None
                 } else {
-                    let mut inv_ops = Vec::with_capacity(migration.operations.len());
-                    for op in &migration.operations {
-                        match op.inverse() {
-                            Some(inv) => inv_ops.push(inv),
-                            None => {
-                                return Err(MigratorError::Config(format!(
-                                    "migration '{id}' is not reversible: operation '{}' has no inverse",
-                                    op.type_name()
-                                )));
-                            }
-                        }
-                    }
-                    inv_ops.reverse();
                     let start = self.replay_through_migration(id)?;
-                    let rollback_migration = Migration {
-                        id: format!("{id}__rollback"),
-                        dependencies: vec![],
-                        operations: inv_ops,
-                        atomic: migration.atomic,
-                    };
+                    let mut rollback_migrations =
+                        gaman_core::sql_plan::rollback_migrations(std::slice::from_ref(migration))?;
+                    let rollback_migration = rollback_migrations
+                        .pop()
+                        .expect("one input migration produces one rollback migration");
                     Some(self.render_migration_sql(&rollback_migration, &start)?)
                 };
                 if migration.atomic {
                     executor.begin().await?;
                 }
                 if let Some(sqls) = rendered.as_ref()
-                    && let Err(e) = self.run_sql_statements(sqls, executor, invoker).await
+                    && let Err(e) = self.run_sql_statements(sqls, executor).await
                 {
                     if migration.atomic {
                         let _ = executor.rollback().await;
@@ -648,7 +586,7 @@ impl Migrator {
             let applied_count = pending.len();
             for id in pending {
                 let migration = self.graph.get(id).expect("pending id must exist in graph");
-                self.apply_one(migration, executor, invoker, fake).await?;
+                self.apply_one(migration, executor, fake).await?;
             }
 
             return Ok(applied_count);
@@ -663,7 +601,7 @@ impl Migrator {
             .collect();
         for id in &pending {
             let migration = self.graph.get(id).expect("pending id must exist in graph");
-            self.apply_one(migration, executor, invoker, fake).await?;
+            self.apply_one(migration, executor, fake).await?;
         }
         Ok(pending.len())
     }
@@ -742,10 +680,13 @@ impl Migrator {
 
     pub async fn inspect_db(&self, schemas: &[&str]) -> Result<Schema, MigratorError> {
         let mut executor = self.executor().await?;
-        executor
+        let schema = executor
             .inspect_db(schemas)
             .await
-            .map_err(MigratorError::Executor)
+            .map_err(MigratorError::Executor)?;
+        schema
+            .prepare(self.dialect())
+            .map_err(|err| MigratorError::Config(err.to_string()))
     }
 
     /// Compare the replayed schema state against the live database and return any differences.
@@ -765,7 +706,9 @@ impl Migrator {
     ) -> Result<Vec<Operation>, MigratorError> {
         let dialect = self.dialect();
         let mut replay = self.replay()?;
-        replay.normalize();
+        replay
+            .prepare_mut(&dialect)
+            .map_err(|err| MigratorError::Config(err.to_string()))?;
         scope_tables_for_verify(&mut replay, schema);
         scope_opaque_objects_for_verify(&mut replay, schema);
         normalize_state_types(&mut replay, &dialect);
@@ -774,7 +717,8 @@ impl Migrator {
             .inspect_db(&[schema])
             .await
             .map_err(MigratorError::Executor)?;
-        live.normalize();
+        live.prepare_mut(&dialect)
+            .map_err(|err| MigratorError::Config(err.to_string()))?;
         scope_tables_for_verify(&mut live, schema);
         scope_opaque_objects_for_verify(&mut live, schema);
         normalize_state_types(&mut live, &dialect);
@@ -838,7 +782,7 @@ fn op_entity_label(op: &Operation) -> Option<&str> {
         }
         Operation::RenameEnumValue { enum_name, .. } => Some(enum_name),
         Operation::AlterEnum { new, .. } => Some(&new.name),
-        Operation::Statement { .. } | Operation::Invoke { .. } => None,
+        Operation::Statement { .. } => None,
     }
 }
 
@@ -960,7 +904,7 @@ fn compute_deps(
             Operation::RenameTable { old_name, .. } => {
                 vec![(EntityKind::Table, old_name.clone())]
             }
-            Operation::Statement { .. } | Operation::Invoke { .. } => vec![],
+            Operation::Statement { .. } => vec![],
         };
         for entity in entities {
             if let Some(ns) = entity_ns.get(&entity) {
@@ -1168,10 +1112,6 @@ mod tests {
             })
         }
 
-        fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
-            Ok(None)
-        }
-
         fn dialect(&self) -> Dialect {
             self.dialect
         }
@@ -1244,6 +1184,126 @@ mod tests {
         }
     }
 
+    #[test]
+    fn native_sql_migrate_matches_offline_planner() {
+        let migrations = vec![
+            migration_with_ops(
+                "0001_create_users",
+                &[],
+                vec![Operation::CreateTable {
+                    table: simple_table("users", &["id"]),
+                }],
+            ),
+            migration_with_ops(
+                "0002_raw",
+                &["0001_create_users"],
+                vec![Operation::Statement {
+                    up: "UPDATE users SET id = id".to_string(),
+                    down: Some("UPDATE users SET id = id".to_string()),
+                }],
+            ),
+        ];
+        let migrator = migrator_from(migrations.clone());
+        let offline =
+            gaman_core::OfflinePlanner::new(Dialect::Postgres).from_migrations(migrations.clone());
+
+        assert_eq!(
+            migrator.sql_migrate(&migrations).unwrap(),
+            offline.sql_migrate(&migrations).unwrap()
+        );
+    }
+
+    #[test]
+    fn native_sql_migrate_matches_offline_planner_for_generated_migration() {
+        let migrations = vec![
+            migration_with_ops(
+                "0001_create_users",
+                &[],
+                vec![Operation::CreateTable {
+                    table: simple_table("users", &["id"]),
+                }],
+            ),
+            migration_with_ops(
+                "0002_create_posts",
+                &["0001_create_users"],
+                vec![Operation::CreateTable {
+                    table: simple_table("posts", &["id"]),
+                }],
+            ),
+        ];
+        let generated = migration_with_ops(
+            "0003_generated_posts",
+            &["0001_create_users"],
+            vec![Operation::CreateTable {
+                table: simple_table("posts", &["id"]),
+            }],
+        );
+        let migrator = migrator_from(migrations.clone());
+        let offline =
+            gaman_core::OfflinePlanner::new(Dialect::Postgres).from_migrations(migrations);
+
+        assert_eq!(
+            migrator
+                .sql_migrate(std::slice::from_ref(&generated))
+                .unwrap(),
+            offline.sql_migrate(&[generated]).unwrap()
+        );
+    }
+
+    #[test]
+    fn native_sql_rollback_matches_core_renderer() {
+        let migrations = vec![
+            migration_with_ops(
+                "0001_create_users",
+                &[],
+                vec![Operation::CreateTable {
+                    table: simple_table("users", &["id"]),
+                }],
+            ),
+            migration_with_ops(
+                "0002_raw",
+                &["0001_create_users"],
+                vec![Operation::Statement {
+                    up: "UPDATE users SET id = id".to_string(),
+                    down: Some("UPDATE users SET id = id".to_string()),
+                }],
+            ),
+        ];
+        let migrator = migrator_from(migrations.clone());
+        let renderer = SqlPlanRenderer::new(Dialect::Postgres, migrations.clone()).unwrap();
+
+        assert_eq!(
+            migrator.sql_rollback(&migrations).unwrap(),
+            renderer.render_rollback_migrations(&migrations).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn live_apply_executes_same_operation_sql_as_sql_migrate() {
+        let migrations = vec![migration_with_ops(
+            "0001_create_users",
+            &[],
+            vec![Operation::CreateTable {
+                table: simple_table("users", &["id"]),
+            }],
+        )];
+        let migrator = migrator_from(migrations.clone());
+        let expected = migrator.sql_migrate(&migrations).unwrap();
+        let mut executor = RecordingExecutor::empty();
+
+        migrator
+            .migrate_with(&mut executor, None, false)
+            .await
+            .unwrap();
+
+        let operation_sql: Vec<String> = executor
+            .executed
+            .into_iter()
+            .filter(|sql| !sql.contains("gaman_migrations"))
+            .collect();
+        assert_eq!(operation_sql, expected);
+    }
+
     fn migrator_from(migrations: Vec<Migration>) -> Migrator {
         let source = MockSource {
             migrations,
@@ -1267,6 +1327,38 @@ mod tests {
                 applied: vec![],
                 lock_count: 0,
             }
+        }
+    }
+
+    struct RecordingExecutor {
+        executed: Vec<String>,
+    }
+
+    impl RecordingExecutor {
+        fn empty() -> Self {
+            Self { executed: vec![] }
+        }
+    }
+
+    impl Executor for RecordingExecutor {
+        fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            self.executed.push(sql.to_string());
+            Box::pin(async { Ok(()) })
+        }
+        fn fetch_strings<'a>(
+            &'a mut self,
+            _sql: &'a str,
+        ) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> {
+            Box::pin(async { Ok(vec![]) })
+        }
+        fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
         }
     }
 
@@ -1408,7 +1500,7 @@ mod tests {
                 vec![Operation::CreateTable { table: posts }],
             ),
         ]);
-        m.migrate_with(&mut NullExecutor::empty(), None, None, false)
+        m.migrate_with(&mut NullExecutor::empty(), None, false)
             .await
             .expect("migrate must succeed on a valid multi-migration chain");
     }
@@ -1424,7 +1516,7 @@ mod tests {
             }],
         )]);
         let mut ex = NullExecutor::empty();
-        m.migrate_with(&mut ex, None, None, false)
+        m.migrate_with(&mut ex, None, false)
             .await
             .expect("migrate should succeed");
         assert_eq!(
@@ -1445,10 +1537,7 @@ mod tests {
         )]);
         let mut ex = FailingExecutor::new("FAIL");
 
-        let err = m
-            .migrate_with(&mut ex, None, None, false)
-            .await
-            .unwrap_err();
+        let err = m.migrate_with(&mut ex, None, false).await.unwrap_err();
 
         assert!(err.to_string().contains("forced failure"));
         assert_eq!(ex.lock_count, 0, "lock must be released after failure");
@@ -1467,10 +1556,7 @@ mod tests {
         let mut ex = FailingExecutor::new("never");
         ex.applied = vec!["0009_missing".to_string()];
 
-        let err = m
-            .migrate_with(&mut ex, None, None, false)
-            .await
-            .unwrap_err();
+        let err = m.migrate_with(&mut ex, None, false).await.unwrap_err();
 
         assert!(err.to_string().contains("not present locally"));
         assert_eq!(
@@ -1493,10 +1579,7 @@ mod tests {
         let m = migrator_from(vec![migration]);
         let mut ex = FailingExecutor::new("FAIL");
 
-        let err = m
-            .migrate_with(&mut ex, None, None, false)
-            .await
-            .unwrap_err();
+        let err = m.migrate_with(&mut ex, None, false).await.unwrap_err();
 
         assert!(err.to_string().contains("forced failure"));
         assert_eq!(ex.lock_count, 0, "lock must be released after failure");
@@ -2132,7 +2215,7 @@ mod tests {
             atomic: true,
         }];
         let err = m.validate_plan(&migrations, false).unwrap_err();
-        assert!(matches!(err, MigratorError::Config(_)));
+        assert!(matches!(err, MigratorError::SqlPlan(_)));
     }
 
     #[test]
@@ -2310,26 +2393,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invoke_op_is_not_supported() {
-        let m = migrator_from(vec![migration_with_ops(
-            "0001_seed",
-            &[],
-            vec![Operation::Invoke {
-                up: "echo hello".into(),
-                down: None,
-            }],
-        )]);
-        let err = m
-            .migrate_with(&mut NullExecutor::empty(), None, None, false)
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("not yet supported"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[tokio::test]
     async fn show_migrations_marks_applied_and_pending() {
         let users = simple_table("users", &["id"]);
         let m = migrator_from(vec![
@@ -2364,7 +2427,7 @@ mod tests {
             name: name.to_string(),
             schema: None,
             primary_key: None,
-            columns: vec![simple_column("id")],
+            columns: vec![simple_column("id"), simple_column("ref_id")],
             foreign_keys: vec![ForeignKey {
                 name: format!("{name}_{fk_to}_fkey"),
                 from_column: "ref_id".to_string(),
@@ -2509,7 +2572,11 @@ mod tests {
                 name: "subscriptions".to_string(),
                 schema: None,
                 primary_key: None,
-                columns: vec![simple_column("id")],
+                columns: vec![
+                    simple_column("id"),
+                    simple_column("user_id"),
+                    simple_column("plan_id"),
+                ],
                 foreign_keys: vec![
                     ForeignKey {
                         name: "sub_user_fkey".into(),

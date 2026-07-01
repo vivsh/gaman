@@ -1,0 +1,312 @@
+use super::model::{Answer, Clarification, ClarificationKind, Severity};
+
+/// A single selectable option presented to the user.
+/// `Fixed` options resolve to an `Answer` immediately.
+/// `RequiresInput` options need the user to type a value; `make_answer` converts it to the
+/// correct `Answer` variant at message-build time.
+#[derive(Clone)]
+pub enum OptionAction {
+    Fixed(Answer),
+    RequiresInput {
+        prompt: String,
+        make_answer: fn(String) -> Answer,
+    },
+}
+
+impl std::fmt::Debug for OptionAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Fixed(a) => write!(f, "Fixed({:?})", a),
+            Self::RequiresInput { prompt, .. } => {
+                write!(f, "RequiresInput {{ prompt: {:?} }}", prompt)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ClarificationOption {
+    pub label: String,
+    pub action: OptionAction,
+}
+
+/// The full, transport-agnostic representation of a clarification prompt.
+/// Engines use `description` as the question header and `options` as numbered choices.
+#[derive(Debug, Clone)]
+pub struct ClarificationMessage {
+    pub description: String,
+    pub options: Vec<ClarificationOption>,
+}
+
+/// Builds the display message for a clarification. Keep human-facing copy here so wording
+/// can be edited without touching disambiguation analysis or operation rewriting.
+pub fn clarification_message(clar: &Clarification) -> ClarificationMessage {
+    let tag = severity_tag(&clar.severity);
+    match &clar.kind {
+        ClarificationKind::RenameColumn {
+            table,
+            old,
+            candidates,
+        } => {
+            let description = format!(
+                "{} Column '{}' was removed from '{}'. Was it renamed?",
+                tag, old, table
+            );
+            let mut options: Vec<ClarificationOption> = candidates
+                .iter()
+                .map(|c| ClarificationOption {
+                    label: c.clone(),
+                    action: OptionAction::Fixed(Answer::RenameTo(c.clone())),
+                })
+                .collect();
+            options.push(ClarificationOption {
+                label: "No, it was dropped".to_string(),
+                action: OptionAction::Fixed(Answer::RenameNo),
+            });
+            ClarificationMessage {
+                description,
+                options,
+            }
+        }
+        ClarificationKind::RenameTable { old, candidates } => {
+            let description = format!("{} Table '{}' was removed. Was it renamed?", tag, old);
+            let mut options: Vec<ClarificationOption> = candidates
+                .iter()
+                .map(|c| ClarificationOption {
+                    label: c.clone(),
+                    action: OptionAction::Fixed(Answer::RenameTo(c.clone())),
+                })
+                .collect();
+            options.push(ClarificationOption {
+                label: "No, it was dropped".to_string(),
+                action: OptionAction::Fixed(Answer::RenameNo),
+            });
+            ClarificationMessage {
+                description,
+                options,
+            }
+        }
+        ClarificationKind::RenameEnumValue {
+            enum_name,
+            old,
+            candidates,
+        } => {
+            let description = format!(
+                "{} Enum value '{}' was removed from '{}'. Was it renamed?",
+                tag, old, enum_name
+            );
+            let mut options: Vec<ClarificationOption> = candidates
+                .iter()
+                .map(|c| ClarificationOption {
+                    label: c.clone(),
+                    action: OptionAction::Fixed(Answer::RenameTo(c.clone())),
+                })
+                .collect();
+            options.push(ClarificationOption {
+                label: "No, it was removed".to_string(),
+                action: OptionAction::Fixed(Answer::RenameNo),
+            });
+            ClarificationMessage {
+                description,
+                options,
+            }
+        }
+        ClarificationKind::NotNullAdd {
+            table,
+            column,
+            col_type,
+        } => {
+            let description = format!(
+                "{} Column '{}' ({}) on '{}' is NOT NULL with no default.",
+                tag, column, col_type, table
+            );
+            ClarificationMessage {
+                description,
+                options: vec![
+                    ClarificationOption {
+                        label: "Provide a one-off default SQL value (e.g. 0, '', now())"
+                            .to_string(),
+                        action: OptionAction::RequiresInput {
+                            prompt: "Default value:".to_string(),
+                            make_answer: Answer::NotNullDefault,
+                        },
+                    },
+                    ClarificationOption {
+                        label: "Make it nullable instead".to_string(),
+                        action: OptionAction::Fixed(Answer::NotNullNullable),
+                    },
+                    ClarificationOption {
+                        label: "Handle manually (will fail on non-empty tables)".to_string(),
+                        action: OptionAction::Fixed(Answer::NotNullManual),
+                    },
+                ],
+            }
+        }
+        ClarificationKind::NotNullChange { table, column } => {
+            let description = format!(
+                "{} Column '{}' on '{}' changed from nullable to NOT NULL.",
+                tag, column, table
+            );
+            ClarificationMessage {
+                description,
+                options: vec![
+                    ClarificationOption {
+                        label: "Provide a backfill default for existing NULL rows".to_string(),
+                        action: OptionAction::RequiresInput {
+                            prompt: "Backfill value:".to_string(),
+                            make_answer: Answer::NotNullDefault,
+                        },
+                    },
+                    ClarificationOption {
+                        label: "Keep it nullable instead".to_string(),
+                        action: OptionAction::Fixed(Answer::NotNullNullable),
+                    },
+                    ClarificationOption {
+                        label: "Handle manually".to_string(),
+                        action: OptionAction::Fixed(Answer::NotNullManual),
+                    },
+                ],
+            }
+        }
+        ClarificationKind::TypeCast {
+            table,
+            column,
+            from,
+            to,
+        } => {
+            let description = format!(
+                "{} Column '{}' on '{}' changed type: {} -> {}.",
+                tag, column, table, from, to
+            );
+            ClarificationMessage {
+                description,
+                options: vec![
+                    ClarificationOption {
+                        label: "Provide a CAST expression (e.g. col::integer)".to_string(),
+                        action: OptionAction::RequiresInput {
+                            prompt: "CAST expression:".to_string(),
+                            make_answer: Answer::TypeCast,
+                        },
+                    },
+                    ClarificationOption {
+                        label: "Use implicit cast (may fail at apply time)".to_string(),
+                        action: OptionAction::Fixed(Answer::TypeCastImplicit),
+                    },
+                ],
+            }
+        }
+    }
+}
+
+fn severity_tag(s: &Severity) -> &'static str {
+    match s {
+        Severity::Fatal => "[FATAL]",
+        Severity::Warning => "[WARNING]",
+        Severity::Suggestion => "[suggest]",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn option_labels(message: &ClarificationMessage) -> Vec<&str> {
+        message
+            .options
+            .iter()
+            .map(|option| option.label.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn rename_column_message_spec_is_stable() {
+        let message = clarification_message(&Clarification {
+            id: "rename_col:users:email".to_string(),
+            severity: Severity::Suggestion,
+            kind: ClarificationKind::RenameColumn {
+                table: "users".to_string(),
+                old: "email".to_string(),
+                candidates: vec!["email_address".to_string()],
+            },
+        });
+
+        assert_eq!(
+            message.description,
+            "[suggest] Column 'email' was removed from 'users'. Was it renamed?"
+        );
+        assert_eq!(
+            option_labels(&message),
+            ["email_address", "No, it was dropped"]
+        );
+    }
+
+    #[test]
+    fn not_null_add_message_spec_is_stable() {
+        let message = clarification_message(&Clarification {
+            id: "notnull_add:orders:reference_id".to_string(),
+            severity: Severity::Fatal,
+            kind: ClarificationKind::NotNullAdd {
+                table: "orders".to_string(),
+                column: "reference_id".to_string(),
+                col_type: "integer".to_string(),
+            },
+        });
+
+        assert_eq!(
+            message.description,
+            "[FATAL] Column 'reference_id' (integer) on 'orders' is NOT NULL with no default."
+        );
+        assert_eq!(message.options.len(), 3);
+        assert!(matches!(
+            message.options[0].action,
+            OptionAction::RequiresInput { .. }
+        ));
+    }
+
+    #[test]
+    fn every_clarification_kind_has_message_spec() {
+        let clarifications = vec![
+            Clarification {
+                id: "rename_table:users".to_string(),
+                severity: Severity::Suggestion,
+                kind: ClarificationKind::RenameTable {
+                    old: "users".to_string(),
+                    candidates: vec!["accounts".to_string()],
+                },
+            },
+            Clarification {
+                id: "rename_enum_value:status:live".to_string(),
+                severity: Severity::Warning,
+                kind: ClarificationKind::RenameEnumValue {
+                    enum_name: "status".to_string(),
+                    old: "live".to_string(),
+                    candidates: vec!["published".to_string()],
+                },
+            },
+            Clarification {
+                id: "notnull_change:users:status".to_string(),
+                severity: Severity::Fatal,
+                kind: ClarificationKind::NotNullChange {
+                    table: "users".to_string(),
+                    column: "status".to_string(),
+                },
+            },
+            Clarification {
+                id: "typecast:products:price".to_string(),
+                severity: Severity::Warning,
+                kind: ClarificationKind::TypeCast {
+                    table: "products".to_string(),
+                    column: "price".to_string(),
+                    from: "text".to_string(),
+                    to: "integer".to_string(),
+                },
+            },
+        ];
+
+        for clarification in clarifications {
+            let message = clarification_message(&clarification);
+            assert!(!message.description.is_empty());
+            assert!(!message.options.is_empty());
+        }
+    }
+}

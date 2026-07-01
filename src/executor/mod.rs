@@ -18,14 +18,6 @@ pub enum ExecutorError {
     Transaction(String),
 }
 
-#[derive(Debug, Error)]
-pub enum InvokerError {
-    #[error("subprocess failed: {0}")]
-    Subprocess(String),
-    #[error("no invoker provided for Invoke operation")]
-    NoInvoker,
-}
-
 pub trait Executor {
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>>;
     fn fetch_strings<'a>(
@@ -41,10 +33,6 @@ pub trait Executor {
     fn release_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async { Ok(()) })
     }
-}
-
-pub trait Invoker {
-    fn invoke(&self, command: &str, tx: &mut dyn Executor) -> Result<(), InvokerError>;
 }
 
 pub trait Introspectable {
@@ -111,9 +99,7 @@ pub fn connect_environment_executor<'a>(
 pub mod postgres;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
-pub mod subprocess;
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresExecutor;
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteExecutor;
-pub use subprocess::SubprocessInvoker;

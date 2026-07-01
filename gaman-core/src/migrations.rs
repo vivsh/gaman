@@ -101,7 +101,7 @@ impl Migration {
                 Operation::RenameTable { old_name, .. } => {
                     out.insert((EntityKind::Table, old_name.clone()));
                 }
-                Operation::Statement { .. } | Operation::Invoke { .. } => {}
+                Operation::Statement { .. } => {}
             }
         }
         out

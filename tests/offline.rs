@@ -44,17 +44,25 @@ fn offline_cases() {
 fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportError> {
     let dialect = case.dialect.to_dialect();
     match &case.spec {
-        OfflineSpec::SqlToSchema { sql, expect_schema, expect_error } => {
+        OfflineSpec::SqlToSchema {
+            sql,
+            expect_schema,
+            expect_error,
+        } => {
             let result = Schema::from_sql_str(sql);
             if let Some(expected) = expect_error {
                 return assert_error_contains(name, result.map(|_| ()), expected);
             }
 
             let actual = result.map_err(|error| {
-                TestSupportError::message(format!("{name}: sql_to_schema failed unexpectedly: {error}"))
+                TestSupportError::message(format!(
+                    "{name}: sql_to_schema failed unexpectedly: {error}"
+                ))
             })?;
             let expected = expect_schema.clone().ok_or_else(|| {
-                TestSupportError::message(format!("{name}: sql_to_schema requires expect_schema when expect_error is absent"))
+                TestSupportError::message(format!(
+                    "{name}: sql_to_schema requires expect_schema when expect_error is absent"
+                ))
             })?;
             assert_schema_matches_with_dialect(name, "parsed schema", actual, expected, dialect)
         }
@@ -69,13 +77,20 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
             expect_error,
         } => {
             let migrator = build_migrator(name, case.dialect, migrations)?;
-            let result = migrator.make_migrations(Some(migration_name.clone()), current.clone(), true, decisions);
+            let result = migrator.make_migrations(
+                Some(migration_name.clone()),
+                current.clone(),
+                true,
+                decisions,
+            );
             if let Some(expected) = expect_error {
                 return assert_error_contains(name, result.map(|_| ()), expected);
             }
 
             let generated = result.map_err(|error| {
-                TestSupportError::message(format!("{name}: schema_to_migration failed unexpectedly: {error}"))
+                TestSupportError::message(format!(
+                    "{name}: schema_to_migration failed unexpectedly: {error}"
+                ))
             })?;
 
             if *expect_no_changes {
@@ -88,21 +103,34 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
             }
 
             let generated = generated.ok_or_else(|| {
-                TestSupportError::message(format!("{name}: expected a generated migration, but diff returned no changes"))
+                TestSupportError::message(format!(
+                    "{name}: expected a generated migration, but diff returned no changes"
+                ))
             })?;
 
             if let Some(expected) = expect_operations {
-                assert_ops_match(name, "generated operations", &generated.operations, expected)?;
+                assert_ops_match(
+                    name,
+                    "generated operations",
+                    &generated.operations,
+                    expected,
+                )?;
             }
             if let Some(expected) = expect_sql {
                 let actual = migrator.sql_migrate(&[generated]).map_err(|error| {
-                    TestSupportError::message(format!("{name}: failed to render generated SQL: {error}"))
+                    TestSupportError::message(format!(
+                        "{name}: failed to render generated SQL: {error}"
+                    ))
                 })?;
                 assert_sql_matches(name, &actual, expected)?;
             }
             Ok(())
         }
-        OfflineSpec::MigrationToReplay { migrations, expect_schema, expect_error } => {
+        OfflineSpec::MigrationToReplay {
+            migrations,
+            expect_schema,
+            expect_error,
+        } => {
             let result = build_migrator(name, case.dialect, migrations)
                 .and_then(|migrator| replay_schema(name, &migrator));
             if let Some(expected) = expect_error {
@@ -111,25 +139,32 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
 
             let actual = result?;
             let expected = expect_schema.clone().ok_or_else(|| {
-                TestSupportError::message(format!("{name}: migration_to_replay requires expect_schema when expect_error is absent"))
+                TestSupportError::message(format!(
+                    "{name}: migration_to_replay requires expect_schema when expect_error is absent"
+                ))
             })?;
             assert_schema_matches_with_dialect(name, "replayed schema", actual, expected, dialect)
         }
-        OfflineSpec::MigrationToSql { migrations, expect_sql, expect_error } => {
-            let result = build_migrator(name, case.dialect, migrations)
-                .and_then(|migrator| {
-                    let ordered = ordered_migrations(name, &migrator)?;
-                    migrator.sql_migrate(&ordered).map_err(|error| {
-                        TestSupportError::message(format!("{name}: migration_to_sql failed: {error}"))
-                    })
-                });
+        OfflineSpec::MigrationToSql {
+            migrations,
+            expect_sql,
+            expect_error,
+        } => {
+            let result = build_migrator(name, case.dialect, migrations).and_then(|migrator| {
+                let ordered = ordered_migrations(name, &migrator)?;
+                migrator.sql_migrate(&ordered).map_err(|error| {
+                    TestSupportError::message(format!("{name}: migration_to_sql failed: {error}"))
+                })
+            });
             if let Some(expected) = expect_error {
                 return assert_error_contains(name, result.map(|_| ()), expected);
             }
 
             let actual = result?;
             let expected = expect_sql.as_deref().ok_or_else(|| {
-                TestSupportError::message(format!("{name}: migration_to_sql requires expect_sql when expect_error is absent"))
+                TestSupportError::message(format!(
+                    "{name}: migration_to_sql requires expect_sql when expect_error is absent"
+                ))
             })?;
             assert_sql_matches(name, &actual, expected)
         }

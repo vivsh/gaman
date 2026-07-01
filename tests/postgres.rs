@@ -29,7 +29,8 @@ async fn postgres_cases() {
             let label = case_label(&name, case.description.as_deref());
             run_postgres_case(&name, &case).await?;
             Ok::<String, TestSupportError>(label)
-        })().await;
+        })()
+        .await;
 
         match result {
             Ok(label) => println!("  ok: {label}"),
@@ -86,7 +87,9 @@ async fn run_postgres_case(name: &str, case: &PostgresCase) -> Result<(), TestSu
             let migrator = build_postgres_migrator(name, &harness, migrations)?;
             if !migrations.is_empty() {
                 migrator.migrate(None, false).await.map_err(|error| {
-                    TestSupportError::message(format!("{name}: setup migrate failed unexpectedly: {error}"))
+                    TestSupportError::message(format!(
+                        "{name}: setup migrate failed unexpectedly: {error}"
+                    ))
                 })?;
             }
             if let Some(sql) = mutate_sql {
@@ -98,11 +101,17 @@ async fn run_postgres_case(name: &str, case: &PostgresCase) -> Result<(), TestSu
             }
             let actual = result?;
             let expected = expect_verify.clone().ok_or_else(|| {
-                TestSupportError::message(format!("{name}: verify case requires expect_verify when expect_error is absent"))
+                TestSupportError::message(format!(
+                    "{name}: verify case requires expect_verify when expect_error is absent"
+                ))
             })?;
             assert_ops_match(name, "verify operations", &actual, &expected)
         }
-        PostgresSpec::Inspect { setup_sql, expect_schema, expect_error } => {
+        PostgresSpec::Inspect {
+            setup_sql,
+            expect_schema,
+            expect_error,
+        } => {
             if let Some(sql) = setup_sql {
                 harness.batch_execute(sql).await?;
             }
@@ -113,7 +122,9 @@ async fn run_postgres_case(name: &str, case: &PostgresCase) -> Result<(), TestSu
             let mut actual = result?;
             scope_schema_for_compare(&mut actual, harness.schema_name());
             let expected = expect_schema.clone().ok_or_else(|| {
-                TestSupportError::message(format!("{name}: inspect case requires expect_schema when expect_error is absent"))
+                TestSupportError::message(format!(
+                    "{name}: inspect case requires expect_schema when expect_error is absent"
+                ))
             })?;
             assert_schema_matches(name, "inspected schema", actual, expected)
         }

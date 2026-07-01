@@ -31,6 +31,193 @@ fn apply_ok(state: &mut Schema, op: Operation) {
 }
 
 #[test]
+fn prepare_normalizes_common_postgres_type_aliases_from_yaml() {
+    let schema = Schema::from_yaml_str_for_dialect(
+        r#"
+tables:
+  users:
+    columns:
+      - name: id
+        type: int4
+        primary_key: true
+      - name: name
+        type: character varying(100)
+      - name: active
+        type: bool
+      - name: created_at
+        type: timestamp
+"#,
+        Dialect::Postgres,
+    )
+    .expect("prepared schema");
+
+    let columns = &schema.tables["users"].columns;
+    assert_eq!(columns[0].col_type, "integer");
+    assert_eq!(columns[1].col_type, "varchar(100)");
+    assert_eq!(columns[2].col_type, "boolean");
+    assert_eq!(columns[3].col_type, "timestamp without time zone");
+}
+
+#[test]
+fn checked_frontends_prepare_to_the_same_schema() {
+    let yaml = Schema::from_yaml_str_for_dialect(
+        r#"
+tables:
+  users:
+    columns:
+      - name: id
+        type: int4
+        primary_key: true
+      - name: name
+        type: text
+        nullable: true
+"#,
+        Dialect::Postgres,
+    )
+    .expect("yaml");
+    let json = Schema::from_json_str_for_dialect(
+        r#"{"tables":{"users":{"columns":[{"name":"id","type":"int4","primary_key":true},{"name":"name","type":"text","nullable":true}]}}}"#,
+        Dialect::Postgres,
+    )
+    .expect("json");
+    let sql = Schema::from_sql_str_for_dialect(
+        "CREATE TABLE users (id int4 PRIMARY KEY, name text);",
+        Dialect::Postgres,
+    )
+    .expect("sql");
+    let builder = Schema::builder(Dialect::Postgres)
+        .table::<PreparedUser>()
+        .build_checked()
+        .expect("builder");
+
+    assert_eq!(yaml, json);
+    assert_eq!(yaml, sql);
+    assert_eq!(yaml, builder);
+}
+
+struct PreparedUser;
+
+impl IntoTable for PreparedUser {
+    fn into_table(_dialect: &Dialect) -> Table {
+        TableBuilder::new("users")
+            .column("id", "int4", |column| column.primary_key())
+            .column("name", "text", |column| column.nullable())
+            .build()
+    }
+}
+
+#[test]
+fn prepare_rejects_unknown_postgres_type_with_column_context() {
+    let err = Schema::from_yaml_str_for_dialect(
+        r#"
+tables:
+  users:
+    columns:
+      - name: age
+        type: intger
+"#,
+        Dialect::Postgres,
+    )
+    .unwrap_err();
+
+    let message = err.to_string();
+    assert!(message.contains("table users column age"));
+    assert!(message.contains("unknown Postgres type 'intger'"));
+}
+
+#[test]
+fn prepare_rejects_unknown_foreign_key_reference_before_sql_rendering() {
+    let err = Schema::from_yaml_str_for_dialect(
+        r#"
+tables:
+  posts:
+    columns:
+      - name: id
+        type: integer
+      - name: author_id
+        type: integer
+        references:
+          table: users
+          column: id
+"#,
+        Dialect::Postgres,
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("referenced table users not found"));
+}
+
+#[test]
+fn prepare_rejects_unknown_index_column() {
+    let err = Schema::from_yaml_str_for_dialect(
+        r#"
+tables:
+  users:
+    columns:
+      - name: id
+        type: integer
+    indexes:
+      - name: users_missing_idx
+        columns: [missing]
+"#,
+        Dialect::Postgres,
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("index users_missing_idx"));
+    assert!(err.to_string().contains("unknown column 'missing'"));
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn prepare_normalizes_sqlite_type_aliases() {
+    let schema = Schema::from_yaml_str_for_dialect(
+        r#"
+tables:
+  users:
+    columns:
+      - name: id
+        type: int4
+      - name: active
+        type: bool
+      - name: name
+        type: varchar(100)
+"#,
+        Dialect::Sqlite,
+    )
+    .expect("prepared schema");
+
+    let columns = &schema.tables["users"].columns;
+    assert_eq!(columns[0].col_type, "integer");
+    assert_eq!(columns[1].col_type, "integer");
+    assert_eq!(columns[2].col_type, "text");
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn prepare_rejects_sqlite_unsupported_features() {
+    let err = Schema::from_yaml_str_for_dialect(
+        r#"
+extensions:
+  pgcrypto:
+    name: pgcrypto
+tables:
+  users:
+    columns:
+      - name: id
+        type: integer
+"#,
+        Dialect::Sqlite,
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("SQLite does not support extensions: pgcrypto")
+    );
+}
+
+#[test]
 fn normalize_column_primary_key_flags_into_table_primary_key() {
     let mut schema = Schema::default();
     let mut table = basic_table("order_lines");
@@ -711,21 +898,14 @@ fn drop_constraint() {
     assert!(s.tables["users"].constraints.is_empty());
 }
 
-/// Statement and Invoke are no-ops — state is unchanged.
+/// Statement is a no-op — state is unchanged.
 #[test]
-fn statement_and_invoke_are_noops() {
+fn statement_is_noop() {
     let mut s = Schema::default();
     apply_ok(
         &mut s,
         Operation::Statement {
             up: "SELECT 1".to_string(),
-            down: None,
-        },
-    );
-    apply_ok(
-        &mut s,
-        Operation::Invoke {
-            up: "seed_data".to_string(),
             down: None,
         },
     );
@@ -1961,9 +2141,9 @@ fn full_replay_produces_exact_state() {
     assert_eq!(posts.foreign_keys[0].name, "fk_posts_user_id");
 }
 
-/// Statement and Invoke operations are transparent — they do not mutate existing state.
+/// Statement operations are transparent — they do not mutate existing state.
 #[test]
-fn statement_and_invoke_are_transparent_to_existing_state() {
+fn statement_is_transparent_to_existing_state() {
     let mut s = Schema::default();
     apply_ok(
         &mut s,
@@ -1987,14 +2167,6 @@ fn statement_and_invoke_are_transparent_to_existing_state() {
             down: None,
         },
     );
-    apply_ok(
-        &mut s,
-        Operation::Invoke {
-            up: "./seed.sh".to_string(),
-            down: None,
-        },
-    );
-
     assert_eq!(s, before);
 }
 

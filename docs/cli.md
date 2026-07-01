@@ -43,7 +43,7 @@ gaman migrate --fake 0001_initial
 
 ### `sql_migrate [id]`
 
-Print SQL for one migration or for the whole plan. This command does not need a database connection.
+Print migration-operation SQL for one migration or for the whole plan. This command does not need a database connection and does not include lifecycle SQL such as tracking-table installation, locks, transaction boundaries, or record/unrecord statements.
 
 - `--backwards` prints rollback SQL instead of forward SQL.
 

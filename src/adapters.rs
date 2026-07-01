@@ -81,11 +81,9 @@ impl MigrationSource for YamlAdapter {
             path: path.display().to_string(),
             message: e.to_string(),
         })?;
-        let tmp_path = self.directory.join(format!(
-            ".{}.{}.tmp",
-            migration.id,
-            std::process::id()
-        ));
+        let tmp_path = self
+            .directory
+            .join(format!(".{}.{}.tmp", migration.id, std::process::id()));
         let write_result = (|| {
             let mut file = fs::OpenOptions::new()
                 .write(true)

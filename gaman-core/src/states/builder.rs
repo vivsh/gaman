@@ -312,6 +312,11 @@ impl SchemaBuilder {
         state
     }
 
+    pub fn build_checked(self) -> Result<Schema, SchemaLoadError> {
+        let dialect = self.dialect;
+        Ok(self.build().prepare(dialect)?)
+    }
+
     /// Load schema from a `.yaml`, `.sql`, or directory path.
     #[cfg(feature = "fs")]
     pub fn load_file(self, path: impl AsRef<std::path::Path>) -> Result<Schema, SchemaLoadError> {

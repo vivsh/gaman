@@ -2,7 +2,10 @@ use std::collections::HashSet;
 
 use crate::migrations::Migration;
 use crate::operations::Operation;
-use crate::states::{Column, Constraint, ForeignKey, Index, Schema, Table, ViewDef, Volatility};
+use crate::states::{
+    Column, Constraint, ForeignKey, Index, Schema, SchemaValidationError, Table, ViewDef,
+    Volatility, schema_qualified_key,
+};
 
 use super::DialectError;
 
@@ -131,21 +134,138 @@ pub fn reorder_ops(ops: Vec<Operation>, previous: &Schema, current: &Schema) -> 
     result
 }
 
+const TYPE_ALIASES: &[(&str, &str)] = &[
+    ("int", "integer"),
+    ("int2", "smallint"),
+    ("int4", "integer"),
+    ("int8", "bigint"),
+    ("bool", "boolean"),
+    ("float4", "real"),
+    ("float8", "double precision"),
+    ("bpchar", "char"),
+    ("character", "char"),
+    ("character varying", "varchar"),
+    ("timestamp", "timestamp without time zone"),
+    ("timestamptz", "timestamp with time zone"),
+    ("decimal", "numeric"),
+];
+
+const BUILTIN_TYPES: &[&str] = &[
+    "bigint",
+    "bigserial",
+    "bit",
+    "bit varying",
+    "boolean",
+    "box",
+    "bytea",
+    "char",
+    "cidr",
+    "circle",
+    "date",
+    "double precision",
+    "inet",
+    "integer",
+    "interval",
+    "json",
+    "jsonb",
+    "line",
+    "lseg",
+    "macaddr",
+    "macaddr8",
+    "money",
+    "numeric",
+    "path",
+    "point",
+    "polygon",
+    "real",
+    "serial",
+    "smallint",
+    "smallserial",
+    "text",
+    "time with time zone",
+    "time without time zone",
+    "timestamp with time zone",
+    "timestamp without time zone",
+    "tsquery",
+    "tsvector",
+    "uuid",
+    "varchar",
+    "xml",
+];
+
 pub fn normalize_type(t: &str) -> &str {
-    match t {
-        "int" => "integer",
-        "int2" => "smallint",
-        "int4" => "integer",
-        "int8" => "bigint",
-        "bool" => "boolean",
-        "float4" => "real",
-        "float8" => "double precision",
-        "bpchar" => "char",
-        "character varying" => "varchar",
-        "timestamp" => "timestamp without time zone",
-        "timestamptz" => "timestamp with time zone",
-        other => other,
+    TYPE_ALIASES
+        .iter()
+        .find_map(|(alias, canonical)| (*alias == t).then_some(*canonical))
+        .unwrap_or(t)
+}
+
+pub fn canonical_type(t: &str) -> String {
+    canonical_type_inner(t).unwrap_or_else(|| normalize_type_text(t))
+}
+
+pub fn validate_schema(schema: &Schema) -> Result<(), SchemaValidationError> {
+    for (table_name, table) in &schema.tables {
+        for column in &table.columns {
+            if !is_supported_type(schema, &column.col_type) {
+                return Err(SchemaValidationError::Invalid(format!(
+                    "table {table_name} column {}: unknown Postgres type '{}'",
+                    column.name, column.col_type
+                )));
+            }
+        }
     }
+    Ok(())
+}
+
+fn canonical_type_inner(t: &str) -> Option<String> {
+    let normalized = normalize_type_text(t);
+    if let Some((base, suffix)) = normalized.strip_suffix("[]").map(|base| (base, "[]")) {
+        return canonical_type_inner(base).map(|base| format!("{base}{suffix}"));
+    }
+
+    let (base, modifier) = split_type_modifier(&normalized);
+    let canonical_base = TYPE_ALIASES
+        .iter()
+        .find_map(|(alias, canonical)| (*alias == base).then_some(*canonical))
+        .unwrap_or(base);
+
+    if is_builtin_type_name(canonical_base) {
+        Some(format!("{canonical_base}{modifier}"))
+    } else {
+        None
+    }
+}
+
+fn is_supported_type(schema: &Schema, t: &str) -> bool {
+    let canonical = canonical_type(t);
+    if canonical_type_inner(&canonical).is_some() {
+        return true;
+    }
+
+    schema.enums.values().any(|enum_def| {
+        enum_def.name == canonical
+            || enum_def.qualified_name() == canonical
+            || schema_qualified_key(&enum_def.name, enum_def.schema.as_deref()) == canonical
+    })
+}
+
+fn is_builtin_type_name(base: &str) -> bool {
+    BUILTIN_TYPES.binary_search(&base).is_ok()
+}
+
+fn split_type_modifier(t: &str) -> (&str, &str) {
+    match t.find('(') {
+        Some(start) if t.ends_with(')') => (&t[..start], &t[start..]),
+        _ => (t, ""),
+    }
+}
+
+fn normalize_type_text(t: &str) -> String {
+    t.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
 }
 
 fn quote_ident(s: &str) -> String {
@@ -425,9 +545,6 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
         }
         Operation::Statement { up, .. } => {
             vec![up.clone()]
-        }
-        Operation::Invoke { .. } => {
-            vec![]
         }
         Operation::CreateFunction { function } => {
             vec![create_function_sql(function)?]

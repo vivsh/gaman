@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use gaman::core::{
-    BoxFuture, Dialect, Environment, EnvironmentError, EnvironmentExecutor, Executor, Invoker,
-    Migrator, SqliteExecutor, VecAdapter,
+    BoxFuture, Dialect, Environment, EnvironmentError, EnvironmentExecutor, Executor, Migrator,
+    SqliteExecutor, VecAdapter,
 };
 use gaman::schema::{
     Column, Constraint, ExtensionDef, ForeignKey, Index, Operation, PrimaryKey, Table, TriggerDef,
@@ -145,10 +145,6 @@ impl Environment for SqliteEnvironment {
                 "test environment does not create executors".into(),
             ))
         })
-    }
-
-    fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
-        Ok(None)
     }
 
     fn dialect(&self) -> Dialect {
@@ -570,7 +566,10 @@ fn sqlite_rebuild_rejects_unsafe_cases() {
         ),
     ])
     .unwrap_err();
-    assert!(err.to_string().contains("ambiguous type"));
+    assert!(
+        err.to_string()
+            .contains("unknown SQLite type 'email_address'")
+    );
 }
 
 #[test]
@@ -808,7 +807,7 @@ async fn sqlite_rebuild_live_preserves_data_and_constraints() {
     let migrator = migrator(migrations);
     let mut executor = sqlite_executor().await;
     migrator
-        .migrate_with(&mut executor, None, None, false)
+        .migrate_with(&mut executor, None, false)
         .await
         .unwrap();
 
@@ -883,7 +882,7 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
     let migrator = migrator(migrations);
     let mut executor = sqlite_executor().await;
     migrator
-        .migrate_with(&mut executor, None, None, false)
+        .migrate_with(&mut executor, None, false)
         .await
         .unwrap();
     executor
@@ -901,7 +900,7 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
     assert!(err.to_string().contains("FOREIGN KEY"));
 
     migrator
-        .migrate_with(&mut executor, None, Some("0002_create_users"), false)
+        .migrate_with(&mut executor, Some("0002_create_users"), false)
         .await
         .unwrap();
     executor
@@ -977,7 +976,7 @@ async fn sqlite_rebuild_live_preserves_child_rows_when_parent_is_rebuilt() {
     let migrator = migrator(migrations);
     let mut executor = sqlite_executor().await;
     migrator
-        .migrate_with(&mut executor, None, Some("0002_create_users"), false)
+        .migrate_with(&mut executor, Some("0002_create_users"), false)
         .await
         .unwrap();
     executor
@@ -990,7 +989,7 @@ async fn sqlite_rebuild_live_preserves_child_rows_when_parent_is_rebuilt() {
         .unwrap();
 
     let err = migrator
-        .migrate_with(&mut executor, None, None, false)
+        .migrate_with(&mut executor, None, false)
         .await
         .unwrap_err();
 
@@ -1073,7 +1072,7 @@ async fn sqlite_rebuild_live_fails_foreign_key_check_for_existing_bad_data() {
     let migrator = migrator(migrations);
     let mut executor = sqlite_executor().await;
     let err = migrator
-        .migrate_with(&mut executor, None, None, false)
+        .migrate_with(&mut executor, None, false)
         .await
         .unwrap_err();
 
@@ -1188,7 +1187,7 @@ async fn sqlite_rebuild_uses_existing_migrator_transaction_and_record_flow() {
     let mut executor = RecordingExecutor::default();
 
     migrator
-        .migrate_with(&mut executor, None, None, false)
+        .migrate_with(&mut executor, None, false)
         .await
         .unwrap();
 
@@ -1254,7 +1253,7 @@ async fn sqlite_rebuild_failure_rolls_back_without_recording_and_releases_lock()
     let mut executor = RecordingExecutor::failing(r#"INSERT INTO "__gaman_rebuild_users""#);
 
     let err = migrator
-        .migrate_with(&mut executor, None, None, false)
+        .migrate_with(&mut executor, None, false)
         .await
         .unwrap_err();
 
@@ -1306,7 +1305,7 @@ async fn sqlite_rebuild_render_failure_preflights_before_install_lock_or_begin()
     let mut executor = RecordingExecutor::default();
 
     let err = migrator
-        .migrate_with(&mut executor, None, None, false)
+        .migrate_with(&mut executor, None, false)
         .await
         .unwrap_err();
 

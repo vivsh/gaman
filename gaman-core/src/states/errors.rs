@@ -1,6 +1,24 @@
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]
+pub enum SchemaValidationError {
+    #[error("{0}")]
+    Invalid(String),
+}
+
+impl From<String> for SchemaValidationError {
+    fn from(value: String) -> Self {
+        Self::Invalid(value)
+    }
+}
+
+impl From<&str> for SchemaValidationError {
+    fn from(value: &str) -> Self {
+        Self::Invalid(value.to_string())
+    }
+}
+
+#[derive(Debug, Error, PartialEq)]
 pub enum ReplayError {
     #[error("table '{0}' already exists")]
     TableAlreadyExists(String),
@@ -71,6 +89,8 @@ pub enum SchemaLoadError {
     Merge { table: String, a: String, b: String },
     #[error("duplicate table '{0}' when merging schemas")]
     DuplicateTable(String),
+    #[error("schema validation failed: {0}")]
+    Validation(#[from] SchemaValidationError),
     #[error(transparent)]
     Sql(#[from] crate::sql::SqlParseError),
 }

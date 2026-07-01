@@ -8,6 +8,7 @@ use crate::disambiguator::{Decision, DisambiguationResult, Disambiguator, Disamb
 use crate::graphs::{GraphError, MigrationGraph};
 use crate::migrations::Migration;
 use crate::operations::Operation;
+use crate::sql_plan::{SqlPlanError, SqlPlanRenderer};
 use crate::states::types::EntityKind;
 use crate::states::{ReplayError, Schema};
 
@@ -25,6 +26,8 @@ pub enum OfflineError {
     Dialect(#[from] DialectError),
     #[error(transparent)]
     Replay(#[from] ReplayError),
+    #[error(transparent)]
+    SqlPlan(#[from] SqlPlanError),
     #[error("schema validation failed: {0}")]
     Schema(String),
 }
@@ -57,7 +60,9 @@ impl OfflinePlanner {
 
     pub fn replay(&self) -> Result<Schema, OfflineError> {
         let (schema, _, _) = self.replay_with_sources()?;
-        Ok(schema)
+        schema
+            .prepare(self.dialect)
+            .map_err(|err| OfflineError::Schema(err.to_string()))
     }
 
     pub fn make_migration(
@@ -65,8 +70,13 @@ impl OfflinePlanner {
         desired_schema: Schema,
         decisions: &[Decision],
     ) -> Result<Option<Migration>, OfflineError> {
-        desired_schema.validate().map_err(OfflineError::Schema)?;
+        let desired_schema = desired_schema
+            .prepare(self.dialect)
+            .map_err(|err| OfflineError::Schema(err.to_string()))?;
         let (previous, last_per_ns, entity_ns) = self.replay_with_sources()?;
+        let previous = previous
+            .prepare(self.dialect)
+            .map_err(|err| OfflineError::Schema(err.to_string()))?;
         let raw_ops = DiffEngine::new().diff(&desired_schema, &previous, &self.dialect)?;
         if raw_ops.is_empty() {
             return Ok(None);
@@ -93,13 +103,8 @@ impl OfflinePlanner {
     }
 
     pub fn sql_migrate(&self, migrations: &[Migration]) -> Result<Vec<String>, OfflineError> {
-        let mut statements = Vec::new();
-        let mut state = self.initial_state_for_sql_migrate(migrations)?;
-        for migration in migrations {
-            statements.extend(self.dialect.migration_to_sql(migration, &state)?);
-            apply_migration_to_state(&mut state, migration)?;
-        }
-        Ok(statements)
+        Ok(SqlPlanRenderer::new(self.dialect, self.migrations.clone())?
+            .render_migrations(migrations)?)
     }
 
     fn graph(&self) -> Result<(MigrationGraph, Vec<String>), OfflineError> {
@@ -150,24 +155,6 @@ impl OfflinePlanner {
             }
         }
         Ok((state, last_per_ns, entity_ns))
-    }
-
-    fn initial_state_for_sql_migrate(
-        &self,
-        migrations: &[Migration],
-    ) -> Result<Schema, OfflineError> {
-        let (graph, ordered_ids) = self.graph()?;
-        let first_graph_position = migrations
-            .iter()
-            .filter_map(|migration| ordered_ids.iter().position(|id| id == &migration.id))
-            .min();
-        let end = first_graph_position.unwrap_or(ordered_ids.len());
-        let mut state = Schema::default();
-        for id in ordered_ids.iter().take(end) {
-            let migration = graph.get(id).expect("ordered id must exist in graph");
-            apply_migration_to_state(&mut state, migration)?;
-        }
-        Ok(state)
     }
 }
 
@@ -258,7 +245,7 @@ fn op_entity_label(op: &Operation) -> Option<&str> {
         }
         Operation::RenameEnumValue { enum_name, .. } => Some(enum_name),
         Operation::AlterEnum { new, .. } => Some(&new.name),
-        Operation::Statement { .. } | Operation::Invoke { .. } => None,
+        Operation::Statement { .. } => None,
     }
 }
 
@@ -347,7 +334,7 @@ fn op_entities(op: &Operation) -> Vec<(EntityKind, String)> {
         Operation::RenameTable { old_name, .. } => {
             vec![(EntityKind::Table, old_name.clone())]
         }
-        Operation::Statement { .. } | Operation::Invoke { .. } => vec![],
+        Operation::Statement { .. } => vec![],
     }
 }
 

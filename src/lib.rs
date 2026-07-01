@@ -8,7 +8,8 @@ pub use gaman_core::*;
 pub mod core {
     pub use gaman_core::dialects::{Dialect, DialectError};
     pub use gaman_core::disambiguator::{
-        Answer, Clarification, ClarificationKind, Decision, PromptEngine, Severity,
+        Answer, Clarification, ClarificationKind, ClarificationMessage, ClarificationOption,
+        Decision, OptionAction, PromptEngine, Severity, clarification_message,
     };
     pub use gaman_core::graphs::{GraphError, MigrationGraph, MigrationNode};
     pub use gaman_core::{EmbeddedMigrations, Migration, OfflineError, OfflinePlanner};
@@ -100,8 +101,8 @@ pub mod schema {
     pub use gaman_core::states::{
         Column, ColumnBuilder, ColumnRef, Constraint, EnumDef, ExtensionDef, ForeignKey,
         FunctionDef, Index, IntoSchema, IntoTable, PrimaryKey, ReplayError, Schema, SchemaBuilder,
-        SchemaLoadError, Table, TableBuilder, TriggerDef, TriggerEvent, TriggerScope,
-        TriggerTiming, ViewDef, Volatility, is_volatile, schema_qualified_key,
+        SchemaLoadError, SchemaValidationError, Table, TableBuilder, TriggerDef, TriggerEvent,
+        TriggerScope, TriggerTiming, ViewDef, Volatility, is_volatile, schema_qualified_key,
     };
 }
 
@@ -116,17 +117,15 @@ pub mod core {
     #[cfg(feature = "sqlite")]
     pub use crate::executor::SqliteExecutor;
     #[cfg(feature = "db")]
-    pub use crate::executor::{
-        BoxFuture, Executor, ExecutorError, Introspectable, Invoker, InvokerError,
-        SubprocessInvoker,
-    };
+    pub use crate::executor::{BoxFuture, Executor, ExecutorError, Introspectable};
     #[cfg(feature = "db")]
     pub use crate::migrator::{Migrator, MigratorError};
     #[cfg(feature = "cli")]
     pub use crate::prompter::CliPromptEngine;
     pub use gaman_core::dialects::{Dialect, DialectError};
     pub use gaman_core::disambiguator::{
-        Answer, Clarification, ClarificationKind, Decision, PromptEngine, Severity,
+        Answer, Clarification, ClarificationKind, ClarificationMessage, ClarificationOption,
+        Decision, OptionAction, PromptEngine, Severity, clarification_message,
     };
     pub use gaman_core::graphs::{GraphError, MigrationGraph, MigrationNode};
 }

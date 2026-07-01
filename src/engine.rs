@@ -9,12 +9,12 @@ use crate::conf::Config;
 use crate::dialects::Dialect;
 use crate::disambiguator::{Decision, PromptEngine};
 use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
-use crate::executor::{BoxFuture, Invoker, connect_environment_executor};
-use crate::migrator::{Migrator, MigratorError};
+use crate::executor::{BoxFuture, connect_environment_executor};
 use crate::migrations::Migration;
+use crate::migrator::{Migrator, MigratorError};
 use crate::operations::Operation;
 use crate::prompter::CliPromptEngine;
-use crate::states::{Schema, SchemaBuilder, SchemaLoadError, IntoSchema};
+use crate::states::{IntoSchema, Schema, SchemaBuilder, SchemaLoadError};
 
 #[derive(Copy, Clone)]
 pub struct EmbeddedMigrations {
@@ -29,21 +29,29 @@ struct EmbedSource {
 }
 
 impl EmbedSource {
-    fn new(root: &'static EmbeddedMigrations, extra: Vec<(&'static str, &'static EmbeddedMigrations)>) -> Self {
+    fn new(
+        root: &'static EmbeddedMigrations,
+        extra: Vec<(&'static str, &'static EmbeddedMigrations)>,
+    ) -> Self {
         Self { root, extra }
     }
 
-    fn collect(source: &'static EmbeddedMigrations, prefix: &str, out: &mut Vec<Migration>) -> Result<(), AdapterError> {
+    fn collect(
+        source: &'static EmbeddedMigrations,
+        prefix: &str,
+        out: &mut Vec<Migration>,
+    ) -> Result<(), AdapterError> {
         for (id, content) in source.files {
             let qualified_id = if prefix.is_empty() {
                 id.to_string()
             } else {
                 format!("{prefix}/{id}")
             };
-            let mut m: Migration = serde_yaml::from_str(content).map_err(|e| AdapterError::Parse {
-                path: qualified_id.clone(),
-                message: e.to_string(),
-            })?;
+            let mut m: Migration =
+                serde_yaml::from_str(content).map_err(|e| AdapterError::Parse {
+                    path: qualified_id.clone(),
+                    message: e.to_string(),
+                })?;
             m.id = qualified_id;
             if !prefix.is_empty() {
                 for dep in &mut m.dependencies {
@@ -100,7 +108,9 @@ pub enum EngineError {
     NoSchema,
     #[error("schema load error: {0}")]
     SchemaLoad(#[from] SchemaLoadError),
-    #[error("migrations dir mismatch: config has '{0}', embedded was compiled from '{1}' — they must match for make_migration")]
+    #[error(
+        "migrations dir mismatch: config has '{0}', embedded was compiled from '{1}' — they must match for make_migration"
+    )]
     MigrationsDirMismatch(String, &'static str),
 }
 
@@ -128,20 +138,19 @@ impl Environment for EngineEnvironment {
         &self.config
     }
 
-    fn executor<'a>(&'a self) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+    fn executor<'a>(
+        &'a self,
+    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
         Box::pin(async move {
-            let url = self.config.database_url.as_deref()
-                .ok_or_else(|| EnvironmentError::Config(
+            let url = self.config.database_url.as_deref().ok_or_else(|| {
+                EnvironmentError::Config(
                     "database_url is not set — set DATABASE_URL or pass it in Config".into(),
-                ))?;
+                )
+            })?;
             connect_environment_executor(self.dialect(), url, self.config.tls)
                 .await
                 .map_err(EnvironmentError::from)
         })
-    }
-
-    fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
-        Ok(None)
     }
 
     fn dialect(&self) -> Dialect {
@@ -175,15 +184,29 @@ impl MigrationEngine {
     /// Set the target schema. The closure receives a `SchemaBuilder` and can return either a
     /// `Schema` directly (infallible) or a `Result<Schema, SchemaLoadError>` (for file loading).
     /// Calling this more than once replaces the previous schema — last call wins.
-    pub fn with_schema<R: IntoSchema>(mut self, f: impl FnOnce(SchemaBuilder) -> R) -> Result<Self, EngineError> {
-        let dialect = self.dialect.or_else(|| self.config.dialect()).unwrap_or(Dialect::Postgres);
-        self.schema = Some(f(SchemaBuilder::new(dialect)).into_schema()?);
+    pub fn with_schema<R: IntoSchema>(
+        mut self,
+        f: impl FnOnce(SchemaBuilder) -> R,
+    ) -> Result<Self, EngineError> {
+        let dialect = self
+            .dialect
+            .or_else(|| self.config.dialect())
+            .unwrap_or(Dialect::Postgres);
+        self.schema = Some(
+            f(SchemaBuilder::new(dialect))
+                .into_schema()?
+                .prepare(dialect)
+                .map_err(|err| EngineError::Config(err.to_string()))?,
+        );
         Ok(self)
     }
 
     fn build_migrator(&self) -> Result<Migrator, EngineError> {
         let source = Box::new(EmbedSource::new(self.migrations, self.extra.clone()));
-        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone()), self.dialect));
+        let environment = Box::new(EngineEnvironment::new(
+            Arc::new(self.config.clone()),
+            self.dialect,
+        ));
         Ok(Migrator::new(source, environment)?)
     }
 
@@ -213,7 +236,7 @@ impl MigrationEngine {
     }
 
     /// Current configuraiton as seen by the migrator
-    pub fn config(&self)->Config{
+    pub fn config(&self) -> Config {
         self.config.clone()
     }
 
@@ -262,16 +285,28 @@ impl MigrationEngine {
     /// Any rename/ambiguity clarifications are resolved interactively via terminal prompts.
     pub fn make_migration(self, name: &str) -> Result<Option<Migration>, EngineError> {
         let migrations_dir = self.writable_migrations_dir()?;
-        let source = Box::new(YamlAdapter { directory: migrations_dir });
-        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone()), self.dialect));
+        let source = Box::new(YamlAdapter {
+            directory: migrations_dir,
+        });
+        let environment = Box::new(EngineEnvironment::new(
+            Arc::new(self.config.clone()),
+            self.dialect,
+        ));
         let migrator = Migrator::new(source, environment)?;
         let schema = self.schema.ok_or(EngineError::NoSchema)?;
         let engine = CliPromptEngine;
         let mut decisions: Vec<Decision> = vec![];
         loop {
-            match migrator.make_migrations(Some(name.to_string()), schema.clone(), false, &decisions) {
+            match migrator.make_migrations(
+                Some(name.to_string()),
+                schema.clone(),
+                false,
+                &decisions,
+            ) {
                 Err(MigratorError::NeedsInput(clars)) => {
-                    let new = engine.prompt(&clars).map_err(|e| EngineError::Config(e.to_string()))?;
+                    let new = engine
+                        .prompt(&clars)
+                        .map_err(|e| EngineError::Config(e.to_string()))?;
                     decisions.extend(new);
                 }
                 Err(e) => return Err(EngineError::Migrator(e)),
@@ -284,8 +319,13 @@ impl MigrationEngine {
     /// Writes to the embedded source dir after validating it matches config.migrations_dir.
     pub fn make_empty_migration(self, name: &str) -> Result<Migration, EngineError> {
         let migrations_dir = self.writable_migrations_dir()?;
-        let source = Box::new(YamlAdapter { directory: migrations_dir });
-        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone()), self.dialect));
+        let source = Box::new(YamlAdapter {
+            directory: migrations_dir,
+        });
+        let environment = Box::new(EngineEnvironment::new(
+            Arc::new(self.config.clone()),
+            self.dialect,
+        ));
         let migrator = Migrator::new(source, environment)?;
         Ok(migrator.make_empty_migration(name.to_string())?)
     }
@@ -299,7 +339,9 @@ impl MigrationEngine {
         let (cmd, cli_dialect) = args.apply_to(&mut config);
         let dialect = parse_dialect(cli_dialect)?.or(self.dialect);
         let config = Arc::new(config);
-        let source = Box::new(YamlAdapter { directory: config.migrations_dir.clone() });
+        let source = Box::new(YamlAdapter {
+            directory: config.migrations_dir.clone(),
+        });
         let environment = Box::new(EngineEnvironment::new(config, dialect));
         let migrator = Migrator::new(source, environment)?;
         dispatch(migrator, self.schema, cmd).await?;
@@ -383,15 +425,24 @@ mod tests {
     fn collect_with_child_prefixes() {
         let ids = collect_ids(&ROOT);
         assert!(ids.contains(&"0001_initial".to_string()), "root id present");
-        assert!(ids.contains(&"auth/0001_init".to_string()), "child id prefixed");
+        assert!(
+            ids.contains(&"auth/0001_init".to_string()),
+            "child id prefixed"
+        );
     }
 
     /// Dependencies within a child are rewritten to include the namespace prefix.
     #[test]
     fn collect_child_deps_rewritten() {
         const DEP_FILES: &[(&str, &str)] = &[
-            ("0001_a", "id: 0001_a\ndependencies: []\noperations: []\natomic: true\n"),
-            ("0002_b", "id: 0002_b\ndependencies: [0001_a]\noperations: []\natomic: true\n"),
+            (
+                "0001_a",
+                "id: 0001_a\ndependencies: []\noperations: []\natomic: true\n",
+            ),
+            (
+                "0002_b",
+                "id: 0002_b\ndependencies: [0001_a]\noperations: []\natomic: true\n",
+            ),
         ];
         const DEP_CHILD: EmbeddedMigrations = EmbeddedMigrations {
             files: DEP_FILES,
@@ -405,8 +456,15 @@ mod tests {
         };
         let mut out = Vec::new();
         EmbedSource::collect(&WITH_DEPS, "", &mut out).unwrap();
-        let b = out.iter().find(|m| m.id == "auth/0002_b").expect("auth/0002_b present");
-        assert_eq!(b.dependencies, vec!["auth/0001_a"], "dep rewritten with namespace");
+        let b = out
+            .iter()
+            .find(|m| m.id == "auth/0002_b")
+            .expect("auth/0002_b present");
+        assert_eq!(
+            b.dependencies,
+            vec!["auth/0001_a"],
+            "dep rewritten with namespace"
+        );
     }
 
     /// Already-qualified deps (containing '/') are not double-prefixed.
@@ -429,7 +487,11 @@ mod tests {
         let mut out = Vec::new();
         EmbedSource::collect(&CROSS_ROOT, "", &mut out).unwrap();
         let m = out.iter().find(|m| m.id == "auth/0001_a").unwrap();
-        assert_eq!(m.dependencies, vec!["other/0001_x"], "fully qualified dep not re-prefixed");
+        assert_eq!(
+            m.dependencies,
+            vec!["other/0001_x"],
+            "fully qualified dep not re-prefixed"
+        );
     }
 
     /// EmbeddedMigrations is Copy — can be used in a const context.

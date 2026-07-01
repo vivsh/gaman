@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
-use argh::FromArgs;
-use crate::conf::Config;
-use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
-use crate::migrator::{Migrator, MigratorError};
-use crate::states::Schema;
 use crate::adapters::YamlAdapter;
+use crate::conf::Config;
 use crate::dialects::Dialect;
-use crate::executor::{BoxFuture, Invoker, SubprocessInvoker, connect_environment_executor};
-use crate::prompter::CliPromptEngine;
 use crate::disambiguator::{Decision, PromptEngine};
+use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
+use crate::executor::{BoxFuture, connect_environment_executor};
+use crate::migrator::{Migrator, MigratorError};
+use crate::prompter::CliPromptEngine;
+use crate::states::Schema;
+use argh::FromArgs;
 
 /// Gaman CLI.
 #[derive(FromArgs, Debug)]
@@ -167,20 +167,19 @@ impl Environment for CommandEnvironment {
         &self.config
     }
 
-    fn executor<'a>(&'a self) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+    fn executor<'a>(
+        &'a self,
+    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
         Box::pin(async move {
-            let url = self.config.database_url.as_deref()
-                .ok_or_else(|| EnvironmentError::Config(
+            let url = self.config.database_url.as_deref().ok_or_else(|| {
+                EnvironmentError::Config(
                     "DATABASE_URL is not set — pass --database-url or set it in .env".into(),
-                ))?;
+                )
+            })?;
             connect_environment_executor(self.dialect(), url, self.config.tls)
                 .await
                 .map_err(EnvironmentError::from)
         })
-    }
-
-    fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
-        Ok(Some(Box::new(SubprocessInvoker)))
     }
 
     fn dialect(&self) -> Dialect {
@@ -220,30 +219,50 @@ pub async fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
     let (cmd, dialect) = args.apply_to(&mut config);
     let dialect = parse_dialect(dialect)?;
     let config = Arc::new(config);
-    let source = Box::new(YamlAdapter { directory: config.migrations_dir.clone() });
+    let source = Box::new(YamlAdapter {
+        directory: config.migrations_dir.clone(),
+    });
     let environment = Box::new(CommandEnvironment::new(Arc::clone(&config), dialect));
     let migrator = Migrator::new(source, environment)?;
     dispatch(migrator, None, cmd).await
 }
 
-pub(crate) async fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>, cmd: Command) -> Result<(), CommandError> {
+pub(crate) async fn dispatch(
+    migrator: Migrator,
+    embedded_schema: Option<Schema>,
+    cmd: Command,
+) -> Result<(), CommandError> {
     match cmd {
         Command::Config(_) => {
-            println!("  migrations_dir  {}", migrator.config().migrations_dir.display());
-            println!("  schema_file     {}", migrator.config().schema_file.display());
+            println!(
+                "  migrations_dir  {}",
+                migrator.config().migrations_dir.display()
+            );
+            println!(
+                "  schema_file     {}",
+                migrator.config().schema_file.display()
+            );
             println!(
                 "  database_url    {}",
-                migrator.config().database_url.as_deref().unwrap_or("(not set)")
+                migrator
+                    .config()
+                    .database_url
+                    .as_deref()
+                    .unwrap_or("(not set)")
             );
             Ok(())
         }
         Command::MakeMigrations(cmd) => {
             if cmd.merge {
-                let name = cmd.name.ok_or_else(|| CommandError::Config("a name is required for --merge".into()))?;
+                let name = cmd
+                    .name
+                    .ok_or_else(|| CommandError::Config("a name is required for --merge".into()))?;
                 migrator.make_merge_migration(name).map(|_| ())?;
                 Ok(())
             } else if cmd.empty {
-                let name = cmd.name.ok_or_else(|| CommandError::Config("a name is required for --empty".into()))?;
+                let name = cmd
+                    .name
+                    .ok_or_else(|| CommandError::Config("a name is required for --empty".into()))?;
                 migrator.make_empty_migration(name).map(|_| ())?;
                 Ok(())
             } else if cmd.check {
@@ -254,7 +273,9 @@ pub(crate) async fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>
                 };
                 let name = cmd.name.clone().unwrap_or_else(|| "check".into());
                 match migrator.make_migrations(Some(name), current, true, &[])? {
-                    Some(_) => Err(CommandError::Config("schema has changes not yet in a migration".into())),
+                    Some(_) => Err(CommandError::Config(
+                        "schema has changes not yet in a migration".into(),
+                    )),
                     None => Ok(()),
                 }
             } else {
@@ -266,14 +287,27 @@ pub(crate) async fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>
                 let engine = CliPromptEngine;
                 let mut decisions: Vec<Decision> = vec![];
                 loop {
-                    match migrator.make_migrations(cmd.name.clone(), current.clone(), cmd.dry_run, &decisions) {
+                    match migrator.make_migrations(
+                        cmd.name.clone(),
+                        current.clone(),
+                        cmd.dry_run,
+                        &decisions,
+                    ) {
                         Err(MigratorError::NeedsInput(clars)) => {
-                            let new = engine.prompt(&clars).map_err(|e| CommandError::Config(e.to_string()))?;
+                            let new = engine
+                                .prompt(&clars)
+                                .map_err(|e| CommandError::Config(e.to_string()))?;
                             decisions.extend(new);
                         }
                         Err(e) => return Err(CommandError::Migrator(e)),
-                        Ok(Some(m)) => { println!("Created: {}", m.id); break Ok(()); }
-                        Ok(None) => { println!("No changes detected."); break Ok(()); }
+                        Ok(Some(m)) => {
+                            println!("Created: {}", m.id);
+                            break Ok(());
+                        }
+                        Ok(None) => {
+                            println!("No changes detected.");
+                            break Ok(());
+                        }
                     }
                 }
             }
@@ -301,7 +335,11 @@ pub(crate) async fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>
                     Ok(())
                 }
             } else {
-                migrator.migrate(cmd.target.as_deref(), cmd.fake).await.map(|_| ()).map_err(CommandError::from)
+                migrator
+                    .migrate(cmd.target.as_deref(), cmd.fake)
+                    .await
+                    .map(|_| ())
+                    .map_err(CommandError::from)
             }
         }
         Command::ShowMigrations(_) => {
@@ -317,44 +355,35 @@ pub(crate) async fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>
             Ok(())
         }
         Command::SqlMigrate(cmd) => {
-            let order = migrator.graph.topological_order().map_err(MigratorError::Graph)?;
+            let order = migrator
+                .graph
+                .topological_order()
+                .map_err(MigratorError::Graph)?;
 
             let migrations: Vec<_> = if let Some(ref id) = cmd.id {
                 match migrator.graph.get(id) {
                     Some(m) => vec![m.clone()],
-                    None => return Err(CommandError::Config(format!("unknown migration id '{id}'"))),
-                }
-            } else {
-                order.iter().filter_map(|id| migrator.graph.get(id).cloned()).collect()
-            };
-
-            let migrations_to_print: Vec<_> = if cmd.backwards {
-                let mut result = Vec::with_capacity(migrations.len());
-                for mut m in migrations.into_iter().rev() {
-                    let mut inv_ops = Vec::with_capacity(m.operations.len());
-                    for op in m.operations.iter().rev() {
-                        match op.inverse() {
-                            Some(inv) => inv_ops.push(inv),
-                            None => return Err(CommandError::Config(format!(
-                                "migration '{}' is not reversible: operation '{}' has no inverse",
-                                m.id, op.type_name()
-                            ))),
-                        }
+                    None => {
+                        return Err(CommandError::Config(format!("unknown migration id '{id}'")));
                     }
-                    m.operations = inv_ops;
-                    result.push(m);
                 }
-                result
             } else {
-                migrations
+                order
+                    .iter()
+                    .filter_map(|id| migrator.graph.get(id).cloned())
+                    .collect()
             };
 
-            let stmts = migrator.sql_migrate(&migrations_to_print)?;
+            let stmts = if cmd.backwards {
+                migrator.sql_rollback(&migrations)?
+            } else {
+                migrator.sql_migrate(&migrations)?
+            };
             if stmts.is_empty() {
                 println!("-- No operations.");
             } else {
                 for stmt in stmts {
-                    println!("{stmt};");
+                    println!("{}", sql_statement_for_cli(&stmt));
                 }
             }
             Ok(())
@@ -365,14 +394,17 @@ pub(crate) async fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>
             } else {
                 cmd.schema.iter().map(|s| s.as_str()).collect()
             };
-            let mut state = migrator.inspect_db(&schemas).await.map_err(CommandError::from)?;
+            let mut state = migrator
+                .inspect_db(&schemas)
+                .await
+                .map_err(CommandError::from)?;
 
             if let Some(table) = &cmd.table {
                 state.tables.retain(|k, _| k == table);
             }
 
-            let yaml = serde_yaml::to_string(&state)
-                .map_err(|e| CommandError::Config(e.to_string()))?;
+            let yaml =
+                serde_yaml::to_string(&state).map_err(|e| CommandError::Config(e.to_string()))?;
 
             match &cmd.output {
                 Some(path) => std::fs::write(path, &yaml).map_err(CommandError::Io)?,
@@ -390,8 +422,37 @@ pub(crate) async fn dispatch(migrator: Migrator, embedded_schema: Option<Schema>
                 for op in &drift {
                     println!("  drift: {}", op.type_name());
                 }
-                Err(CommandError::Config(format!("{} drift operation(s) detected", drift.len())))
+                Err(CommandError::Config(format!(
+                    "{} drift operation(s) detected",
+                    drift.len()
+                )))
             }
         }
+    }
+}
+
+fn sql_statement_for_cli(stmt: &str) -> String {
+    if stmt.trim_end().ends_with(';') {
+        stmt.to_string()
+    } else {
+        format!("{stmt};")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sql_statement_for_cli;
+
+    #[test]
+    fn sql_statement_for_cli_does_not_duplicate_semicolon() {
+        assert_eq!(sql_statement_for_cli("SELECT 1;"), "SELECT 1;");
+    }
+
+    #[test]
+    fn sql_statement_for_cli_preserves_multiline_statement() {
+        assert_eq!(
+            sql_statement_for_cli("CREATE VIEW v AS\nSELECT 1"),
+            "CREATE VIEW v AS\nSELECT 1;"
+        );
     }
 }

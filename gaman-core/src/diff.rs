@@ -803,7 +803,6 @@ fn tiebreak_priority(op: &Operation) -> (u8, u8) {
         Operation::DropEnum { .. } => (12, 0),
         Operation::DropExtension { .. } => (13, 0),
         Operation::Statement { .. }
-        | Operation::Invoke { .. }
         | Operation::RenameTable { .. }
         | Operation::RenameColumn { .. } => (8, 5),
     }

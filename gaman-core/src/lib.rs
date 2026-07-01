@@ -6,6 +6,8 @@ pub mod graphs;
 pub mod migrations;
 pub mod operations;
 pub mod sql;
+#[doc(hidden)]
+pub mod sql_plan;
 pub mod states;
 
 mod offline;
@@ -22,7 +24,7 @@ pub mod schema {
     pub use crate::states::{
         Column, ColumnBuilder, ColumnRef, Constraint, EnumDef, ExtensionDef, ForeignKey,
         FunctionDef, Index, IntoSchema, IntoTable, PrimaryKey, ReplayError, Schema, SchemaBuilder,
-        SchemaLoadError, Table, TableBuilder, TriggerDef, TriggerEvent, TriggerScope,
-        TriggerTiming, ViewDef, Volatility, is_volatile, schema_qualified_key,
+        SchemaLoadError, SchemaValidationError, Table, TableBuilder, TriggerDef, TriggerEvent,
+        TriggerScope, TriggerTiming, ViewDef, Volatility, is_volatile, schema_qualified_key,
     };
 }

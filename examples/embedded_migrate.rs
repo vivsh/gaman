@@ -11,7 +11,8 @@ async fn main() {
     let _ = dotenvy::dotenv();
 
     MigrationEngine::new(Config::default(), &MIGRATIONS)
-        .migrate().await
+        .migrate()
+        .await
         .expect("migrations failed");
 
     // start server, run jobs, etc.

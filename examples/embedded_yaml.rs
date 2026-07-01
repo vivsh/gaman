@@ -16,7 +16,15 @@ async fn main() {
         .with_schema(|s| s.load_file("schema.yaml"))
         .and_then(|e| Ok(e.handle_args()));
     match result {
-        Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
-        Ok(fut) => if let Err(e) = fut.await { eprintln!("error: {e}"); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
+        Ok(fut) => {
+            if let Err(e) = fut.await {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+        }
     }
 }

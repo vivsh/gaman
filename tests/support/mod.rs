@@ -9,16 +9,19 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use gaman::Config;
 use gaman::Migration;
-use gaman::core::{Decision, Dialect, Environment, EnvironmentError, EnvironmentExecutor, Invoker, Migrator, VecAdapter, BoxFuture};
+use gaman::core::{
+    BoxFuture, Decision, Dialect, Environment, EnvironmentError, EnvironmentExecutor, Migrator,
+    VecAdapter,
+};
 #[cfg(feature = "postgres")]
 use gaman::core::{Executor, ExecutorError, Introspectable, PostgresExecutor};
 use gaman::schema::{Operation, Schema};
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
 #[cfg(feature = "postgres")]
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 #[cfg(feature = "postgres")]
 use sqlx::{ConnectOptions, Row};
-use serde::de::DeserializeOwned;
-use serde::Deserialize;
 use thiserror::Error;
 
 #[cfg(feature = "postgres")]
@@ -71,12 +74,14 @@ impl Environment for FixtureEnvironment {
         &self.config
     }
 
-    fn executor<'a>(&'a self) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
-        Box::pin(async { Err(EnvironmentError::Config("executor is not available in the fixture environment".into())) })
-    }
-
-    fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
-        Ok(None)
+    fn executor<'a>(
+        &'a self,
+    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+        Box::pin(async {
+            Err(EnvironmentError::Config(
+                "executor is not available in the fixture environment".into(),
+            ))
+        })
     }
 
     fn dialect(&self) -> Dialect {
@@ -108,27 +113,33 @@ impl Environment for PostgresHarnessEnvironment {
         &self.config
     }
 
-    fn executor<'a>(&'a self) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+    fn executor<'a>(
+        &'a self,
+    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
         let url = self.config.database_url.clone();
         let schema = self.schema.clone();
         Box::pin(async move {
             let url = url.ok_or_else(|| {
-                EnvironmentError::Config("TEST_DATABASE_URL is not configured for the harness environment".into())
+                EnvironmentError::Config(
+                    "TEST_DATABASE_URL is not configured for the harness environment".into(),
+                )
             })?;
-            let opts = url.parse::<PgConnectOptions>()
+            let opts = url
+                .parse::<PgConnectOptions>()
                 .map_err(|e| EnvironmentError::Connect(e.to_string()))?
                 .ssl_mode(PgSslMode::Disable);
-            let mut conn = opts.connect().await
+            let mut conn = opts
+                .connect()
+                .await
                 .map_err(|e| EnvironmentError::Connect(e.to_string()))?;
             sqlx::query(&format!("SET search_path TO \"{schema}\""))
-                .execute(&mut conn).await
-                .map_err(|e| EnvironmentError::Connect(format!("failed to set search_path: {e}")))?;
+                .execute(&mut conn)
+                .await
+                .map_err(|e| {
+                    EnvironmentError::Connect(format!("failed to set search_path: {e}"))
+                })?;
             Ok(Box::new(PostgresExecutor::new(conn)) as Box<dyn EnvironmentExecutor>)
         })
-    }
-
-    fn invoker(&self) -> Result<Option<Box<dyn Invoker>>, EnvironmentError> {
-        Ok(None)
     }
 
     fn dialect(&self) -> Dialect {
@@ -322,7 +333,9 @@ pub fn build_migrator(
     let source = Box::new(VecAdapter::new(to_migrations(migrations)));
     let environment = Box::new(FixtureEnvironment::new(config, dialect.to_dialect()));
     Migrator::new(source, environment).map_err(|error| {
-        TestSupportError::message(format!("{case_name}: failed to construct migrator: {error}"))
+        TestSupportError::message(format!(
+            "{case_name}: failed to construct migrator: {error}"
+        ))
     })
 }
 
@@ -333,13 +346,21 @@ pub fn build_postgres_migrator(
     migrations: &[InlineMigration],
 ) -> Result<Migrator, TestSupportError> {
     let source = Box::new(VecAdapter::new(to_migrations(migrations)));
-    let environment = Box::new(PostgresHarnessEnvironment::new(&harness.url, &harness.schema));
+    let environment = Box::new(PostgresHarnessEnvironment::new(
+        &harness.url,
+        &harness.schema,
+    ));
     Migrator::new(source, environment).map_err(|error| {
-        TestSupportError::message(format!("{case_name}: failed to construct migrator: {error}"))
+        TestSupportError::message(format!(
+            "{case_name}: failed to construct migrator: {error}"
+        ))
     })
 }
 
-pub fn ordered_migrations(case_name: &str, migrator: &Migrator) -> Result<Vec<Migration>, TestSupportError> {
+pub fn ordered_migrations(
+    case_name: &str,
+    migrator: &Migrator,
+) -> Result<Vec<Migration>, TestSupportError> {
     let mut ordered = Vec::new();
     let ids = migrator.graph.topological_order().map_err(|error| {
         TestSupportError::message(format!("{case_name}: topological ordering failed: {error}"))
@@ -405,10 +426,14 @@ pub fn assert_schema_matches_with_dialect(
     }
 
     let actual_yaml = serde_yaml::to_string(&actual).map_err(|error| {
-        TestSupportError::message(format!("{case_name}: failed to serialize actual {label}: {error}"))
+        TestSupportError::message(format!(
+            "{case_name}: failed to serialize actual {label}: {error}"
+        ))
     })?;
     let expected_yaml = serde_yaml::to_string(&expected).map_err(|error| {
-        TestSupportError::message(format!("{case_name}: failed to serialize expected {label}: {error}"))
+        TestSupportError::message(format!(
+            "{case_name}: failed to serialize expected {label}: {error}"
+        ))
     })?;
 
     Err(TestSupportError::message(format!(
@@ -416,7 +441,11 @@ pub fn assert_schema_matches_with_dialect(
     )))
 }
 
-pub fn assert_sql_matches(case_name: &str, actual: &[String], expected: &str) -> Result<(), TestSupportError> {
+pub fn assert_sql_matches(
+    case_name: &str,
+    actual: &[String],
+    expected: &str,
+) -> Result<(), TestSupportError> {
     let actual_normalized = normalize_text(&actual.join("\n"));
     let expected_normalized = normalize_text(expected);
     if actual_normalized == expected_normalized {
@@ -425,8 +454,7 @@ pub fn assert_sql_matches(case_name: &str, actual: &[String], expected: &str) ->
 
     Err(TestSupportError::message(format!(
         "{case_name}: SQL mismatch\nexpected:\n{}\nactual:\n{}",
-        expected_normalized,
-        actual_normalized,
+        expected_normalized, actual_normalized,
     )))
 }
 
@@ -441,10 +469,14 @@ pub fn assert_ops_match(
     }
 
     let actual_yaml = serde_yaml::to_string(actual).map_err(|error| {
-        TestSupportError::message(format!("{case_name}: failed to serialize actual {label}: {error}"))
+        TestSupportError::message(format!(
+            "{case_name}: failed to serialize actual {label}: {error}"
+        ))
     })?;
     let expected_yaml = serde_yaml::to_string(expected).map_err(|error| {
-        TestSupportError::message(format!("{case_name}: failed to serialize expected {label}: {error}"))
+        TestSupportError::message(format!(
+            "{case_name}: failed to serialize expected {label}: {error}"
+        ))
     })?;
 
     Err(TestSupportError::message(format!(
@@ -470,8 +502,7 @@ pub fn assert_error_contains<T>(
             } else {
                 Err(TestSupportError::message(format!(
                     "{case_name}: expected failure containing '{}' but got '{}'",
-                    expected,
-                    actual,
+                    expected, actual,
                 )))
             }
         }
@@ -485,7 +516,9 @@ macro_rules! scope_field {
             .into_values()
             .filter_map(|mut item| match item.schema.as_deref() {
                 None => Some(item),
-                Some(current) if current == $schema || ($schema == "public" && current == "public") => {
+                Some(current)
+                    if current == $schema || ($schema == "public" && current == "public") =>
+                {
                     item.schema = None;
                     Some(item)
                 }
@@ -538,7 +571,10 @@ fn normalize_text(text: &str) -> String {
 }
 
 fn to_migrations(migrations: &[InlineMigration]) -> Vec<Migration> {
-    migrations.iter().map(InlineMigration::to_migration).collect()
+    migrations
+        .iter()
+        .map(InlineMigration::to_migration)
+        .collect()
 }
 
 #[cfg(feature = "postgres")]
@@ -552,11 +588,15 @@ pub struct PgHarness {
 impl PgHarness {
     pub async fn new() -> Result<Self, TestSupportError> {
         let url = test_database_url()?;
-        let opts = url.parse::<PgConnectOptions>()
-            .map_err(|e| TestSupportError::message(format!("failed to parse test database URL: {e}")))?
+        let opts = url
+            .parse::<PgConnectOptions>()
+            .map_err(|e| {
+                TestSupportError::message(format!("failed to parse test database URL: {e}"))
+            })?
             .ssl_mode(PgSslMode::Disable);
-        let conn = opts.connect().await
-            .map_err(|e| TestSupportError::message(format!("failed to connect to test database: {e}")))?;
+        let conn = opts.connect().await.map_err(|e| {
+            TestSupportError::message(format!("failed to connect to test database: {e}"))
+        })?;
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let schema = format!("gaman_test_{n}");
         Ok(Self { conn, schema, url })
@@ -567,8 +607,12 @@ impl PgHarness {
         let sql = format!(
             "DROP SCHEMA IF EXISTS \"{schema}\" CASCADE; CREATE SCHEMA \"{schema}\"; SET search_path TO \"{schema}\";"
         );
-        sqlx::raw_sql(&sql).execute(&mut self.conn).await
-            .map_err(|e| TestSupportError::message(format!("failed to reset schema '{schema}': {e}")))?;
+        sqlx::raw_sql(&sql)
+            .execute(&mut self.conn)
+            .await
+            .map_err(|e| {
+                TestSupportError::message(format!("failed to reset schema '{schema}': {e}"))
+            })?;
         Ok(())
     }
 
@@ -577,26 +621,38 @@ impl PgHarness {
     }
 
     pub async fn batch_execute(&mut self, sql: &str) -> Result<(), TestSupportError> {
-        sqlx::raw_sql(sql).execute(&mut self.conn).await
+        sqlx::raw_sql(sql)
+            .execute(&mut self.conn)
+            .await
             .map_err(|e| TestSupportError::message(format!("execute failed: {e}\n  SQL: {sql}")))?;
         Ok(())
     }
 
     pub async fn inspect_schema(&mut self) -> Result<Schema, TestSupportError> {
-        let opts = self.url.parse::<PgConnectOptions>()
-            .map_err(|e| TestSupportError::message(format!("failed to parse URL for inspect: {e}")))?
+        let opts = self
+            .url
+            .parse::<PgConnectOptions>()
+            .map_err(|e| {
+                TestSupportError::message(format!("failed to parse URL for inspect: {e}"))
+            })?
             .ssl_mode(PgSslMode::Disable);
-        let conn = opts.connect().await
-            .map_err(|e| TestSupportError::message(format!("failed to connect for inspect: {e}")))?;
+        let conn = opts.connect().await.map_err(|e| {
+            TestSupportError::message(format!("failed to connect for inspect: {e}"))
+        })?;
         let mut executor = PostgresExecutor::new(conn);
         executor
-            .inspect_db(&[self.schema.as_str()]).await
+            .inspect_db(&[self.schema.as_str()])
+            .await
             .map_err(|e| TestSupportError::message(format!("inspect_db failed: {e}")))
     }
 
-    pub async fn verify(&mut self, migrator: &Migrator) -> Result<Vec<Operation>, TestSupportError> {
+    pub async fn verify(
+        &mut self,
+        migrator: &Migrator,
+    ) -> Result<Vec<Operation>, TestSupportError> {
         migrator
-            .verify(self.schema.as_str()).await
+            .verify(self.schema.as_str())
+            .await
             .map_err(|e| TestSupportError::message(format!("verify failed: {e}")))
     }
 }
@@ -606,24 +662,36 @@ impl Executor for PgHarness {
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async move {
             sqlx::query(sql)
-                .execute(&mut self.conn).await
+                .execute(&mut self.conn)
+                .await
                 .map(|_| ())
                 .map_err(|e| ExecutorError::Execute(format!("{e}\n  SQL: {sql}")))
         })
     }
 
-    fn fetch_strings<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> {
+    fn fetch_strings<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> {
         Box::pin(async move {
             let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(sql)
-                .fetch_all(&mut self.conn).await
+                .fetch_all(&mut self.conn)
+                .await
                 .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-            rows.iter().map(|row| row.try_get::<String, _>(0).map_err(|e| ExecutorError::Fetch(e.to_string()))).collect()
+            rows.iter()
+                .map(|row| {
+                    row.try_get::<String, _>(0)
+                        .map_err(|e| ExecutorError::Fetch(e.to_string()))
+                })
+                .collect()
         })
     }
 
     fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async move {
-            sqlx::query("BEGIN").execute(&mut self.conn).await
+            sqlx::query("BEGIN")
+                .execute(&mut self.conn)
+                .await
                 .map(|_| ())
                 .map_err(|e| ExecutorError::Transaction(e.to_string()))
         })
@@ -631,7 +699,9 @@ impl Executor for PgHarness {
 
     fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async move {
-            sqlx::query("COMMIT").execute(&mut self.conn).await
+            sqlx::query("COMMIT")
+                .execute(&mut self.conn)
+                .await
                 .map(|_| ())
                 .map_err(|e| ExecutorError::Transaction(e.to_string()))
         })
@@ -639,7 +709,9 @@ impl Executor for PgHarness {
 
     fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async move {
-            sqlx::query("ROLLBACK").execute(&mut self.conn).await
+            sqlx::query("ROLLBACK")
+                .execute(&mut self.conn)
+                .await
                 .map(|_| ())
                 .map_err(|e| ExecutorError::Transaction(e.to_string()))
         })

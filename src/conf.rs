@@ -19,7 +19,11 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(database_url: Option<String>, migrations_dir: PathBuf, schema_file: PathBuf) -> Self {
+    pub fn new(
+        database_url: Option<String>,
+        migrations_dir: PathBuf,
+        schema_file: PathBuf,
+    ) -> Self {
         Self {
             database_url,
             migrations_dir,

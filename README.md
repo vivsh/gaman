@@ -280,7 +280,7 @@ The short version:
 
 - `gaman make_migration name` writes the next migration by diffing your schema against replayed history.
 - `gaman migrate` applies pending migrations.
-- `gaman sql_migrate` prints SQL without touching a database.
+- `gaman sql_migrate` prints offline migration-operation SQL without touching a database.
 - `gaman verify_db` compares the live database against replayed state.
 - `gaman inspect_db` bootstraps a `schema.yaml` from an existing database.
 
@@ -308,7 +308,7 @@ Offline transform cases live under `tests/cases/offline/`, and PostgreSQL-backed
 
 ## Database Support
 
-Engine-specific migration files are expected; Gaman does not try to make one file portable across databases. Unsupported operations fail during validation or SQL rendering instead of silently producing no-op SQL. `Statement` remains the escape hatch for database-specific SQL outside the modeled schema superset.
+Engine-specific migration files are expected; Gaman does not try to make one file portable across databases. Unsupported operations fail during validation or SQL rendering instead of silently producing no-op SQL. `sql_migrate` is offline and excludes runtime lifecycle SQL such as tracking-table installation, locks, transactions, and record/unrecord statements. `Statement` remains the escape hatch for database-specific SQL outside the modeled schema superset.
 
 Legend: ✅ implemented, 🚧 planned but not implemented, ❌ unsupported by design or by the database engine.
 

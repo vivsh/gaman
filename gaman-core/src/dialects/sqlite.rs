@@ -1,7 +1,7 @@
 use crate::dialects::DialectError;
 use crate::migrations::Migration;
 use crate::operations::Operation;
-use crate::states::{Column, Constraint, Index, Schema, Table, ViewDef};
+use crate::states::{Column, Constraint, Index, Schema, SchemaValidationError, Table, ViewDef};
 
 fn unsupported(op: &str, reason: impl Into<String>) -> DialectError {
     DialectError::Unsupported(op.to_string(), reason.into())
@@ -704,8 +704,7 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
         | Operation::CreateEnum { .. }
         | Operation::DropEnum { .. }
         | Operation::RenameEnumValue { .. }
-        | Operation::AlterEnum { .. }
-        | Operation::Invoke { .. } => Err(unsupported(
+        | Operation::AlterEnum { .. } => Err(unsupported(
             op.type_name(),
             "operation is not supported by the SQLite dialect",
         )),
@@ -781,10 +780,123 @@ pub fn create_tracking_table_sql() -> Vec<String> {
 }
 
 pub fn normalize_type(t: &str) -> &str {
-    match t {
-        "int" | "int4" | "integer" => "integer",
-        "bool" | "boolean" => "integer",
-        "varchar" | "character varying" | "text" => "text",
-        other => other,
+    TYPE_ALIASES
+        .iter()
+        .find_map(|(alias, canonical)| (*alias == t).then_some(*canonical))
+        .unwrap_or(t)
+}
+
+const TYPE_ALIASES: &[(&str, &str)] = &[
+    ("bigint", "integer"),
+    ("bool", "integer"),
+    ("boolean", "integer"),
+    ("character varying", "text"),
+    ("clob", "text"),
+    ("double", "real"),
+    ("double precision", "real"),
+    ("float", "real"),
+    ("int", "integer"),
+    ("int2", "integer"),
+    ("int4", "integer"),
+    ("int8", "integer"),
+    ("mediumint", "integer"),
+    ("native character", "text"),
+    ("nvarchar", "text"),
+    ("smallint", "integer"),
+    ("varchar", "text"),
+    ("varying character", "text"),
+];
+
+const STORAGE_CLASSES: &[&str] = &["blob", "integer", "numeric", "real", "text"];
+
+pub fn canonical_type(t: &str) -> String {
+    canonical_type_inner(t).unwrap_or_else(|| normalize_type_text(t))
+}
+
+pub fn validate_schema(schema: &Schema) -> Result<(), SchemaValidationError> {
+    if !schema.extensions.is_empty() {
+        let names = schema
+            .extensions
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(SchemaValidationError::Invalid(format!(
+            "SQLite does not support extensions: {names}"
+        )));
     }
+    if !schema.enums.is_empty() {
+        let names = schema.enums.keys().cloned().collect::<Vec<_>>().join(", ");
+        return Err(SchemaValidationError::Invalid(format!(
+            "SQLite does not support enums: {names}"
+        )));
+    }
+    if !schema.functions.is_empty() {
+        let names = schema
+            .functions
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(SchemaValidationError::Invalid(format!(
+            "SQLite does not support stored functions: {names}"
+        )));
+    }
+
+    for (table_name, table) in &schema.tables {
+        if table.schema.is_some() {
+            return Err(SchemaValidationError::Invalid(format!(
+                "SQLite does not support schema-qualified tables: {table_name}"
+            )));
+        }
+        if !table.triggers.is_empty() {
+            let names = table
+                .triggers
+                .iter()
+                .map(|trigger| trigger.name.as_deref().unwrap_or("<unnamed>"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(SchemaValidationError::Invalid(format!(
+                "SQLite does not support modeled triggers on table {table_name}: {names}"
+            )));
+        }
+        for column in &table.columns {
+            if canonical_type_inner(&column.col_type).is_none() {
+                return Err(SchemaValidationError::Invalid(format!(
+                    "table {table_name} column {}: unknown SQLite type '{}'",
+                    column.name, column.col_type
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn canonical_type_inner(t: &str) -> Option<String> {
+    let normalized = normalize_type_text(t);
+    let (base, _) = split_type_modifier(&normalized);
+    let canonical_base = TYPE_ALIASES
+        .iter()
+        .find_map(|(alias, canonical)| (*alias == base).then_some(*canonical))
+        .unwrap_or(base);
+
+    STORAGE_CLASSES
+        .binary_search(&canonical_base)
+        .is_ok()
+        .then(|| canonical_base.to_string())
+}
+
+fn split_type_modifier(t: &str) -> (&str, &str) {
+    match t.find('(') {
+        Some(start) if t.ends_with(')') => (&t[..start], &t[start..]),
+        _ => (t, ""),
+    }
+}
+
+fn normalize_type_text(t: &str) -> String {
+    t.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
 }

@@ -106,8 +106,8 @@ no-op SQL.
 - The offline layer should be practical for browser use through
   `wasm32-unknown-unknown`; browser callers provide schemas and migrations as
   strings or in-memory values.
-- SQL rendering for `sql_migrate` should be offline but should match the SQL
-  that migration application will run.
+- SQL rendering for `sql_migrate` should be offline but should match the
+  migration-operation SQL that live migration application will execute.
 - Migration application and `inspect_db` require a live database.
 - Unsupported and unimplemented features should fail as early as possible.
 - Dialects should support native behavior for their engine; migration files are
@@ -210,9 +210,12 @@ should run before migration files are written and should cover:
 
 ### SQL Rendering
 
-`sql_migrate` renders the same SQL plan that live migration application will run,
-but without connecting to a database. Rendering therefore uses replayed schema
-state when an operation needs context, such as SQLite table rebuilds.
+`sql_migrate` renders the same migration-operation SQL plan that live migration
+application will execute, but without connecting to a database. Rendering
+therefore uses replayed schema state when an operation needs context, such as
+SQLite table rebuilds. It intentionally excludes runtime lifecycle SQL such as
+tracking-table installation, locks, transaction boundaries, and record/unrecord
+statements.
 
 Partially supported operations may emit SQL comments only when the live path
 would do the same thing. If live migration would fail, offline SQL rendering
@@ -220,7 +223,7 @@ should fail early too.
 
 `Dialect::operation_to_sql()` remains a simple single-operation renderer. SQLite
 operations that require rebuild context should fail there and instruct callers to
-render through `Migrator`.
+render through `Migrator` or `OfflinePlanner`.
 
 ### Live Migration
 
@@ -367,8 +370,9 @@ cargo check -p gaman --no-default-features --features offline-sqlite --target wa
 ```
 
 Offline builds must not compile SQLx, Tokio, argh, dotenvy, native TLS, or
-executor modules. `sql_migrate` remains offline by using the same renderer that
-live migration application uses for the selected dialect and replay state.
+executor modules. `sql_migrate` remains offline by using the same
+migration-operation renderer that live migration application uses for the
+selected dialect and replay state.
 Use the facade's `offline-sqlite` feature, or `gaman-core` with its `sqlite`
 feature, when browser/offline callers need SQLite SQL rendering without a live
 SQLite driver.
@@ -397,8 +401,8 @@ and compile them into explicit `Statement` operations before handing migrations
 to Gaman, but the migration file itself must remain self-contained.
 
 External process invocation is outside Gaman's migration contract. `Invoke`,
-invoker traits, subprocess execution, and related entities should be removed
-from the operation model and native execution layer. Migration application must
+invoker traits, subprocess execution, and related entities are not part of the
+operation model or native execution layer. Migration application must
 execute database operations only; external tooling belongs before migration
 generation, not inside migration application.
 

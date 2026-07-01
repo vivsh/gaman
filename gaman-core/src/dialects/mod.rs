@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::migrations::Migration;
 use crate::operations::Operation;
-use crate::states::Schema;
+use crate::states::{Schema, SchemaValidationError};
 
 #[derive(Debug, Error)]
 pub enum DialectError {
@@ -56,6 +56,22 @@ impl Dialect {
                 .map(postgres::operation_to_sql)
                 .collect::<Result<Vec<_>, _>>()
                 .map(|chunks| chunks.into_iter().flatten().collect()),
+            #[cfg(feature = "sqlite")]
+            Dialect::Sqlite => sqlite::migration_to_sql(migration, _start),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn plan_migration_sql(
+        &self,
+        migration: &Migration,
+        _start: &Schema,
+    ) -> Result<Vec<String>, DialectError> {
+        match self {
+            Dialect::Postgres => {
+                postgres::validate_migration(migration)?;
+                self.migration_to_sql(migration, _start)
+            }
             #[cfg(feature = "sqlite")]
             Dialect::Sqlite => sqlite::migration_to_sql(migration, _start),
         }
@@ -127,6 +143,22 @@ impl Dialect {
             Dialect::Postgres => postgres::normalize_type(t),
             #[cfg(feature = "sqlite")]
             Dialect::Sqlite => sqlite::normalize_type(t),
+        }
+    }
+
+    pub fn canonical_type(&self, t: &str) -> String {
+        match self {
+            Dialect::Postgres => postgres::canonical_type(t),
+            #[cfg(feature = "sqlite")]
+            Dialect::Sqlite => sqlite::canonical_type(t),
+        }
+    }
+
+    pub fn validate_schema(&self, schema: &Schema) -> Result<(), SchemaValidationError> {
+        match self {
+            Dialect::Postgres => postgres::validate_schema(schema),
+            #[cfg(feature = "sqlite")]
+            Dialect::Sqlite => sqlite::validate_schema(schema),
         }
     }
 

@@ -79,10 +79,6 @@ pub enum Operation {
         up: String,
         down: Option<String>,
     },
-    Invoke {
-        up: String,
-        down: Option<String>,
-    },
     CreateFunction {
         function: FunctionDef,
     },
@@ -158,7 +154,6 @@ impl Operation {
             | Self::AddConstraint { .. }
             | Self::DropConstraint { .. } => self.inverse_table_item_op(),
             Self::Statement { .. }
-            | Self::Invoke { .. }
             | Self::CreateFunction { .. }
             | Self::AlterFunction { .. }
             | Self::DropFunction { .. } => self.inverse_function_op(),
@@ -289,14 +284,6 @@ impl Operation {
                 down: Some(up.clone()),
             }),
             Self::Statement { down: None, .. } => None,
-            Self::Invoke {
-                up,
-                down: Some(down),
-            } => Some(Self::Invoke {
-                up: down.clone(),
-                down: Some(up.clone()),
-            }),
-            Self::Invoke { down: None, .. } => None,
             Self::CreateFunction { function } => Some(Self::DropFunction {
                 function: function.clone(),
             }),
@@ -495,7 +482,7 @@ impl Operation {
                     Cow::Borrowed(&old.name)
                 }
             }
-            Self::Statement { up, .. } | Self::Invoke { up, .. } => Cow::Borrowed(up),
+            Self::Statement { up, .. } => Cow::Borrowed(up),
         }
     }
 
@@ -515,7 +502,6 @@ impl Operation {
             Self::AddConstraint { .. } => "add_constraint",
             Self::DropConstraint { .. } => "drop_constraint",
             Self::Statement { .. } => "statement",
-            Self::Invoke { .. } => "invoke",
             Self::CreateFunction { .. } => "create_function",
             Self::AlterFunction { .. } => "alter_function",
             Self::DropFunction { .. } => "drop_function",
@@ -564,7 +550,7 @@ impl Operation {
             Self::CreateTrigger { .. } | Self::AlterTrigger { .. } | Self::DropTrigger { .. } => {
                 Some(EntityKind::Trigger)
             }
-            Self::RenameTable { .. } | Self::Statement { .. } | Self::Invoke { .. } => None,
+            Self::RenameTable { .. } | Self::Statement { .. } => None,
         }
     }
 
@@ -689,10 +675,7 @@ impl Operation {
             | Self::RenameEnumValue { .. }
             | Self::AlterEnum { .. }
             | Self::DropEnum { .. } => vec![],
-            Self::RenameTable { .. }
-            | Self::RenameColumn { .. }
-            | Self::Statement { .. }
-            | Self::Invoke { .. } => vec![],
+            Self::RenameTable { .. } | Self::RenameColumn { .. } | Self::Statement { .. } => vec![],
         }
     }
 
