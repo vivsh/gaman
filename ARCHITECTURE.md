@@ -193,7 +193,7 @@ canonicalization, typo suggestions, and helpful prompts. They are not a claim
 that Gaman knows the full database type universe. Unknown types must not be
 rejected solely because they are absent from these files.
 
-Unknown data-type handling is replay-aware:
+Unknown data-type handling uses trust on first use (TOFU) and is replay-aware:
 
 1. Replay committed migrations into the previous schema.
 2. Prepare the previous schema and desired schema for the selected dialect.
