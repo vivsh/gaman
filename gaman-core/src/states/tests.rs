@@ -1399,6 +1399,27 @@ fn builder_composite_foreign_key_preserves_order() {
     assert_eq!(fk.to_columns, ["tenant_id", "id"]);
 }
 
+/// TableBuilder::column_from_type uses ColumnType metadata and then applies overrides.
+#[test]
+fn builder_column_from_type_infers_type_and_allows_overrides() {
+    let table = TableBuilder::new("users")
+        .column_from_type::<String>(&Dialect::Postgres, "name", |c| c.not_null())
+        .column_from_type::<Option<i64>>(&Dialect::Postgres, "age", |c| c)
+        .column_from_type::<Option<String>>(&Dialect::Postgres, "email", |c| c.not_null())
+        .build();
+
+    let name = table.columns.iter().find(|c| c.name == "name").unwrap();
+    let age = table.columns.iter().find(|c| c.name == "age").unwrap();
+    let email = table.columns.iter().find(|c| c.name == "email").unwrap();
+
+    assert_eq!(name.col_type, "text");
+    assert!(!name.nullable);
+    assert_eq!(age.col_type, "bigint");
+    assert!(age.nullable);
+    assert_eq!(email.col_type, "text");
+    assert!(!email.nullable);
+}
+
 #[test]
 fn builder_unnamed_helpers_generate_deterministic_names() {
     let table = TableBuilder::new("orders")

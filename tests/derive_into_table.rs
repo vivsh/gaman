@@ -1,6 +1,6 @@
 use gaman::IntoTable;
 use gaman::core::Dialect;
-use gaman::schema::{Constraint, Table};
+use gaman::schema::{Constraint, Table, TableBuilder};
 
 #[allow(dead_code)]
 #[derive(IntoTable)]
@@ -80,6 +80,33 @@ struct Order {
 struct UnnamedFkOrder {
     tenant_id: i64,
     user_id: i64,
+}
+
+#[allow(dead_code)]
+#[derive(IntoTable)]
+#[table(
+    name = "builder_users",
+    schema = "app",
+    primary_key(columns("tenant_id", "id")),
+    foreign_key(
+        columns("tenant_id", "org_id"),
+        references(table = "orgs", columns("tenant_id", "id"))
+    )
+)]
+struct BuilderParityUser {
+    tenant_id: i64,
+    id: i64,
+    #[column(name = "email_address", index, unique)]
+    email: String,
+    #[column(r#type = "citext", nullable = true, default = "'anon'")]
+    handle: String,
+    #[column(nullable = false)]
+    bio: Option<String>,
+    org_id: i64,
+    #[column(references = "roles.id", references_name = "builder_users_role_fkey")]
+    role_id: i64,
+    #[column(check = "age >= 0")]
+    age: Option<i32>,
 }
 
 fn table<T: gaman::schema::IntoTable>() -> Table {
@@ -181,4 +208,30 @@ fn derive_into_table_generates_name_for_composite_foreign_key() {
     assert_eq!(fk.columns, ["tenant_id", "user_id"]);
     assert_eq!(fk.to_table, "users");
     assert_eq!(fk.to_columns, ["tenant_id", "id"]);
+}
+
+/// Verifies IntoTable derive emits the same table model as the public TableBuilder API.
+#[test]
+fn derive_into_table_matches_equivalent_table_builder() {
+    let dialect = Dialect::Postgres;
+    let derived = table::<BuilderParityUser>();
+    let built = TableBuilder::new("builder_users")
+        .schema("app")
+        .column_from_type::<i64>(&dialect, "tenant_id", |c| c)
+        .column_from_type::<i64>(&dialect, "id", |c| c)
+        .column_from_type::<String>(&dialect, "email_address", |c| c)
+        .column("handle", "citext", |c| c.nullable().default("'anon'"))
+        .column_from_type::<Option<String>>(&dialect, "bio", |c| c.not_null())
+        .column_from_type::<i64>(&dialect, "org_id", |c| c)
+        .column_from_type::<i64>(&dialect, "role_id", |c| {
+            c.references_named("builder_users_role_fkey", "roles", "id")
+        })
+        .column_from_type::<Option<i32>>(&dialect, "age", |c| c.check("age >= 0"))
+        .primary_key_columns(&["tenant_id", "id"])
+        .foreign_key_columns(&["tenant_id", "org_id"], "orgs", &["tenant_id", "id"])
+        .index_columns(&["email_address"])
+        .unique_columns(&["email_address"])
+        .build();
+
+    assert_eq!(derived, built);
 }

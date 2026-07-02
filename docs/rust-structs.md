@@ -39,7 +39,7 @@ Column attributes fall into a few groups.
 
 ### Type and nullability
 
-- `#[column(type = "...")]` sets the SQL type explicitly. This is the usual escape hatch for third-party types like `uuid` or `timestamptz`.
+- `#[column(r#type = "...")]` sets the SQL type explicitly. This is the usual escape hatch for third-party types like `uuid` or `timestamptz`.
 - `#[column(nullable)]` forces the column to be nullable.
 - `#[column(nullable = false)]` forces the column to be non-nullable.
 
@@ -79,35 +79,44 @@ struct Order {
 ## Builder API
 
 Use `TableBuilder` when schema is generated from Rust code instead of derive
-attributes. The common helpers cover columns, keys, indexes, and constraints.
-For triggers, pass the schema model directly so the public builder surface stays
-small:
+attributes. `IntoTable` itself lowers to this builder surface, so libraries that
+cannot use proc macros can construct the same table metadata directly.
+
+Use `column_from_type::<T>(&dialect, ...)` when you want the same Rust type to
+SQL type inference that derive uses. Use `column(...)` when the SQL type is
+explicit, matching `#[column(r#type = "...")]`.
 
 ```rust
-use gaman::schema::{
-    TableBuilder, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming,
-};
+use gaman::core::Dialect;
+use gaman::schema::TableBuilder;
 
+let dialect = Dialect::Postgres;
 let table = TableBuilder::new("orders")
-    .column("tenant_id", "bigint", |c| c.not_null())
-    .column("id", "bigint", |c| c.not_null())
-    .column("email", "text", |c| c.not_null())
+    .column_from_type::<i64>(&dialect, "tenant_id", |c| c)
+    .column_from_type::<i64>(&dialect, "id", |c| c)
+    .column_from_type::<String>(&dialect, "email", |c| c)
     .primary_key_columns(&["tenant_id", "id"])
     .index_columns(&["email"])
-    .unique_columns(&["tenant_id", "email"])
-    .check_expr("tenant_id > 0")
-    .trigger(TriggerDef {
-        name: None,
-        timing: TriggerTiming::After,
-        events: vec![TriggerEvent::Insert],
-        scope: TriggerScope::Row,
-        function_name: None,
-        when: None,
-        query: Some("INSERT INTO audit_log(order_id) VALUES (NEW.id);".to_string()),
-        language: None,
-    })
+    .unique_columns(&["email"])
     .build();
 ```
+
+The equivalent derive form is:
+
+```rust
+#[derive(gaman::IntoTable)]
+#[table(name = "orders", primary_key(columns("tenant_id", "id")))]
+struct Order {
+    tenant_id: i64,
+    id: i64,
+    #[column(index)]
+    #[column(unique)]
+    email: String,
+}
+```
+
+For table-level checks and triggers, use `.check_expr(...)`, `.check(...)`, or
+`.trigger(TriggerDef { ... })` directly on the builder.
 
 PostgreSQL wraps trigger queries in generated trigger functions and supplies the
 normal return statement. Set `function_name` instead of `query` when you want to
@@ -130,4 +139,4 @@ impl ColumnType for MyId {
 }
 ```
 
-Use `#[column(type = "...")]` when you cannot add that trait impl, or when only one field needs a special SQL type.
+Use `#[column(r#type = "...")]` when you cannot add that trait impl, or when only one field needs a special SQL type.

@@ -33,7 +33,9 @@ unsupported operations fail clearly instead of becoming no-op SQL.
 - YAML, JSON, SQL DDL, and Rust structs can all feed the same engine.
 - Ambiguous or risky changes are surfaced before migration files are written.
 - `sql_migrate` previews the operation SQL without opening a database connection.
-- Embedded migrations can ship inside Rust binaries and compose across crates.
+- Rust applications can use the same `MigrationEngine` API as the CLI.
+- Migration storage is pluggable: embedded files, directories, in-memory stores,
+  and future browser buffers are adapters, not engine assumptions.
 
 ## Quick Start
 
@@ -204,7 +206,7 @@ struct User {
     id: i64,
     email: String,
     bio: Option<String>,
-    #[column(type = "timestamptz")]
+    #[column(r#type = "timestamptz")]
     created_at: chrono::DateTime<chrono::Utc>,
     #[column(references = "orgs.id")]
     org_id: i64,
@@ -214,6 +216,10 @@ struct User {
 Field-level attributes are ergonomic shorthands. Multi-column primary keys and
 foreign keys are represented as table-level metadata so column order and
 constraint names are preserved.
+
+Libraries that cannot or do not want to use proc macros can construct identical
+table metadata through `TableBuilder`, including typed columns through
+`column_from_type::<T>(&dialect, ...)`.
 
 See [docs/rust-structs.md](docs/rust-structs.md) for the full derive reference.
 
@@ -322,6 +328,12 @@ fn main() {
 Embedded migrations are resolved at compile time. Applications split across
 multiple crates can compose each crate's migration tree into one ordered graph;
 Gaman namespaces child migrations so IDs do not collide.
+
+`MigrationEngine` is also storage-neutral. Embedded migrations are the common
+binary-shipping path, but library users can provide any `MigrationSource`,
+including in-memory or application-owned stores. The same engine API exposes
+offline SQL rendering through `sql_migrate`, non-interactive migration
+generation, live migration application, inspection, and verification.
 
 See [docs/embedding.md](docs/embedding.md) for the full embedding API.
 

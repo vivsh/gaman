@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `MigrationEngine` now exposes CLI-equivalent orchestration APIs for offline
+  SQL rendering, rollback SQL rendering, non-interactive migration generation,
+  migration checks, merge migrations, fake targeted migration, and table-scoped
+  live inspection.
+- `MigrationEngine::from_source` and `MigrationEngine::from_shared_source` allow
+  callers to provide custom migration storage through `MigrationSource` instead
+  of assuming filesystem-backed migrations.
+- `TableBuilder::column_from_type<T>()` exposes the same dialect-aware Rust type
+  mapping used by `IntoTable` derive for non-macro integrations.
+
+### Changed
+
+- CLI command handling now delegates orchestration to `MigrationEngine`, keeping
+  CLI code focused on argument parsing and output formatting.
+- `IntoTable` derive now emits thinner `TableBuilder` calls for typed columns
+  and unnamed indexes/constraints instead of duplicating name derivation.
+
 ## [0.3.19] - 2026-07-03
 
 ### Added

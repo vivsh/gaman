@@ -106,7 +106,7 @@ impl Environment for FixtureEnvironment {
 
     fn executor<'a>(
         &'a self,
-    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor + Send>, EnvironmentError>> {
         Box::pin(async {
             Err(EnvironmentError::Config(
                 "executor is not available in the fixture environment".into(),
@@ -163,7 +163,7 @@ impl Environment for SqliteHarnessEnvironment {
 
     fn executor<'a>(
         &'a self,
-    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor + Send>, EnvironmentError>> {
         let url = self.config.database_url.clone();
         Box::pin(async move {
             let url = url.ok_or_else(|| {
@@ -174,7 +174,8 @@ impl Environment for SqliteHarnessEnvironment {
                 .connect()
                 .await
                 .map_err(|e| EnvironmentError::Connect(e.to_string()))?;
-            Ok(Box::new(gaman::core::SqliteExecutor::new(conn)) as Box<dyn EnvironmentExecutor>)
+            Ok(Box::new(gaman::core::SqliteExecutor::new(conn))
+                as Box<dyn EnvironmentExecutor + Send>)
         })
     }
 
@@ -191,7 +192,7 @@ impl Environment for PostgresHarnessEnvironment {
 
     fn executor<'a>(
         &'a self,
-    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor + Send>, EnvironmentError>> {
         let url = self.config.database_url.clone();
         let schema = self.schema.clone();
         Box::pin(async move {
@@ -214,7 +215,7 @@ impl Environment for PostgresHarnessEnvironment {
                 .map_err(|e| {
                     EnvironmentError::Connect(format!("failed to set search_path: {e}"))
                 })?;
-            Ok(Box::new(PostgresExecutor::new(conn)) as Box<dyn EnvironmentExecutor>)
+            Ok(Box::new(PostgresExecutor::new(conn)) as Box<dyn EnvironmentExecutor + Send>)
         })
     }
 

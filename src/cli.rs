@@ -1,15 +1,7 @@
-use std::sync::Arc;
-
-use crate::adapters::YamlAdapter;
 use crate::conf::Config;
-use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
-use crate::executor::{BoxFuture, connect_environment_executor};
-use crate::migrator::{Migrator, MigratorError};
-use crate::prompter::CliPromptEngine;
+use crate::engine::{EngineError, MigrationEngine, clarifications_disabled_message};
 use argh::FromArgs;
 use gaman_core::dialects::Dialect;
-use gaman_core::disambiguator::{Clarification, Decision, PromptEngine, clarification_message};
-use gaman_core::states::Schema;
 
 /// Gaman CLI.
 #[derive(FromArgs, Debug)]
@@ -148,49 +140,9 @@ pub struct InspectDbCmd {
 #[derive(Debug, thiserror::Error)]
 pub enum CommandError {
     #[error("{0}")]
-    Migrator(#[from] MigratorError),
-    #[error("{0}")]
     Config(String),
     #[error("{0}")]
     Io(#[from] std::io::Error),
-}
-
-struct CommandEnvironment {
-    config: Arc<Config>,
-    dialect: Option<Dialect>,
-}
-
-impl CommandEnvironment {
-    fn new(config: Arc<Config>, dialect: Option<Dialect>) -> Self {
-        Self { config, dialect }
-    }
-}
-
-impl Environment for CommandEnvironment {
-    fn config(&self) -> &Arc<Config> {
-        &self.config
-    }
-
-    fn executor<'a>(
-        &'a self,
-    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
-        Box::pin(async move {
-            let url = self.config.database_url.as_deref().ok_or_else(|| {
-                EnvironmentError::Config(
-                    "DATABASE_URL is not set — pass --database-url or set it in .env".into(),
-                )
-            })?;
-            connect_environment_executor(self.dialect(), url, self.config.tls)
-                .await
-                .map_err(EnvironmentError::from)
-        })
-    }
-
-    fn dialect(&self) -> Dialect {
-        self.dialect
-            .or_else(|| self.config.dialect())
-            .unwrap_or(Dialect::Postgres)
-    }
 }
 
 impl GamanArgs {
@@ -222,37 +174,19 @@ pub async fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
     let mut config = Config::default();
     let (cmd, dialect) = args.apply_to(&mut config);
     let dialect = parse_dialect(dialect)?;
-    let config = Arc::new(config);
-    let source = Box::new(YamlAdapter {
-        directory: config.migrations_dir.clone(),
-    });
-    let environment = Box::new(CommandEnvironment::new(Arc::clone(&config), dialect));
-    let migrator = Migrator::new(source, environment)?;
-    dispatch(migrator, None, cmd).await
+    let engine = MigrationEngine::from_cli_config(config, dialect, None);
+    dispatch(engine, cmd).await
 }
 
-pub(crate) async fn dispatch(
-    migrator: Migrator,
-    embedded_schema: Option<Schema>,
-    cmd: Command,
-) -> Result<(), CommandError> {
+pub(crate) async fn dispatch(engine: MigrationEngine, cmd: Command) -> Result<(), CommandError> {
     match cmd {
         Command::Config(_) => {
-            println!(
-                "  migrations_dir  {}",
-                migrator.config().migrations_dir.display()
-            );
-            println!(
-                "  schema_file     {}",
-                migrator.config().schema_file.display()
-            );
+            let config = engine.config();
+            println!("  migrations_dir  {}", config.migrations_dir.display());
+            println!("  schema_file     {}", config.schema_file.display());
             println!(
                 "  database_url    {}",
-                migrator
-                    .config()
-                    .database_url
-                    .as_deref()
-                    .unwrap_or("(not set)")
+                config.database_url.as_deref().unwrap_or("(not set)")
             );
             Ok(())
         }
@@ -261,75 +195,42 @@ pub(crate) async fn dispatch(
                 let name = cmd
                     .name
                     .ok_or_else(|| CommandError::Config("a name is required for --merge".into()))?;
-                migrator.make_merge_migration(name).map(|_| ())?;
+                engine.make_merge_migration(&name).map_err(command_error)?;
                 Ok(())
             } else if cmd.empty {
                 let name = cmd
                     .name
                     .ok_or_else(|| CommandError::Config("a name is required for --empty".into()))?;
-                migrator.make_empty_migration(name).map(|_| ())?;
+                engine.make_empty_migration(&name).map_err(command_error)?;
                 Ok(())
             } else if cmd.check {
-                let current = match embedded_schema {
-                    Some(s) => s,
-                    None => Schema::from_file(&migrator.config().schema_file)
-                        .map_err(|e| CommandError::Config(e.to_string()))?,
-                };
-                let name = cmd.name.clone().unwrap_or_else(|| "check".into());
-                match migrator.make_migrations(Some(name), current, true, &[]) {
-                    Err(MigratorError::NeedsInput(clars)) => Err(clarifications_disabled_error(
-                        "make_migration --check",
-                        &clars,
-                    )),
-                    Err(e) => Err(CommandError::Migrator(e)),
-                    Ok(Some(_)) => Err(CommandError::Config(
-                        "schema has changes not yet in a migration".into(),
-                    )),
-                    Ok(None) => Ok(()),
+                engine.make_migration_check().map_err(command_error)
+            } else if cmd.dry_run {
+                let result = if cmd.non_interactive {
+                    engine.make_migration_dry_run_non_interactive(cmd.name.as_deref())
+                } else {
+                    engine.make_migration_dry_run(cmd.name.as_deref())
                 }
+                .map_err(command_error)?;
+                print_migration_result(result);
+                Ok(())
+            } else if cmd.non_interactive {
+                let result = engine
+                    .make_migration_non_interactive(cmd.name.as_deref())
+                    .map_err(command_error)?;
+                print_migration_result(result);
+                Ok(())
             } else {
-                let current = match embedded_schema {
-                    Some(s) => s,
-                    None => Schema::from_file(&migrator.config().schema_file)
-                        .map_err(|e| CommandError::Config(e.to_string()))?,
-                };
-                let engine = CliPromptEngine;
-                let mut decisions: Vec<Decision> = vec![];
-                loop {
-                    match migrator.make_migrations(
-                        cmd.name.clone(),
-                        current.clone(),
-                        cmd.dry_run,
-                        &decisions,
-                    ) {
-                        Err(MigratorError::NeedsInput(clars)) => {
-                            if cmd.non_interactive {
-                                return Err(clarifications_disabled_error(
-                                    "make_migration --non-interactive",
-                                    &clars,
-                                ));
-                            }
-                            let new = engine
-                                .prompt(&clars)
-                                .map_err(|e| CommandError::Config(e.to_string()))?;
-                            decisions.extend(new);
-                        }
-                        Err(e) => return Err(CommandError::Migrator(e)),
-                        Ok(Some(m)) => {
-                            println!("Created: {}", m.id);
-                            break Ok(());
-                        }
-                        Ok(None) => {
-                            println!("No changes detected.");
-                            break Ok(());
-                        }
-                    }
-                }
+                let result = engine
+                    .make_migration_named(cmd.name.as_deref())
+                    .map_err(command_error)?;
+                print_migration_result(result);
+                Ok(())
             }
         }
         Command::Migrate(cmd) => {
             if cmd.plan {
-                match migrator.plan().await {
+                match engine.plan().await.map_err(command_error) {
                     Ok(pending) if pending.is_empty() => {
                         println!("No pending migrations.");
                         Ok(())
@@ -340,25 +241,41 @@ pub(crate) async fn dispatch(
                         }
                         Ok(())
                     }
-                    Err(e) => Err(CommandError::Migrator(e)),
+                    Err(e) => Err(e),
                 }
             } else if cmd.check {
-                let has_pending = migrator.check().await.map_err(CommandError::from)?;
+                let has_pending = engine.check().await.map_err(command_error)?;
                 if has_pending {
                     Err(CommandError::Config("pending migrations exist".into()))
                 } else {
                     Ok(())
                 }
+            } else if cmd.fake {
+                match cmd.target.as_deref() {
+                    Some(target) => engine
+                        .fake_migrate_to(target)
+                        .await
+                        .map(|_| ())
+                        .map_err(command_error),
+                    None => engine
+                        .fake_migrate()
+                        .await
+                        .map(|_| ())
+                        .map_err(command_error),
+                }
             } else {
-                migrator
-                    .migrate(cmd.target.as_deref(), cmd.fake)
-                    .await
-                    .map(|_| ())
-                    .map_err(CommandError::from)
+                match cmd.target.as_deref() {
+                    Some(target) => engine
+                        .migrate_to(target)
+                        .await
+                        .map(|_| ())
+                        .map_err(command_error),
+                    None => engine.migrate().await.map(|_| ()).map_err(command_error),
+                }
             }
         }
         Command::ShowMigrations(_) => {
-            let rows = migrator.show_migrations().await?;
+            let rows = engine.show_migrations().await.map_err(command_error)?;
             if rows.is_empty() {
                 println!("No migrations found.");
             } else {
@@ -370,29 +287,18 @@ pub(crate) async fn dispatch(
             Ok(())
         }
         Command::SqlMigrate(cmd) => {
-            let order = migrator
-                .graph
-                .topological_order()
-                .map_err(MigratorError::Graph)?;
-
-            let migrations: Vec<_> = if let Some(ref id) = cmd.id {
-                match migrator.graph.get(id) {
-                    Some(m) => vec![m.clone()],
-                    None => {
-                        return Err(CommandError::Config(format!("unknown migration id '{id}'")));
-                    }
-                }
-            } else {
-                order
-                    .iter()
-                    .filter_map(|id| migrator.graph.get(id).cloned())
-                    .collect()
-            };
-
             let stmts = if cmd.backwards {
-                migrator.sql_rollback(&migrations)?
+                match cmd.id.as_deref() {
+                    Some(id) => engine.sql_rollback(&[id]),
+                    None => engine.sql_rollback(&[]),
+                }
+                .map_err(command_error)?
             } else {
-                migrator.sql_migrate(&migrations)?
+                match cmd.id.as_deref() {
+                    Some(id) => engine.sql_migrate_id(id),
+                    None => engine.sql_migrate(),
+                }
+                .map_err(command_error)?
             };
             if stmts.is_empty() {
                 println!("-- No operations.");
@@ -409,14 +315,13 @@ pub(crate) async fn dispatch(
             } else {
                 cmd.schema.iter().map(|s| s.as_str()).collect()
             };
-            let mut state = migrator
-                .inspect_db(&schemas)
-                .await
-                .map_err(CommandError::from)?;
-
-            if let Some(table) = &cmd.table {
-                state.tables.retain(|k, _| k == table);
-            }
+            let state = match &cmd.table {
+                Some(table) => engine
+                    .inspect_table(&schemas, table)
+                    .await
+                    .map_err(command_error)?,
+                None => engine.inspect_db(&schemas).await.map_err(command_error)?,
+            };
 
             let yaml =
                 serde_yaml::to_string(&state).map_err(|e| CommandError::Config(e.to_string()))?;
@@ -429,7 +334,7 @@ pub(crate) async fn dispatch(
         }
         Command::VerifyDb(cmd) => {
             let schema = cmd.schema.as_deref().unwrap_or("public");
-            let drift = migrator.verify(schema).await.map_err(CommandError::from)?;
+            let drift = engine.verify(schema).await.map_err(command_error)?;
             if drift.is_empty() {
                 println!("No drift detected.");
                 Ok(())
@@ -446,19 +351,20 @@ pub(crate) async fn dispatch(
     }
 }
 
-fn clarifications_disabled_error(mode: &str, clarifications: &[Clarification]) -> CommandError {
-    let mut message = format!(
-        "{mode} requires {} clarification(s), but prompts are disabled",
-        clarifications.len()
-    );
-    for clarification in clarifications {
-        let prompt = clarification_message(clarification);
-        message.push_str(&format!(
-            "\n  - {}: {}",
-            clarification.id, prompt.description
-        ));
+fn command_error(err: EngineError) -> CommandError {
+    match err {
+        EngineError::NeedsInput(clarifications) => CommandError::Config(
+            clarifications_disabled_message("make_migration", &clarifications),
+        ),
+        other => CommandError::Config(other.to_string()),
     }
-    CommandError::Config(message)
+}
+
+fn print_migration_result(result: Option<gaman_core::migrations::Migration>) {
+    match result {
+        Some(migration) => println!("Created: {}", migration.id),
+        None => println!("No changes detected."),
+    }
 }
 
 fn sql_statement_for_cli(stmt: &str) -> String {
@@ -471,19 +377,18 @@ fn sql_statement_for_cli(stmt: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
     use crate::Config;
-    use crate::core::VecAdapter;
     use gaman_core::dialects::Dialect;
     use gaman_core::states::Schema;
 
+    /// Verifies CLI SQL formatting does not duplicate an existing statement terminator.
     #[test]
     fn sql_statement_for_cli_does_not_duplicate_semicolon() {
         assert_eq!(sql_statement_for_cli("SELECT 1;"), "SELECT 1;");
     }
 
+    /// Verifies CLI SQL formatting preserves multiline SQL while adding one terminator.
     #[test]
     fn sql_statement_for_cli_preserves_multiline_statement() {
         assert_eq!(
@@ -492,9 +397,9 @@ mod tests {
         );
     }
 
+    /// Verifies non-interactive CLI migration generation fails instead of prompting.
     #[tokio::test]
     async fn make_migration_non_interactive_fails_when_clarification_is_needed() {
-        let migrator = test_migrator();
         let schema = Schema::from_yaml_str(
             r#"
 tables:
@@ -505,10 +410,10 @@ tables:
 "#,
         )
         .unwrap();
+        let engine = test_engine(schema);
 
         let err = dispatch(
-            migrator,
-            Some(schema),
+            engine,
             Command::MakeMigrations(MakeMigrationsCmd {
                 name: Some("add_users".to_string()),
                 empty: false,
@@ -527,9 +432,9 @@ tables:
         assert!(message.contains("mystery_type"));
     }
 
+    /// Verifies CLI check mode reports clarification requirements without prompting.
     #[tokio::test]
     async fn make_migration_check_reports_needed_clarifications_without_prompting() {
-        let migrator = test_migrator();
         let schema = Schema::from_yaml_str(
             r#"
 tables:
@@ -540,10 +445,10 @@ tables:
 "#,
         )
         .unwrap();
+        let engine = test_engine(schema);
 
         let err = dispatch(
-            migrator,
-            Some(schema),
+            engine,
             Command::MakeMigrations(MakeMigrationsCmd {
                 name: None,
                 empty: false,
@@ -562,13 +467,7 @@ tables:
         assert!(message.contains("mystery_type"));
     }
 
-    fn test_migrator() -> Migrator {
-        let config = Arc::new(Config::default());
-        let source = Box::new(VecAdapter::new(vec![]));
-        let environment = Box::new(CommandEnvironment::new(
-            Arc::clone(&config),
-            Some(Dialect::Postgres),
-        ));
-        Migrator::new(source, environment).unwrap()
+    fn test_engine(schema: Schema) -> MigrationEngine {
+        MigrationEngine::from_cli_config(Config::default(), Some(Dialect::Postgres), Some(schema))
     }
 }

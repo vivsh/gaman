@@ -2,6 +2,7 @@ use super::{
     Column, ColumnRef, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index,
     PrimaryKey, Schema, SchemaLoadError, Table, TriggerDef, ViewDef, names, schema_qualified_key,
 };
+use crate::column_type::ColumnType;
 use crate::dialects::Dialect;
 
 /// Map a Rust type to a table definition.
@@ -131,6 +132,30 @@ impl TableBuilder {
             col: Column {
                 name: name.into(),
                 col_type: col_type.into(),
+                ..Default::default()
+            },
+        };
+        self.table.columns.push(f(b).finish());
+        self
+    }
+
+    /// Add a column whose SQL type and default nullability are inferred from a Rust type.
+    ///
+    /// The caller supplies the dialect because type mapping is dialect-specific.
+    /// The closure runs after inference and can override nullability or add
+    /// primary-key, default, reference, and check metadata.
+    pub fn column_from_type<T: ColumnType>(
+        mut self,
+        dialect: &Dialect,
+        name: impl Into<String>,
+        f: impl FnOnce(ColumnBuilder) -> ColumnBuilder,
+    ) -> Self {
+        let desc = T::column_desc(dialect);
+        let b = ColumnBuilder {
+            col: Column {
+                name: name.into(),
+                col_type: desc.sql_type.to_string(),
+                nullable: desc.nullable,
                 ..Default::default()
             },
         };

@@ -1,6 +1,6 @@
 use darling::FromDeriveInput;
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{LitStr, parse_macro_input};
 
 use crate::attrs::to_snake_case;
@@ -24,13 +24,12 @@ pub(crate) fn derive_into_table(input: TokenStream) -> TokenStream {
         .take_struct()
         .expect("only named structs supported");
 
-    let mut pre_stmts: Vec<proc_macro2::TokenStream> = vec![];
     let mut col_stmts: Vec<proc_macro2::TokenStream> = vec![];
     let mut table_stmts: Vec<proc_macro2::TokenStream> = vec![];
     let mut column_names: Vec<String> = vec![];
     let mut field_primary_key_columns: Vec<String> = vec![];
 
-    for (i, field) in fields.iter().enumerate() {
+    for field in fields.iter() {
         if field.skip {
             continue;
         }
@@ -45,13 +44,21 @@ pub(crate) fn derive_into_table(input: TokenStream) -> TokenStream {
         column_names.push(col_name.clone());
 
         let field_ty = &field.ty;
-        let desc_var = format_ident!("__gaman_col_{}", i);
-
-        let type_expr: proc_macro2::TokenStream;
         let mut closure_stmts: Vec<proc_macro2::TokenStream> = vec![];
+        let sql_type = match (&field.sql_type, &field.raw_sql_type) {
+            (Some(_), Some(_)) => {
+                return syn::Error::new_spanned(
+                    &args.ident,
+                    "column type specified twice; use #[column(r#type = \"...\")]",
+                )
+                .to_compile_error()
+                .into();
+            }
+            (Some(sql_type), None) | (None, Some(sql_type)) => Some(sql_type),
+            (None, None) => None,
+        };
 
-        if let Some(ref sql_type) = field.sql_type {
-            type_expr = quote! { #sql_type };
+        if sql_type.is_some() {
             let nullable = field.nullable.unwrap_or(false);
             if nullable {
                 closure_stmts.push(quote! { let c = c.nullable(); });
@@ -59,20 +66,12 @@ pub(crate) fn derive_into_table(input: TokenStream) -> TokenStream {
                 closure_stmts.push(quote! { let c = c.not_null(); });
             }
         } else {
-            pre_stmts.push(quote! {
-                let #desc_var = <#field_ty as ::gaman::schema::ColumnType>::column_desc(dialect);
-            });
-            type_expr = quote! { #desc_var.sql_type };
             if let Some(nullable_override) = field.nullable {
                 if nullable_override {
                     closure_stmts.push(quote! { let c = c.nullable(); });
                 } else {
                     closure_stmts.push(quote! { let c = c.not_null(); });
                 }
-            } else {
-                closure_stmts.push(quote! {
-                    let c = if #desc_var.nullable { c.nullable() } else { c.not_null() };
-                });
             }
         }
 
@@ -106,28 +105,33 @@ pub(crate) fn derive_into_table(input: TokenStream) -> TokenStream {
             closure_stmts.push(quote! { let c = c.check(#expr); });
         }
 
-        if field.index || field.index_name.is_some() {
-            let index_name = field
-                .index_name
-                .clone()
-                .unwrap_or_else(|| format!("{}_{}_idx", table_name, col_name));
+        if let Some(ref index_name) = field.index_name {
             table_stmts.push(quote! { .index(#index_name, &[#col_name]) });
+        } else if field.index {
+            table_stmts.push(quote! { .index_columns(&[#col_name]) });
         }
 
-        if field.unique || field.unique_name.is_some() {
-            let unique_name = field
-                .unique_name
-                .clone()
-                .unwrap_or_else(|| format!("{}_{}_key", table_name, col_name));
+        if let Some(ref unique_name) = field.unique_name {
             table_stmts.push(quote! { .unique(#unique_name, &[#col_name]) });
+        } else if field.unique {
+            table_stmts.push(quote! { .unique_columns(&[#col_name]) });
         }
 
-        col_stmts.push(quote! {
-            .column(#col_name, #type_expr, |c| {
-                #(#closure_stmts)*
-                c
-            })
-        });
+        if let Some(sql_type) = sql_type {
+            col_stmts.push(quote! {
+                .column(#col_name, #sql_type, |c| {
+                    #(#closure_stmts)*
+                    c
+                })
+            });
+        } else {
+            col_stmts.push(quote! {
+                .column_from_type::<#field_ty>(dialect, #col_name, |c| {
+                    #(#closure_stmts)*
+                    c
+                })
+            });
+        }
     }
 
     if let Some(primary_key) = args.primary_key.clone() {
@@ -242,7 +246,6 @@ pub(crate) fn derive_into_table(input: TokenStream) -> TokenStream {
     quote! {
         impl ::gaman::schema::IntoTable for #struct_ident {
             fn into_table(dialect: &::gaman::core::Dialect) -> ::gaman::schema::Table {
-                #(#pre_stmts)*
                 ::gaman::schema::TableBuilder::new(#table_name)
                     #schema_stmt
                     #(#col_stmts)*

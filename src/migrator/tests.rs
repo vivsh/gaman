@@ -1,5 +1,4 @@
-use std::cell::RefCell;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::adapters::AdapterError;
@@ -14,7 +13,7 @@ use gaman_core::states::{
 
 #[derive(Default)]
 struct MockSource {
-    saved: RefCell<Vec<Migration>>,
+    saved: Mutex<Vec<Migration>>,
     migrations: Vec<Migration>,
 }
 
@@ -23,7 +22,10 @@ impl MigrationSource for MockSource {
         Ok(self.migrations.clone())
     }
     fn save(&self, m: &Migration) -> Result<(), AdapterError> {
-        self.saved.borrow_mut().push(m.clone());
+        self.saved
+            .lock()
+            .expect("mock source mutex should not be poisoned")
+            .push(m.clone());
         Ok(())
     }
 }
@@ -49,7 +51,7 @@ impl Environment for TestEnvironment {
 
     fn executor<'a>(
         &'a self,
-    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor + Send>, EnvironmentError>> {
         Box::pin(async {
             Err(EnvironmentError::Config(
                 "executor is not available in the test environment".into(),
@@ -273,6 +275,37 @@ fn migrator_from(migrations: Vec<Migration>) -> Migrator {
         Box::new(TestEnvironment::new(Dialect::Postgres)),
     )
     .unwrap()
+}
+
+fn assert_send<T: Send>(_: T) {}
+
+fn assert_send_sync<T: Send + Sync>() {}
+
+/// Verifies the live migrator and representative live futures can move across runtime threads.
+#[test]
+fn migrator_and_live_futures_are_send() {
+    assert_send_sync::<Migrator>();
+
+    let migrator = migrator_from(vec![]);
+    assert_send(migrator.migrate(None, false));
+    assert_send(migrator.inspect_db(&[]));
+    assert_send(migrator.verify("public"));
+}
+
+/// Verifies a live migration future can be spawned onto Tokio's scheduler.
+#[tokio::test]
+async fn migrate_future_can_be_spawned() {
+    let migrator = migrator_from(vec![]);
+    let result = tokio::spawn(async move { migrator.migrate(None, false).await })
+        .await
+        .expect("spawned migration task should not panic");
+
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("executor is not available")
+    );
 }
 
 struct NullExecutor {
@@ -564,7 +597,7 @@ fn migrator_with_source(migrations: Vec<Migration>) -> (Migrator, Arc<MockSource
 
 #[derive(Default)]
 struct MockSourceShared {
-    saved: RefCell<Vec<Migration>>,
+    saved: Mutex<Vec<Migration>>,
 }
 
 struct ArcMockSource {
@@ -577,7 +610,11 @@ impl MigrationSource for ArcMockSource {
         Ok(self.migrations.clone())
     }
     fn save(&self, m: &Migration) -> Result<(), AdapterError> {
-        self.shared.saved.borrow_mut().push(m.clone());
+        self.shared
+            .saved
+            .lock()
+            .expect("mock source mutex should not be poisoned")
+            .push(m.clone());
         Ok(())
     }
 }
@@ -760,7 +797,13 @@ fn dry_run_does_not_save() {
     m.make_migrations(Some("initial".into()), current, true, &[])
         .unwrap()
         .unwrap();
-    assert!(shared.saved.borrow().is_empty());
+    assert!(
+        shared
+            .saved
+            .lock()
+            .expect("mock source mutex should not be poisoned")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -1207,7 +1250,14 @@ fn save_called_when_not_dry_run() {
     m.make_migrations(Some("initial".into()), current, false, &[])
         .unwrap()
         .unwrap();
-    assert_eq!(shared.saved.borrow().len(), 1);
+    assert_eq!(
+        shared
+            .saved
+            .lock()
+            .expect("mock source mutex should not be poisoned")
+            .len(),
+        1
+    );
 }
 
 #[test]

@@ -20,12 +20,43 @@ static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
 
 ## MigrationEngine
 
-`MigrationEngine` is the sole public API for embedding. Construct it with a `Config`, call builder methods, then consume it with one action call.
+`MigrationEngine` is the primary public API for embedding. Construct it with a `Config` and a migration source, call builder methods, then run an action.
 
 ```rust
 use gaman::{Config, MigrationEngine};
 
 MigrationEngine::new(Config::default(), &MIGRATIONS).migrate()?;
+```
+
+`MigrationEngine::new` uses embedded migrations, but the engine itself is
+storage-neutral. Use `from_source` or `from_shared_source` when migrations live
+somewhere else, such as an in-memory buffer, an application-owned store, or a
+future browser-backed string store.
+
+```rust
+use gaman::{Config, MigrationEngine};
+use gaman::core::{AdapterError, MigrationSource};
+use gaman::Migration;
+
+struct MemoryMigrations {
+    migrations: Vec<Migration>,
+}
+
+impl MigrationSource for MemoryMigrations {
+    fn load_all(&self) -> Result<Vec<Migration>, AdapterError> {
+        Ok(self.migrations.clone())
+    }
+
+    fn save(&self, migration: &Migration) -> Result<(), AdapterError> {
+        // Store this wherever your application owns migration state.
+        Ok(())
+    }
+}
+
+let engine = MigrationEngine::from_source(
+    Config::default(),
+    MemoryMigrations { migrations: vec![] },
+);
 ```
 
 ### Config
@@ -84,7 +115,8 @@ engine.with_schema(|s| {
 
 ### Action methods
 
-Each action consumes `self`. Construct a new `MigrationEngine` for each call.
+Most live actions consume `self`. Offline SQL rendering borrows `&self`, so
+library callers can render several SQL views from the same engine value.
 
 ```rust
 // Apply all pending migrations. Returns how many were applied.
@@ -113,6 +145,15 @@ let drift: Vec<Operation> = engine.verify("public")?;
 // Introspect the live database and return its schema.
 let schema: Schema = engine.inspect_db(&["public"])?;
 
+// Introspect one table from the live database.
+let users: Schema = engine.inspect_table(&["public"], "users")?;
+
+// Render operation SQL offline. This does not connect to a database and does
+// not include locks, transaction wrappers, or tracking-table writes.
+let sql: Vec<String> = engine.sql_migrate()?;
+let one: Vec<String> = engine.sql_migrate_id("0002_add_posts")?;
+let rollback: Vec<String> = engine.sql_rollback(&["0002_add_posts"])?;
+
 // Diff with_schema() against replayed state, write a migration file if changed.
 // Returns Some(migration) or None if already up to date.
 // Reads and writes to the embedded source directory on disk — never the embedded slice.
@@ -122,8 +163,16 @@ let schema: Schema = engine.inspect_db(&["public"])?;
 // Disambiguations (renames etc.) are resolved via interactive terminal prompts.
 let migration: Option<Migration> = engine.make_migration("add_posts")?;
 
+// CI-safe generation paths fail instead of prompting when clarification is needed.
+engine.make_migration_check()?;
+let migration = engine.make_migration_non_interactive(Some("add_posts"))?;
+let preview = engine.make_migration_dry_run_non_interactive(Some("add_posts"))?;
+
 // Write an empty migration shell (no operations) for hand-editing.
 let migration: Migration = engine.make_empty_migration("add_posts")?;
+
+// Write a merge migration for multiple graph heads.
+let migration: Migration = engine.make_merge_migration("merge_heads")?;
 
 // Parse std::env::args() and dispatch the full CLI surface.
 engine.handle_args()?;
@@ -142,6 +191,7 @@ All action methods return `Result<T, EngineError>`.
 | `Config(String)`              | Misconfiguration, e.g. missing `database_url`                                     |
 | `NoSchema`                    | `make_migration` called without `with_schema()`                                   |
 | `SchemaLoad(SchemaLoadError)` | `with_schema()` closure returned an error loading a schema file                   |
+| `NeedsInput(Vec<Clarification>)` | Caller-provided decisions did not answer every required clarification          |
 | `MigrationsDirMismatch(…)`    | `config.migrations_dir` does not resolve to the path baked into `embedded_migrations!()` |
 
 ## Common patterns

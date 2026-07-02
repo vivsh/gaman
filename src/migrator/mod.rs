@@ -49,8 +49,8 @@ pub enum MigratorError {
 /// Holds the shared runtime environment, the migration graph, and the diff engine.
 /// The CLI constructs one instance and calls its methods directly.
 pub struct Migrator {
-    environment: Box<dyn Environment>,
-    pub source: Box<dyn MigrationSource>,
+    environment: Box<dyn Environment + Send + Sync>,
+    pub source: Box<dyn MigrationSource + Send + Sync>,
     pub graph: MigrationGraph,
     ordered_ids: Vec<String>,
     sql_renderer: SqlPlanRenderer,
@@ -59,8 +59,8 @@ pub struct Migrator {
 
 impl Migrator {
     pub fn new(
-        source: Box<dyn MigrationSource>,
-        environment: Box<dyn Environment>,
+        source: Box<dyn MigrationSource + Send + Sync>,
+        environment: Box<dyn Environment + Send + Sync>,
     ) -> Result<Self, MigratorError> {
         let mut graph = MigrationGraph::new();
         let migrations = source.load_all()?;
@@ -92,7 +92,7 @@ impl Migrator {
         self.environment.dialect()
     }
 
-    async fn executor(&self) -> Result<Box<dyn EnvironmentExecutor>, MigratorError> {
+    async fn executor(&self) -> Result<Box<dyn EnvironmentExecutor + Send>, MigratorError> {
         self.environment
             .executor()
             .await
@@ -716,7 +716,7 @@ impl Migrator {
 
     pub async fn verify_with(
         &self,
-        executor: &mut dyn EnvironmentExecutor,
+        executor: &mut (dyn EnvironmentExecutor + Send),
         schema: &str,
     ) -> Result<Vec<Operation>, MigratorError> {
         let dialect = self.dialect();

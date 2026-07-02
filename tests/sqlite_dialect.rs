@@ -276,7 +276,7 @@ impl Environment for SqliteEnvironment {
 
     fn executor<'a>(
         &'a self,
-    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor>, EnvironmentError>> {
+    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor + Send>, EnvironmentError>> {
         Box::pin(async {
             Err(EnvironmentError::Config(
                 "test environment does not create executors".into(),

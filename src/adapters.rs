@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Write;
+use std::sync::Arc;
 
 use thiserror::Error;
 
@@ -13,10 +14,29 @@ pub enum AdapterError {
     Parse { path: String, message: String },
 }
 
-/// Load and save migrations.
-pub trait MigrationSource {
+/// Loads and saves migrations from a caller-defined storage backend.
+///
+/// Implementations may be file-backed, embedded, in-memory, database-backed, or
+/// browser-buffer-backed. The engine treats this as its storage boundary and
+/// does not require migrations to live on a filesystem. Sources must be
+/// `Send + Sync` so async live migration futures can safely borrow the migrator
+/// across runtime threads.
+pub trait MigrationSource: Send + Sync {
+    /// Return all migrations known to this source.
     fn load_all(&self) -> Result<Vec<Migration>, AdapterError>;
+
+    /// Persist a newly generated migration.
     fn save(&self, migration: &Migration) -> Result<(), AdapterError>;
+}
+
+impl<T: MigrationSource + ?Sized> MigrationSource for Arc<T> {
+    fn load_all(&self) -> Result<Vec<Migration>, AdapterError> {
+        (**self).load_all()
+    }
+
+    fn save(&self, migration: &Migration) -> Result<(), AdapterError> {
+        (**self).save(migration)
+    }
 }
 
 /// File-backed migration source.
@@ -111,6 +131,7 @@ pub struct VecAdapter {
 }
 
 impl VecAdapter {
+    /// Create a read-only in-memory migration source.
     pub fn new(migrations: Vec<Migration>) -> Self {
         Self { migrations }
     }

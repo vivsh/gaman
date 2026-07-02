@@ -27,6 +27,11 @@ All frontends produce the same internal `Schema` representation:
 - Live database introspection.
 - Replayed migration history.
 
+For Rust schema input, `TableBuilder` is the canonical table-construction API.
+`IntoTable` is a thin compile-time frontend that emits builder calls. Derived
+names for keys, indexes, and constraints must come from builder/core naming
+helpers, not from proc-macro-local formatting.
+
 The internal schema is the comparison boundary. Frontends build IR; Gaman then
 prepares that IR for a selected dialect before diffing, SQL planning, live
 verification, or migration execution.
@@ -123,6 +128,9 @@ feature, Gaman must raise a clear error instead of emitting no-op SQL.
   filesystem access, environment variables, terminal I/O, TLS, or executors.
 - The offline layer should compile for `wasm32-unknown-unknown`; browser callers
   provide schemas and migrations as strings or in-memory values.
+- Public orchestration APIs must stay storage-neutral. File-backed directories,
+  embedded migrations, in-memory buffers, and future browser-backed string
+  stores are migration-source adapters, not engine assumptions.
 - `sql_migrate` is offline and renders the operation SQL live migration
   application would execute for the same migration and replay state.
 - Migration application, `inspect_db`, and the live side of `verify_db` require
@@ -425,6 +433,11 @@ Native-only concerns remain outside the offline core:
 - locks and tracking installation;
 - filesystem-backed migration sources and writers;
 - CLI parsing, dotenv loading, and terminal prompting.
+
+The root `MigrationEngine` must preserve this separation even when default
+features are enabled. It can orchestrate over a `MigrationSource`, but directory
+loading, embedded files, and future browser string buffers remain replaceable
+storage adapters.
 
 Offline acceptance targets:
 

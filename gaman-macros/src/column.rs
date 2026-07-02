@@ -14,6 +14,9 @@ pub(crate) struct IntoTableField {
     /// When this is set, nullability defaults to `false` unless overridden.
     #[darling(default, rename = "type")]
     pub(crate) sql_type: Option<String>,
+    /// Raw-identifier spelling for `type`, which is required in Rust attributes.
+    #[darling(default, rename = "r#type")]
+    pub(crate) raw_sql_type: Option<String>,
     /// Override nullability instead of inferring it from `ColumnType`.
     #[darling(default)]
     pub(crate) nullable: Option<bool>,
