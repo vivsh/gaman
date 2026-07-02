@@ -25,7 +25,8 @@ Use table attributes when the default mapping from struct name to table name is 
 
 - `#[table(name = "...")]` overrides the default snake_case table name.
 - `#[table(schema = "...")]` sets a non-public schema for dialects that support schemas. SQLite rejects schema-qualified objects.
-- `#[table(primary_key(name = "...", columns("a", "b")))]` sets an explicit primary-key constraint name and ordered column list. Use this when the primary-key order should differ from struct field order or the constraint name must be preserved.
+- `#[table(primary_key(columns("a", "b")))]` sets an ordered primary-key column list and derives `{table}_pkey`.
+- `#[table(primary_key(name = "...", columns("a", "b")))]` also preserves an explicit primary-key constraint name.
 
 ## Column attributes
 
@@ -56,15 +57,15 @@ If you do not specify `type = "..."`, Gaman uses the `ColumnType` trait for the 
 - `#[column(references_name = "fk_name")]` names that foreign key explicitly.
 - `#[column(check = "expr")]` adds an inline check constraint.
 
-For composite foreign keys, use table-level metadata so Gaman can preserve the
-constraint name and ordered source/target columns:
+For composite foreign keys, use table-level metadata so Gaman can preserve
+ordered source/target columns. The name is optional and defaults to
+`{table}_{source_columns_joined}_fkey`:
 
 ```rust
 #[derive(gaman::IntoTable)]
 #[table(
     name = "orders",
     foreign_key(
-        name = "orders_user_fkey",
         columns("tenant_id", "user_id"),
         references(table = "users", columns("tenant_id", "id"))
     )
@@ -74,6 +75,43 @@ struct Order {
     user_id: i64,
 }
 ```
+
+## Builder API
+
+Use `TableBuilder` when schema is generated from Rust code instead of derive
+attributes. The common helpers cover columns, keys, indexes, and constraints.
+For triggers, pass the schema model directly so the public builder surface stays
+small:
+
+```rust
+use gaman::schema::{
+    TableBuilder, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming,
+};
+
+let table = TableBuilder::new("orders")
+    .column("tenant_id", "bigint", |c| c.not_null())
+    .column("id", "bigint", |c| c.not_null())
+    .column("email", "text", |c| c.not_null())
+    .primary_key_columns(&["tenant_id", "id"])
+    .index_columns(&["email"])
+    .unique_columns(&["tenant_id", "email"])
+    .check_expr("tenant_id > 0")
+    .trigger(TriggerDef {
+        name: None,
+        timing: TriggerTiming::After,
+        events: vec![TriggerEvent::Insert],
+        scope: TriggerScope::Row,
+        function_name: None,
+        when: None,
+        query: Some("INSERT INTO audit_log(order_id) VALUES (NEW.id);".to_string()),
+        language: None,
+    })
+    .build();
+```
+
+PostgreSQL wraps trigger queries in generated trigger functions and supplies the
+normal return statement. Set `function_name` instead of `query` when you want to
+reference an explicitly modeled trigger function.
 
 ## Custom column types
 

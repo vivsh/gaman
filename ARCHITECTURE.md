@@ -91,6 +91,21 @@ Composite foreign keys must use table-level metadata so names, source column
 order, target table, and target column order survive replay, diffing, rendering,
 introspection, and verification.
 
+Frontend object names may be omitted when Gaman can derive a deterministic name.
+After normalization, canonical schema state is always fully named. Public
+derived names use PostgreSQL-style names, not a `gmn_` prefix:
+
+- primary key: `{table}_pkey`;
+- foreign key: `{table}_{source_columns_joined}_fkey`;
+- index: `{table}_{columns_joined}_idx`;
+- unique constraint: `{table}_{columns_joined}_key`;
+- column check constraint: `{table}_{column}_check`;
+- unnamed table check constraint: `{table}_check`.
+
+Derived names use the bare table name and preserve column order. Collisions fail
+validation rather than being silently suffixed. Internal runtime-only names may
+use `__gaman_*`; those are not user schema object names.
+
 Opaque schema objects means extensions, triggers, functions, and views. Gaman
 tracks opaque schema objects as whole objects. It may create, replace, or delete
 them, but it should not generate fine-grained internal `ALTER` statements for
@@ -142,7 +157,7 @@ Normalization is database-agnostic frontend sugar cleanup:
 - column `references` shorthand becomes table-level foreign-key metadata;
 - column `check` shorthand becomes table-level check constraints;
 - column primary-key flags become explicit table-level primary-key metadata;
-- inline trigger bodies become modeled functions where supported;
+- trigger names are derived when omitted;
 - missing table names can be filled from schema map keys.
 
 Canonicalization is dialect-specific cleanup:
@@ -253,6 +268,11 @@ There are two disambiguation layers:
 - Operation disambiguation runs after diffing because it resolves ambiguous or
   risky operations, such as renames, type casts, and not-null backfills.
 
+Interactive CLI generation may ask for these decisions. Non-interactive
+generation must not read stdin or choose defaults: it fails with the pending
+clarification IDs/messages. `make_migration --check` follows the same no-prompt
+rule.
+
 Generated migration files must be self-contained. They can contain modeled
 operations and literal `Statement` SQL, but not sidecar approvals, external data
 file references, or subprocess invocations.
@@ -331,8 +351,8 @@ not body text:
 
 - functions: schema, name, arguments/signature, return type, language, and other
   stable metadata where available;
-- triggers: table, name, timing, events, scope, and referenced function or
-  action identity where available;
+- triggers: table, name, timing, events, scope, referenced function, or direct
+  query metadata where available;
 - extensions: name, schema, and version where available;
 - views: schema, name, and stable definition metadata where available.
 
@@ -345,6 +365,13 @@ formatting-only churn outside quoted and protected regions.
 Live database catalogs may normalize, rewrite, or omit source text, so
 `verify_db` does not claim deep body-equivalence for functions, triggers, or
 views unless a future dialect-specific mode can recover deterministic source.
+
+Trigger query source is stored as `query`, not as a function body. PostgreSQL
+renders query triggers by wrapping the query in a generated trigger function and
+supplying the normal return statement (`RETURN NEW` for row triggers,
+`RETURN NULL` for statement triggers). SQLite renders trigger queries directly.
+Non-default PostgreSQL trigger return behavior requires an explicit modeled
+function and `function_name`.
 
 ## Dialect Boundary
 

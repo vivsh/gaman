@@ -130,7 +130,7 @@ fn verify_trigger(name: &str, function_name: &str) -> TriggerDef {
         scope: TriggerScope::Row,
         function_name: Some(function_name.to_string()),
         when: None,
-        body: None,
+        query: None,
         language: None,
     }
 }
@@ -967,10 +967,11 @@ async fn verify_detects_function_signature_drift() {
 }
 
 #[tokio::test]
-async fn verify_ignores_trigger_body_only_drift() {
+async fn verify_ignores_trigger_query_only_drift() {
     let mut table = simple_table("events", &["id"]);
     let mut trigger = verify_trigger("events_audit_trg", "audit_fn");
-    trigger.body = Some("SELECT 1".to_string());
+    trigger.function_name = None;
+    trigger.query = Some("SELECT 1".to_string());
     table.triggers.push(trigger);
     let migrator = migrator_from(vec![migration_with_ops(
         "0001_create_table",
@@ -981,7 +982,7 @@ async fn verify_ignores_trigger_body_only_drift() {
     )]);
 
     let mut live_table = table;
-    live_table.triggers[0].body = Some("SELECT 2".to_string());
+    live_table.triggers[0].query = Some("SELECT 2".to_string());
     let live = state_with_tables(&[live_table]);
     let mut executor = InspectingExecutor { live };
 

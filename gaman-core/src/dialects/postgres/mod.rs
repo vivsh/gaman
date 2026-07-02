@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::states::{
-    Column, Constraint, ForeignKey, Index, Schema, SchemaValidationError, Table, ViewDef,
-    Volatility,
+    Column, Constraint, ForeignKey, FunctionDef, Index, Schema, SchemaValidationError, Table,
+    TriggerDef, TriggerScope, ViewDef, Volatility,
 };
 
 use super::DialectError;
@@ -500,24 +500,33 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
         Operation::CreateTrigger {
             table_name,
             trigger,
-        } => {
-            vec![create_trigger_sql(table_name, trigger)]
-        }
+        } => create_trigger_statements(table_name, trigger)?,
         Operation::AlterTrigger {
-            table_name, new, ..
+            table_name,
+            old,
+            new,
+            ..
         } => {
-            vec![create_trigger_sql(table_name, new)]
+            let mut statements = create_trigger_statements(table_name, new)?;
+            if old.query.is_some() && new.query.is_none() {
+                statements.push(drop_generated_trigger_function_sql(old));
+            }
+            statements
         }
         Operation::DropTrigger {
             table_name,
             trigger,
         } => {
             let tname = trigger.name.as_deref().unwrap_or("");
-            vec![format!(
+            let mut statements = vec![format!(
                 "DROP TRIGGER {} ON {}",
                 quote_ident(tname),
                 quote_table_name(table_name)
-            )]
+            )];
+            if trigger.query.is_some() {
+                statements.push(drop_generated_trigger_function_sql(trigger));
+            }
+            statements
         }
         Operation::CreateView { view } => {
             vec![format!(
@@ -803,7 +812,68 @@ AS $func$\n{}\n$func$",
     ))
 }
 
-fn create_trigger_sql(table_name: &str, t: &crate::states::TriggerDef) -> String {
+fn create_trigger_statements(
+    table_name: &str,
+    trigger: &TriggerDef,
+) -> Result<Vec<String>, DialectError> {
+    if let Some(query) = trigger.query.as_deref() {
+        let function = generated_trigger_function(trigger, query)?;
+        return Ok(vec![
+            create_function_sql(&function)?,
+            create_trigger_sql(table_name, trigger),
+        ]);
+    }
+    Ok(vec![create_trigger_sql(table_name, trigger)])
+}
+
+fn generated_trigger_function(
+    trigger: &TriggerDef,
+    query: &str,
+) -> Result<FunctionDef, DialectError> {
+    let trigger_name = trigger.name.as_deref().ok_or_else(|| {
+        DialectError::Unsupported(
+            "create_trigger".to_string(),
+            "trigger query rendering requires a trigger name; normalize schema before rendering"
+                .to_string(),
+        )
+    })?;
+    let return_stmt = match trigger.scope {
+        TriggerScope::Row => "RETURN NEW;",
+        TriggerScope::Statement => "RETURN NULL;",
+    };
+    let body = format!("BEGIN\n{}\n{}\nEND;", query.trim(), return_stmt);
+    Ok(FunctionDef {
+        name: format!("{trigger_name}_fn"),
+        schema: None,
+        arguments: String::new(),
+        returns: "trigger".to_string(),
+        language: trigger
+            .language
+            .clone()
+            .unwrap_or_else(|| "plpgsql".to_string()),
+        body,
+        volatility: Volatility::Volatile,
+        security_definer: false,
+    })
+}
+
+fn drop_generated_trigger_function_sql(trigger: &TriggerDef) -> String {
+    let name = trigger
+        .name
+        .as_ref()
+        .map(|trigger_name| format!("{trigger_name}_fn"))
+        .unwrap_or_default();
+    format!("DROP FUNCTION {}()", quote_ident(&name))
+}
+
+fn trigger_function_name(t: &TriggerDef) -> String {
+    t.function_name
+        .clone()
+        .or_else(|| t.name.as_ref().map(|name| format!("{name}_fn")))
+        .unwrap_or_default()
+}
+
+fn create_trigger_sql(table_name: &str, t: &TriggerDef) -> String {
     use crate::states::{TriggerEvent, TriggerScope, TriggerTiming};
     let tname = t.name.as_deref().unwrap_or("");
     let timing = match t.timing {
@@ -831,7 +901,7 @@ fn create_trigger_sql(table_name: &str, t: &crate::states::TriggerDef) -> String
         .as_deref()
         .map(|w| format!("\nWHEN ({})", w))
         .unwrap_or_default();
-    let fn_name = t.function_name.as_deref().unwrap_or("");
+    let fn_name = trigger_function_name(t);
     format!(
         "CREATE OR REPLACE TRIGGER {}\n{} {}\nON {}\nFOR EACH {}{}
 EXECUTE FUNCTION {}()",
@@ -841,7 +911,7 @@ EXECUTE FUNCTION {}()",
         quote_table_name(table_name),
         scope,
         when_clause,
-        quote_maybe_qualified_name(fn_name)
+        quote_maybe_qualified_name(&fn_name)
     )
 }
 

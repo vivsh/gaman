@@ -360,7 +360,7 @@ fn trigger_equal(left: &TriggerDef, right: &TriggerDef) -> bool {
         && left.scope == right.scope
         && left.function_name == right.function_name
         && opaque_option_sources_equal(&left.when, &right.when)
-        && opaque_option_sources_equal(&left.body, &right.body)
+        && opaque_option_sources_equal(&left.query, &right.query)
         && left.language == right.language
 }
 

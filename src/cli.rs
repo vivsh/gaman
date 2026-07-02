@@ -8,7 +8,7 @@ use crate::migrator::{Migrator, MigratorError};
 use crate::prompter::CliPromptEngine;
 use argh::FromArgs;
 use gaman_core::dialects::Dialect;
-use gaman_core::disambiguator::{Decision, PromptEngine};
+use gaman_core::disambiguator::{Clarification, Decision, PromptEngine, clarification_message};
 use gaman_core::states::Schema;
 
 /// Gaman CLI.
@@ -74,6 +74,10 @@ pub struct MakeMigrationsCmd {
     /// show what would be generated without writing any files
     #[argh(switch)]
     pub dry_run: bool,
+
+    /// fail instead of prompting when clarifications are required
+    #[argh(switch)]
+    pub non_interactive: bool,
 }
 
 /// List migrations with applied and pending markers.
@@ -272,11 +276,16 @@ pub(crate) async fn dispatch(
                         .map_err(|e| CommandError::Config(e.to_string()))?,
                 };
                 let name = cmd.name.clone().unwrap_or_else(|| "check".into());
-                match migrator.make_migrations(Some(name), current, true, &[])? {
-                    Some(_) => Err(CommandError::Config(
+                match migrator.make_migrations(Some(name), current, true, &[]) {
+                    Err(MigratorError::NeedsInput(clars)) => Err(clarifications_disabled_error(
+                        "make_migration --check",
+                        &clars,
+                    )),
+                    Err(e) => Err(CommandError::Migrator(e)),
+                    Ok(Some(_)) => Err(CommandError::Config(
                         "schema has changes not yet in a migration".into(),
                     )),
-                    None => Ok(()),
+                    Ok(None) => Ok(()),
                 }
             } else {
                 let current = match embedded_schema {
@@ -294,6 +303,12 @@ pub(crate) async fn dispatch(
                         &decisions,
                     ) {
                         Err(MigratorError::NeedsInput(clars)) => {
+                            if cmd.non_interactive {
+                                return Err(clarifications_disabled_error(
+                                    "make_migration --non-interactive",
+                                    &clars,
+                                ));
+                            }
                             let new = engine
                                 .prompt(&clars)
                                 .map_err(|e| CommandError::Config(e.to_string()))?;
@@ -431,6 +446,21 @@ pub(crate) async fn dispatch(
     }
 }
 
+fn clarifications_disabled_error(mode: &str, clarifications: &[Clarification]) -> CommandError {
+    let mut message = format!(
+        "{mode} requires {} clarification(s), but prompts are disabled",
+        clarifications.len()
+    );
+    for clarification in clarifications {
+        let prompt = clarification_message(clarification);
+        message.push_str(&format!(
+            "\n  - {}: {}",
+            clarification.id, prompt.description
+        ));
+    }
+    CommandError::Config(message)
+}
+
 fn sql_statement_for_cli(stmt: &str) -> String {
     if stmt.trim_end().ends_with(';') {
         stmt.to_string()
@@ -441,7 +471,13 @@ fn sql_statement_for_cli(stmt: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::sql_statement_for_cli;
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::Config;
+    use crate::core::VecAdapter;
+    use gaman_core::dialects::Dialect;
+    use gaman_core::states::Schema;
 
     #[test]
     fn sql_statement_for_cli_does_not_duplicate_semicolon() {
@@ -454,5 +490,85 @@ mod tests {
             sql_statement_for_cli("CREATE VIEW v AS\nSELECT 1"),
             "CREATE VIEW v AS\nSELECT 1;"
         );
+    }
+
+    #[tokio::test]
+    async fn make_migration_non_interactive_fails_when_clarification_is_needed() {
+        let migrator = test_migrator();
+        let schema = Schema::from_yaml_str(
+            r#"
+tables:
+  users:
+    columns:
+      - name: id
+        type: mystery_type
+"#,
+        )
+        .unwrap();
+
+        let err = dispatch(
+            migrator,
+            Some(schema),
+            Command::MakeMigrations(MakeMigrationsCmd {
+                name: Some("add_users".to_string()),
+                empty: false,
+                merge: false,
+                check: false,
+                dry_run: false,
+                non_interactive: true,
+            }),
+        )
+        .await
+        .unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("--non-interactive"));
+        assert!(message.contains("clarification"));
+        assert!(message.contains("mystery_type"));
+    }
+
+    #[tokio::test]
+    async fn make_migration_check_reports_needed_clarifications_without_prompting() {
+        let migrator = test_migrator();
+        let schema = Schema::from_yaml_str(
+            r#"
+tables:
+  users:
+    columns:
+      - name: id
+        type: mystery_type
+"#,
+        )
+        .unwrap();
+
+        let err = dispatch(
+            migrator,
+            Some(schema),
+            Command::MakeMigrations(MakeMigrationsCmd {
+                name: None,
+                empty: false,
+                merge: false,
+                check: true,
+                dry_run: false,
+                non_interactive: false,
+            }),
+        )
+        .await
+        .unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("--check"));
+        assert!(message.contains("clarification"));
+        assert!(message.contains("mystery_type"));
+    }
+
+    fn test_migrator() -> Migrator {
+        let config = Arc::new(Config::default());
+        let source = Box::new(VecAdapter::new(vec![]));
+        let environment = Box::new(CommandEnvironment::new(
+            Arc::clone(&config),
+            Some(Dialect::Postgres),
+        ));
+        Migrator::new(source, environment).unwrap()
     }
 }

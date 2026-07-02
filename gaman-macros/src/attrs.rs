@@ -3,13 +3,13 @@ use syn::LitStr;
 
 #[derive(Clone, FromMeta)]
 pub(crate) struct PrimaryKeyArgs {
-    pub(crate) name: String,
+    pub(crate) name: Option<String>,
     pub(crate) columns: Vec<LitStr>,
 }
 
 #[derive(Clone, FromMeta)]
 pub(crate) struct ForeignKeyArgs {
-    pub(crate) name: String,
+    pub(crate) name: Option<String>,
     pub(crate) columns: Vec<LitStr>,
     pub(crate) references: ForeignKeyReferenceArgs,
 }

@@ -103,7 +103,7 @@ fn basic_trigger(name: &str, fn_name: &str) -> TriggerDef {
         scope: TriggerScope::Row,
         function_name: Some(fn_name.to_string()),
         when: None,
-        body: None,
+        query: None,
         language: None,
     }
 }
@@ -1070,15 +1070,17 @@ fn full_pipeline_view_real_definition_change_replaces_view() {
 }
 
 #[test]
-fn full_pipeline_trigger_formatting_only_body_change_is_noop() {
+fn full_pipeline_trigger_formatting_only_query_change_is_noop() {
     let mut prev_table = empty_table("events");
     let mut prev_trigger = basic_trigger("trg_audit", "audit_fn");
-    prev_trigger.body = Some("SELECT  a -- ignored\nFROM users".to_string());
+    prev_trigger.function_name = None;
+    prev_trigger.query = Some("SELECT  a -- ignored\nFROM users".to_string());
     prev_table.triggers.push(prev_trigger);
 
     let mut curr_table = empty_table("events");
     let mut curr_trigger = basic_trigger("trg_audit", "audit_fn");
-    curr_trigger.body = Some("SELECT a FROM users".to_string());
+    curr_trigger.function_name = None;
+    curr_trigger.query = Some("SELECT a FROM users".to_string());
     curr_table.triggers.push(curr_trigger);
 
     let engine = DiffEngine::new();
@@ -1094,15 +1096,17 @@ fn full_pipeline_trigger_formatting_only_body_change_is_noop() {
 }
 
 #[test]
-fn full_pipeline_trigger_real_body_change_alters_trigger() {
+fn full_pipeline_trigger_real_query_change_alters_trigger() {
     let mut prev_table = empty_table("events");
     let mut prev_trigger = basic_trigger("trg_audit", "audit_fn");
-    prev_trigger.body = Some("SELECT 'a b'".to_string());
+    prev_trigger.function_name = None;
+    prev_trigger.query = Some("SELECT 'a b'".to_string());
     prev_table.triggers.push(prev_trigger);
 
     let mut curr_table = empty_table("events");
     let mut curr_trigger = basic_trigger("trg_audit", "audit_fn");
-    curr_trigger.body = Some("SELECT 'ab'".to_string());
+    curr_trigger.function_name = None;
+    curr_trigger.query = Some("SELECT 'ab'".to_string());
     curr_table.triggers.push(curr_trigger);
 
     let engine = DiffEngine::new();

@@ -47,15 +47,40 @@ impl Schema {
                         "trigger '{tname}' on table '{name}' has no events"
                     )));
                 }
-                if trigger.function_name.is_none() {
-                    let tname = trigger.name.as_deref().unwrap_or("<unnamed>");
-                    return Err(SchemaValidationError::Invalid(format!(
-                        "trigger '{tname}' on table '{name}' has no function_name (add `function_name` or inline `body`)"
-                    )));
-                }
+                validate_trigger_source(name, trigger)?;
             }
         }
         Ok(())
+    }
+}
+
+fn validate_trigger_source(
+    table_name: &str,
+    trigger: &TriggerDef,
+) -> Result<(), SchemaValidationError> {
+    let tname = trigger.name.as_deref().unwrap_or("<unnamed>");
+    let has_function = trigger
+        .function_name
+        .as_deref()
+        .is_some_and(|name| !name.trim().is_empty());
+    let has_query = trigger
+        .query
+        .as_deref()
+        .is_some_and(|query| !query.trim().is_empty());
+
+    match (has_function, has_query) {
+        (true, false) if trigger.language.is_some() => {
+            Err(SchemaValidationError::Invalid(format!(
+                "trigger '{tname}' on table '{table_name}' sets `language`, but language is only valid with `query` triggers"
+            )))
+        }
+        (true, false) | (false, true) => Ok(()),
+        (true, true) => Err(SchemaValidationError::Invalid(format!(
+            "trigger '{tname}' on table '{table_name}' must set either `function_name` or `query`, not both"
+        ))),
+        (false, false) => Err(SchemaValidationError::Invalid(format!(
+            "trigger '{tname}' on table '{table_name}' must set either `function_name` or `query`"
+        ))),
     }
 }
 

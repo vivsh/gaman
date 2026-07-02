@@ -114,9 +114,12 @@ pub enum TriggerScope {
 }
 
 /// A trigger attached to a table.
-/// `body` and `language` are inline sugar: `normalize()` converts them into a
-/// synthetic `FunctionDef` and sets `function_name`, then clears both fields.
+///
+/// `query` stores authored trigger statements. PostgreSQL renders query
+/// triggers through a generated trigger function, while SQLite renders the query
+/// directly inside `CREATE TRIGGER`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct TriggerDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -128,7 +131,7 @@ pub struct TriggerDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub body: Option<String>,
+    pub query: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 }
@@ -203,11 +206,11 @@ impl Table {
     }
 
     pub fn pk_constraint_name(&self) -> String {
-        format!("{}_pkey", self.name)
+        super::names::primary_key(&self.name)
     }
 
     pub fn pk_constraint_name_for(table_name: &str) -> String {
-        format!("{}_pkey", table_name)
+        super::names::primary_key(table_name)
     }
 
     pub fn primary_key_column_names(&self) -> Vec<&str> {
@@ -238,12 +241,14 @@ impl Table {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PrimaryKey {
+    #[serde(default)]
     pub name: String,
     pub columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Index {
+    #[serde(default)]
     pub name: String,
     pub columns: Vec<String>,
     #[serde(default)]
@@ -255,8 +260,16 @@ pub struct Index {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Constraint {
-    Unique { name: String, columns: Vec<String> },
-    Check { name: String, expression: String },
+    Unique {
+        #[serde(default)]
+        name: String,
+        columns: Vec<String>,
+    },
+    Check {
+        #[serde(default)]
+        name: String,
+        expression: String,
+    },
 }
 
 impl Constraint {
@@ -339,6 +352,7 @@ impl ForeignKey {
 
 #[derive(Deserialize)]
 struct ForeignKeyWire {
+    #[serde(default)]
     name: String,
     #[serde(default)]
     columns: Vec<String>,

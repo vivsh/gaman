@@ -1,5 +1,6 @@
 mod canonicalize;
 mod load;
+pub mod names;
 mod normalize;
 mod replay;
 mod validate;

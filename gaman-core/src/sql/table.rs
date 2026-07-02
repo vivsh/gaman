@@ -2,7 +2,9 @@ use sqlparser::ast::{ColumnOption, CreateTable, TableConstraint};
 
 use super::error::SqlParseError;
 use super::util::{data_type_to_str, index_col_name, object_name_parts};
-use crate::states::{Column, Constraint, ForeignKey, PrimaryKey, Table, schema_qualified_key};
+use crate::states::{
+    Column, Constraint, ForeignKey, PrimaryKey, Table, names, schema_qualified_key,
+};
 
 pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), SqlParseError> {
     let (name, schema) = object_name_parts(&ct.name);
@@ -46,7 +48,7 @@ pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), Sq
                         .name
                         .as_ref()
                         .map(|n| n.value.clone())
-                        .unwrap_or_else(|| format!("{}_{}_key", name, col_name));
+                        .unwrap_or_else(|| names::unique(&name, &[col_name.as_str()]));
                     table.constraints.push(Constraint::Unique {
                         name: cname,
                         columns: vec![col_name.clone()],
@@ -57,7 +59,7 @@ pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), Sq
                         .name
                         .as_ref()
                         .map(|n| n.value.clone())
-                        .unwrap_or_else(|| format!("{}_{}_fkey", name, col_name));
+                        .unwrap_or_else(|| names::foreign_key(&name, &[col_name.as_str()]));
                     let (to_table_name, to_schema) = object_name_parts(&fk.foreign_table);
                     let to_table = schema_qualified_key(&to_table_name, to_schema.as_deref());
                     let to_column = fk
@@ -77,7 +79,7 @@ pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), Sq
                         .name
                         .as_ref()
                         .map(|n| n.value.clone())
-                        .unwrap_or_else(|| format!("{}_{}_check", name, col_name));
+                        .unwrap_or_else(|| names::column_check(&name, &col_name));
                     table.constraints.push(Constraint::Check {
                         name: cname,
                         expression: chk.expr.to_string(),
@@ -104,7 +106,7 @@ fn apply_table_constraint(tc: &TableConstraint, table_name: &str, table: &mut Ta
                 .name
                 .as_ref()
                 .map(|name| name.value.clone())
-                .unwrap_or_else(|| Table::pk_constraint_name_for(table_name));
+                .unwrap_or_else(|| names::primary_key(table_name));
             table.primary_key = Some(PrimaryKey {
                 name: pk_name,
                 columns: pk_cols.clone(),
@@ -119,7 +121,7 @@ fn apply_table_constraint(tc: &TableConstraint, table_name: &str, table: &mut Ta
         TableConstraint::Unique(u) => {
             let cname = u.name.as_ref().map(|n| n.value.clone()).unwrap_or_else(|| {
                 let cols: Vec<_> = u.columns.iter().map(|ic| index_col_name(ic)).collect();
-                format!("{}_{}_key", table_name, cols.join("_"))
+                names::unique(table_name, &cols)
             });
             let columns: Vec<String> = u.columns.iter().map(|ic| index_col_name(ic)).collect();
             table.constraints.push(Constraint::Unique {
@@ -133,16 +135,11 @@ fn apply_table_constraint(tc: &TableConstraint, table_name: &str, table: &mut Ta
                 .as_ref()
                 .map(|n| n.value.clone())
                 .unwrap_or_else(|| {
-                    let from = fk
-                        .columns
-                        .first()
-                        .map(|i| i.value.as_str())
-                        .unwrap_or("col");
                     let columns: Vec<_> = fk.columns.iter().map(|i| i.value.as_str()).collect();
                     if columns.is_empty() {
-                        format!("{}_{}_fkey", table_name, from)
+                        names::foreign_key(table_name, &["col"])
                     } else {
-                        format!("{}_{}_fkey", table_name, columns.join("_"))
+                        names::foreign_key(table_name, &columns)
                     }
                 });
             let (to_table_name, to_schema) = object_name_parts(&fk.foreign_table);
@@ -158,7 +155,7 @@ fn apply_table_constraint(tc: &TableConstraint, table_name: &str, table: &mut Ta
                 .name
                 .as_ref()
                 .map(|n| n.value.clone())
-                .unwrap_or_else(|| format!("{}_check", table_name));
+                .unwrap_or_else(|| names::table_check(table_name));
             table.constraints.push(Constraint::Check {
                 name: cname,
                 expression: chk.expr.to_string(),

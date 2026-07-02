@@ -19,12 +19,18 @@ Diff the declared schema against replayed migration history and write the next m
 - `--merge` creates a merge migration when there are multiple heads.
 - `--check` exits non-zero if changes exist, without writing a file.
 - `--dry-run` prints what would be generated.
+- `--non-interactive` fails instead of prompting when a rename, cast, backfill,
+  enum, or unknown-type clarification is needed.
 
 ```bash
 gaman make_migration add_posts
+gaman make_migration --non-interactive add_posts
 gaman make_migration --check
 gaman make_migration --dry-run
 ```
+
+`--check` is always non-interactive. It reports pending clarifications as errors
+instead of reading from stdin.
 
 ### `migrate`
 
@@ -87,4 +93,4 @@ CLI flags win over environment variables when both are provided.
 
 ## Dialects
 
-PostgreSQL is enabled by default and remains the broadest supported engine. SQLite is available with `--features sqlite` and renders a useful native subset instead of emulating PostgreSQL semantics. Schema-qualified objects, extensions, enums, stored functions, PostgreSQL trigger semantics, concurrent indexes, advisory locks, and SQLite table-rebuild changes fail with explicit unsupported-operation errors.
+PostgreSQL is enabled by default and remains the broadest supported engine. SQLite is available with `--features sqlite` and renders a useful native subset instead of emulating PostgreSQL semantics. Schema-qualified objects, extensions, enums, stored functions, PostgreSQL function-backed triggers, concurrent indexes, advisory locks, and SQLite table-rebuild changes fail with explicit unsupported-operation errors.

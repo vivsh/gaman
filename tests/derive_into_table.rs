@@ -45,6 +45,17 @@ struct ExplicitOrderLine {
 #[allow(dead_code)]
 #[derive(IntoTable)]
 #[table(
+    name = "unnamed_order_lines",
+    primary_key(columns("tenant_id", "order_id"))
+)]
+struct UnnamedPkOrderLine {
+    tenant_id: i64,
+    order_id: i64,
+}
+
+#[allow(dead_code)]
+#[derive(IntoTable)]
+#[table(
     name = "orders",
     foreign_key(
         name = "orders_user_fkey",
@@ -53,6 +64,20 @@ struct ExplicitOrderLine {
     )
 )]
 struct Order {
+    tenant_id: i64,
+    user_id: i64,
+}
+
+#[allow(dead_code)]
+#[derive(IntoTable)]
+#[table(
+    name = "unnamed_orders",
+    foreign_key(
+        columns("tenant_id", "user_id"),
+        references(table = "users", columns("tenant_id", "id"))
+    )
+)]
+struct UnnamedFkOrder {
     tenant_id: i64,
     user_id: i64,
 }
@@ -128,11 +153,31 @@ fn derive_into_table_uses_explicit_primary_key_order_and_name() {
 }
 
 #[test]
+fn derive_into_table_generates_name_for_table_primary_key() {
+    let table = table::<UnnamedPkOrderLine>();
+    let pk = table.primary_key.expect("primary key");
+
+    assert_eq!(pk.name, "unnamed_order_lines_pkey");
+    assert_eq!(pk.columns, ["tenant_id", "order_id"]);
+}
+
+#[test]
 fn derive_into_table_emits_composite_foreign_key() {
     let table = table::<Order>();
     let fk = &table.foreign_keys[0];
 
     assert_eq!(fk.name, "orders_user_fkey");
+    assert_eq!(fk.columns, ["tenant_id", "user_id"]);
+    assert_eq!(fk.to_table, "users");
+    assert_eq!(fk.to_columns, ["tenant_id", "id"]);
+}
+
+#[test]
+fn derive_into_table_generates_name_for_composite_foreign_key() {
+    let table = table::<UnnamedFkOrder>();
+    let fk = &table.foreign_keys[0];
+
+    assert_eq!(fk.name, "unnamed_orders_tenant_id_user_id_fkey");
     assert_eq!(fk.columns, ["tenant_id", "user_id"]);
     assert_eq!(fk.to_table, "users");
     assert_eq!(fk.to_columns, ["tenant_id", "id"]);

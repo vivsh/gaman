@@ -1263,6 +1263,62 @@ tables:
 }
 
 #[test]
+fn yaml_accepts_unnamed_derived_schema_objects() {
+    let schema = Schema::from_yaml_str_for_dialect(
+        r#"
+tables:
+  users:
+    columns:
+      - name: tenant_id
+        type: integer
+      - name: id
+        type: integer
+      - name: email
+        type: text
+      - name: active
+        type: boolean
+    primary_key:
+      columns: [tenant_id, id]
+    indexes:
+      - columns: [email]
+    constraints:
+      - kind: unique
+        columns: [tenant_id, email]
+      - kind: check
+        expression: active IN (true, false)
+  orders:
+    columns:
+      - name: tenant_id
+        type: integer
+      - name: user_id
+        type: integer
+    foreign_keys:
+      - columns: [tenant_id, user_id]
+        to_table: users
+        to_columns: [tenant_id, id]
+"#,
+        Dialect::Postgres,
+    )
+    .expect("prepared schema");
+
+    let users = &schema.tables["users"];
+    assert_eq!(users.primary_key.as_ref().unwrap().name, "users_pkey");
+    assert_eq!(users.indexes[0].name, "users_email_idx");
+    assert!(
+        users
+            .constraints
+            .iter()
+            .any(|constraint| matches!(constraint, Constraint::Unique { name, columns } if name == "users_tenant_id_email_key" && columns == &["tenant_id", "email"]))
+    );
+    assert!(users.constraints.iter().any(
+        |constraint| matches!(constraint, Constraint::Check { name, .. } if name == "users_check")
+    ));
+
+    let fk = &schema.tables["orders"].foreign_keys[0];
+    assert_eq!(fk.name, "orders_tenant_id_user_id_fkey");
+}
+
+#[test]
 fn yaml_accepts_legacy_single_column_foreign_key_metadata() {
     let schema = Schema::from_yaml_str_for_dialect(
         r#"
@@ -1341,6 +1397,80 @@ fn builder_composite_foreign_key_preserves_order() {
     assert_eq!(fk.name, "orders_user_fkey");
     assert_eq!(fk.columns, ["tenant_id", "user_id"]);
     assert_eq!(fk.to_columns, ["tenant_id", "id"]);
+}
+
+#[test]
+fn builder_unnamed_helpers_generate_deterministic_names() {
+    let table = TableBuilder::new("orders")
+        .column("tenant_id", "integer", |c| c)
+        .column("user_id", "integer", |c| c)
+        .column("email", "text", |c| c)
+        .primary_key_columns(&["tenant_id", "user_id"])
+        .foreign_key_columns(&["tenant_id", "user_id"], "users", &["tenant_id", "id"])
+        .index_columns(&["email"])
+        .unique_columns(&["tenant_id", "email"])
+        .check_expr("tenant_id > 0")
+        .build();
+
+    assert_eq!(table.primary_key.as_ref().unwrap().name, "orders_pkey");
+    assert_eq!(table.foreign_keys[0].name, "orders_tenant_id_user_id_fkey");
+    assert_eq!(table.indexes[0].name, "orders_email_idx");
+    assert!(
+        table
+            .constraints
+            .iter()
+            .any(|constraint| matches!(constraint, Constraint::Unique { name, .. } if name == "orders_tenant_id_email_key"))
+    );
+    assert!(table.constraints.iter().any(
+        |constraint| matches!(constraint, Constraint::Check { name, .. } if name == "orders_check")
+    ));
+}
+
+/// TableBuilder::trigger accepts the model directly and normalization derives names.
+#[test]
+fn builder_trigger_accepts_model_and_normalize_derives_name() {
+    let table = TableBuilder::new("orders")
+        .trigger(TriggerDef {
+            name: None,
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Insert],
+            scope: TriggerScope::Row,
+            function_name: None,
+            when: None,
+            query: Some("INSERT INTO audit_log(order_id) VALUES (NEW.id);".to_string()),
+            language: None,
+        })
+        .build();
+    let mut schema = Schema::default();
+    schema.tables.insert("orders".to_string(), table);
+    schema.normalize();
+
+    let trigger = &schema.tables["orders"].triggers[0];
+    assert_eq!(trigger.name.as_deref(), Some("orders_insert_after_trg"));
+    assert_eq!(
+        trigger.query.as_deref(),
+        Some("INSERT INTO audit_log(order_id) VALUES (NEW.id);")
+    );
+}
+
+#[test]
+fn generated_name_collision_fails_validation() {
+    let err = Schema::from_yaml_str_for_dialect(
+        r#"
+tables:
+  users:
+    columns:
+      - name: id
+        type: integer
+    indexes:
+      - columns: [id]
+      - columns: [id]
+"#,
+        Dialect::Postgres,
+    )
+    .expect_err("duplicate generated index name should fail");
+
+    assert!(err.to_string().contains("duplicate index 'users_id_idx'"));
 }
 
 /// normalize() moves an inline `check` into `table.constraints` and clears the column field.
@@ -1459,7 +1589,7 @@ fn basic_trigger(name: &str) -> TriggerDef {
         scope: TriggerScope::Row,
         function_name: Some("some_fn".to_string()),
         when: None,
-        body: None,
+        query: None,
         language: None,
     }
 }
@@ -1680,9 +1810,9 @@ tables:
     );
 }
 
-/// normalize() converts an inline trigger body into a FunctionDef and sets function_name.
+/// normalize() preserves trigger query source exactly.
 #[test]
-fn normalize_inline_trigger_body_to_function() {
+fn normalize_preserves_trigger_query() {
     let yaml = r#"
 tables:
   orders:
@@ -1696,25 +1826,36 @@ tables:
         timing: after
         events: [insert]
         scope: row
-        body: "BEGIN RETURN NEW; END;"
+        query: "INSERT INTO audit_log(order_id) VALUES (NEW.id);"
 "#;
     let state = Schema::from_yaml_str(yaml).expect("parse");
     let trigger = &state.tables["orders"].triggers[0];
     assert_eq!(
-        trigger.function_name.as_deref(),
-        Some("orders_insert_after_trg_fn")
+        trigger.query.as_deref(),
+        Some("INSERT INTO audit_log(order_id) VALUES (NEW.id);")
     );
-    assert!(
-        trigger.body.is_none(),
-        "body should be cleared after normalize"
-    );
-    let func = state
-        .functions
-        .get("orders_insert_after_trg_fn")
-        .expect("function should exist");
-    assert_eq!(func.returns, "trigger");
-    assert_eq!(func.language, "plpgsql");
-    assert_eq!(func.body, "BEGIN RETURN NEW; END;");
+    assert!(trigger.function_name.is_none());
+    assert!(state.functions.is_empty());
+}
+
+/// Loading removed trigger body syntax returns a clear unknown-field error.
+#[test]
+fn trigger_body_is_rejected() {
+    let yaml = r#"
+tables:
+  orders:
+    name: orders
+    columns: []
+    triggers:
+      - name: orders_insert_after_trg
+        timing: after
+        events: [insert]
+        scope: row
+        body: "BEGIN RETURN NEW; END;"
+"#;
+    let err = Schema::from_yaml_str(yaml).unwrap_err().to_string();
+    assert!(err.contains("body"), "expected body in error, got {err}");
+    assert!(err.contains("query"), "expected query in error, got {err}");
 }
 
 /// validate() rejects a trigger with no events.
@@ -1736,7 +1877,7 @@ fn validate_trigger_empty_events() {
             scope: TriggerScope::Row,
             function_name: Some("fn".to_string()),
             when: None,
-            body: None,
+            query: None,
             language: None,
         }],
     };
@@ -1744,9 +1885,9 @@ fn validate_trigger_empty_events() {
     assert!(s.validate().unwrap_err().contains("no events"));
 }
 
-/// validate() rejects a trigger with no function_name after normalize.
+/// validate() rejects a trigger with no query or function_name after normalize.
 #[test]
-fn validate_trigger_no_function_name() {
+fn validate_trigger_no_source() {
     let mut s = Schema::default();
     let table = Table {
         name: "users".to_string(),
@@ -1763,12 +1904,74 @@ fn validate_trigger_no_function_name() {
             scope: TriggerScope::Row,
             function_name: None,
             when: None,
-            body: None,
+            query: None,
             language: None,
         }],
     };
     s.tables.insert("users".to_string(), table);
-    assert!(s.validate().unwrap_err().contains("no function_name"));
+    assert!(
+        s.validate()
+            .unwrap_err()
+            .contains("must set either `function_name` or `query`")
+    );
+}
+
+/// validate() rejects a trigger that mixes query and function_name.
+#[test]
+fn validate_trigger_rejects_query_and_function_name() {
+    let mut s = Schema::default();
+    let table = Table {
+        name: "users".to_string(),
+        schema: None,
+        primary_key: None,
+        columns: vec![],
+        foreign_keys: vec![],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![TriggerDef {
+            name: Some("t".to_string()),
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Insert],
+            scope: TriggerScope::Row,
+            function_name: Some("fn".to_string()),
+            when: None,
+            query: Some("SELECT 1".to_string()),
+            language: None,
+        }],
+    };
+    s.tables.insert("users".to_string(), table);
+    assert!(s.validate().unwrap_err().contains("not both"));
+}
+
+/// validate() rejects blank query strings as missing trigger source.
+#[test]
+fn validate_trigger_rejects_empty_query() {
+    let mut s = Schema::default();
+    let table = Table {
+        name: "users".to_string(),
+        schema: None,
+        primary_key: None,
+        columns: vec![],
+        foreign_keys: vec![],
+        indexes: vec![],
+        constraints: vec![],
+        triggers: vec![TriggerDef {
+            name: Some("t".to_string()),
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Insert],
+            scope: TriggerScope::Row,
+            function_name: None,
+            when: None,
+            query: Some("   ".to_string()),
+            language: None,
+        }],
+    };
+    s.tables.insert("users".to_string(), table);
+    assert!(
+        s.validate()
+            .unwrap_err()
+            .contains("must set either `function_name` or `query`")
+    );
 }
 
 /// Tables are stored in a BTreeMap so keys are always alphabetical regardless of creation order.

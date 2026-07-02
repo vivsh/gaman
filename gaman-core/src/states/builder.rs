@@ -1,6 +1,6 @@
 use super::{
     Column, ColumnRef, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index,
-    PrimaryKey, Schema, SchemaLoadError, Table, ViewDef, schema_qualified_key,
+    PrimaryKey, Schema, SchemaLoadError, Table, TriggerDef, ViewDef, names, schema_qualified_key,
 };
 use crate::dialects::Dialect;
 
@@ -150,7 +150,7 @@ impl TableBuilder {
         to_column: impl Into<String>,
     ) -> Self {
         let from = from.into();
-        let name = format!("{}_{}_fkey", self.table.name, from);
+        let name = names::foreign_key(&self.table.name, &[from.as_str()]);
         self.push_foreign_key(name, [from], to_table, [to_column.into()])
     }
 
@@ -170,7 +170,7 @@ impl TableBuilder {
         to_table: impl Into<String>,
         to_columns: &[&str],
     ) -> Self {
-        let name = format!("{}_{}_fkey", self.table.name, from_columns.join("_"));
+        let name = names::foreign_key(&self.table.name, from_columns);
         self.push_foreign_key(
             name,
             from_columns.iter().copied(),
@@ -194,6 +194,16 @@ impl TableBuilder {
         )
     }
 
+    pub fn index_columns(self, columns: &[&str]) -> Self {
+        let name = names::index(&self.table.name, columns);
+        self.push_index(name, columns, false)
+    }
+
+    pub fn unique_index_columns(self, columns: &[&str]) -> Self {
+        let name = names::index(&self.table.name, columns);
+        self.push_index(name, columns, true)
+    }
+
     pub fn index(self, name: impl Into<String>, columns: &[&str]) -> Self {
         self.push_index(name, columns, false)
     }
@@ -210,12 +220,22 @@ impl TableBuilder {
         self
     }
 
+    pub fn check_expr(self, expression: impl Into<String>) -> Self {
+        let name = names::table_check(&self.table.name);
+        self.check(name, expression)
+    }
+
     pub fn unique(mut self, name: impl Into<String>, columns: &[&str]) -> Self {
         self.table.constraints.push(Constraint::Unique {
             name: name.into(),
             columns: columns.iter().map(|s| s.to_string()).collect(),
         });
         self
+    }
+
+    pub fn unique_columns(self, columns: &[&str]) -> Self {
+        let name = names::unique(&self.table.name, columns);
+        self.unique(name, columns)
     }
 
     pub fn primary_key(mut self, name: impl Into<String>, columns: &[&str]) -> Self {
@@ -227,8 +247,14 @@ impl TableBuilder {
     }
 
     pub fn primary_key_columns(self, columns: &[&str]) -> Self {
-        let name = self.table.pk_constraint_name();
+        let name = names::primary_key(&self.table.name);
         self.primary_key(name, columns)
+    }
+
+    pub fn trigger(self, trigger: TriggerDef) -> Self {
+        let mut this = self;
+        this.table.triggers.push(trigger);
+        this
     }
 
     pub fn build(mut self) -> Table {
@@ -242,7 +268,7 @@ impl TableBuilder {
                 .collect();
             if !columns.is_empty() {
                 self.table.primary_key = Some(PrimaryKey {
-                    name: self.table.pk_constraint_name(),
+                    name: names::primary_key(&self.table.name),
                     columns,
                 });
             }

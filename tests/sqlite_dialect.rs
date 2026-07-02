@@ -146,6 +146,108 @@ fn create_table_composite_foreign_key() {
     );
 }
 
+/// SQLite query triggers render direct CREATE TRIGGER SQL without RETURN NEW.
+#[test]
+fn create_query_trigger_sqlite() {
+    let trigger = TriggerDef {
+        name: Some("orders_insert_after_trg".to_string()),
+        timing: TriggerTiming::After,
+        events: vec![TriggerEvent::Insert],
+        scope: TriggerScope::Row,
+        function_name: None,
+        when: None,
+        query: Some("INSERT INTO audit_log(order_id) VALUES (NEW.id);".to_string()),
+        language: None,
+    };
+
+    let sql = Dialect::Sqlite
+        .operation_to_sql(&Operation::CreateTrigger {
+            table_name: "orders".to_string(),
+            trigger,
+        })
+        .unwrap();
+
+    assert_eq!(sql.len(), 1);
+    assert!(
+        sql[0].contains("CREATE TRIGGER \"orders_insert_after_trg\""),
+        "got: {}",
+        sql[0]
+    );
+    assert!(sql[0].contains("AFTER INSERT ON \"orders\""));
+    assert!(sql[0].contains("FOR EACH ROW"));
+    assert!(sql[0].contains("INSERT INTO audit_log(order_id) VALUES (NEW.id);"));
+    assert!(!sql[0].contains("RETURN NEW"));
+}
+
+/// SQLite rejects PostgreSQL trigger function wiring.
+#[test]
+fn sqlite_trigger_function_name_is_unsupported() {
+    let trigger = TriggerDef {
+        name: Some("orders_insert_after_trg".to_string()),
+        timing: TriggerTiming::After,
+        events: vec![TriggerEvent::Insert],
+        scope: TriggerScope::Row,
+        function_name: Some("orders_audit_fn".to_string()),
+        when: None,
+        query: None,
+        language: None,
+    };
+
+    let err = Dialect::Sqlite
+        .operation_to_sql(&Operation::CreateTrigger {
+            table_name: "orders".to_string(),
+            trigger,
+        })
+        .unwrap_err();
+    assert!(err.to_string().contains("function_name"));
+}
+
+/// SQLite rejects language on direct query triggers.
+#[test]
+fn sqlite_trigger_language_is_unsupported() {
+    let trigger = TriggerDef {
+        name: Some("orders_insert_after_trg".to_string()),
+        timing: TriggerTiming::After,
+        events: vec![TriggerEvent::Insert],
+        scope: TriggerScope::Row,
+        function_name: None,
+        when: None,
+        query: Some("INSERT INTO audit_log(order_id) VALUES (NEW.id);".to_string()),
+        language: Some("plpgsql".to_string()),
+    };
+
+    let err = Dialect::Sqlite
+        .operation_to_sql(&Operation::CreateTrigger {
+            table_name: "orders".to_string(),
+            trigger,
+        })
+        .unwrap_err();
+    assert!(err.to_string().contains("language"));
+}
+
+/// SQLite rejects truncate trigger events.
+#[test]
+fn sqlite_trigger_truncate_is_unsupported() {
+    let trigger = TriggerDef {
+        name: Some("orders_truncate_after_trg".to_string()),
+        timing: TriggerTiming::After,
+        events: vec![TriggerEvent::Truncate],
+        scope: TriggerScope::Row,
+        function_name: None,
+        when: None,
+        query: Some("INSERT INTO audit_log(action) VALUES ('truncate');".to_string()),
+        language: None,
+    };
+
+    let err = Dialect::Sqlite
+        .operation_to_sql(&Operation::CreateTrigger {
+            table_name: "orders".to_string(),
+            trigger,
+        })
+        .unwrap_err();
+    assert!(err.to_string().contains("TRUNCATE"));
+}
+
 fn migration_atomic(id: &str, atomic: bool, operations: Vec<Operation>) -> Migration {
     Migration {
         id: id.to_string(),
@@ -683,9 +785,9 @@ fn sqlite_rebuild_rejects_temp_collision_triggers_and_views() {
         timing: TriggerTiming::After,
         events: vec![TriggerEvent::Update],
         scope: TriggerScope::Row,
-        function_name: Some("audit_users".to_string()),
+        function_name: None,
         when: None,
-        body: None,
+        query: Some("INSERT INTO audit_log(user_id) VALUES (NEW.id);".to_string()),
         language: None,
     });
     let err = sql_for_result(vec![

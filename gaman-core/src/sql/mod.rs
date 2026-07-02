@@ -15,7 +15,7 @@ use sqlparser::parser::Parser;
 use table::parse_create_table;
 use util::{index_col_name, object_name_parts};
 
-use crate::states::{EnumDef, ExtensionDef, Index, Schema, ViewDef, schema_qualified_key};
+use crate::states::{EnumDef, ExtensionDef, Index, Schema, ViewDef, names, schema_qualified_key};
 
 struct ParseContext {
     schema: Schema,
@@ -79,7 +79,7 @@ fn parse_statement(stmt: &Statement, ctx: &mut ParseContext) -> Result<(), SqlPa
                 .map(|n| object_name_parts(n).0)
                 .unwrap_or_else(|| {
                     let cols: Vec<_> = ci.columns.iter().map(|ic| index_col_name(ic)).collect();
-                    format!("{}_{}_idx", table_name, cols.join("_"))
+                    names::index(&table_name, &cols)
                 });
             ctx.pending_indexes.push((
                 table_name,

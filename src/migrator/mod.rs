@@ -1060,7 +1060,7 @@ fn strip_opaque_source_for_verify(state: &mut Schema) {
     }
     for table in state.tables.values_mut() {
         for trigger in &mut table.triggers {
-            trigger.body = None;
+            trigger.query = None;
             trigger.when = None;
         }
     }

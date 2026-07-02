@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unknown column types are no longer rejected solely because they are absent
   from the dialect catalog; replayed migration history and explicit keep/use
   decisions form the project-local trust boundary for custom types.
+- Trigger inline source now uses `query` instead of `body`. PostgreSQL wraps
+  query triggers in generated trigger functions with default return behavior,
+  while SQLite renders trigger queries directly.
 - Documentation now includes `ARCHITECTURE.md` and explicit repo guidance for
   the offline core, strict schema superset, lifecycle, and feature boundaries.
 
@@ -48,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - External subprocess/remote invocation support was removed; `Statement`
   remains the SQL escape hatch.
+- Trigger `body` schema input was removed; use `query` for trigger statements
+  or `function_name` for explicit PostgreSQL trigger functions.
 
 ## [0.3.18] - 2026-06-30
 

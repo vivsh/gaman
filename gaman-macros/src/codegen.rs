@@ -157,7 +157,11 @@ pub(crate) fn derive_into_table(input: TokenStream) -> TokenStream {
         }
         let name = primary_key.name;
         let columns = primary_key.columns;
-        table_stmts.push(quote! { .primary_key(#name, &[#(#columns),*]) });
+        if let Some(name) = name {
+            table_stmts.push(quote! { .primary_key(#name, &[#(#columns),*]) });
+        } else {
+            table_stmts.push(quote! { .primary_key_columns(&[#(#columns),*]) });
+        }
     }
 
     for foreign_key in args.foreign_keys.clone() {
@@ -169,29 +173,32 @@ pub(crate) fn derive_into_table(input: TokenStream) -> TokenStream {
             .map(LitStr::value)
             .collect();
         if source_columns.is_empty() {
+            let label = foreign_key.name.as_deref().unwrap_or("<unnamed>");
             return syn::Error::new_spanned(
                 &args.ident,
-                format!("foreign key '{}' has no source columns", foreign_key.name),
+                format!("foreign key '{label}' has no source columns"),
             )
             .to_compile_error()
             .into();
         }
         if target_columns.is_empty() {
+            let label = foreign_key.name.as_deref().unwrap_or("<unnamed>");
             return syn::Error::new_spanned(
                 &args.ident,
-                format!("foreign key '{}' has no target columns", foreign_key.name),
+                format!("foreign key '{label}' has no target columns"),
             )
             .to_compile_error()
             .into();
         }
         if source_columns.len() != target_columns.len() {
+            let label = foreign_key.name.as_deref().unwrap_or("<unnamed>");
             return syn::Error::new_spanned(
                 &args.ident,
                 format!(
                     "foreign key '{}' has {} source columns but {} target columns",
-                    foreign_key.name,
+                    label,
                     source_columns.len(),
-                    target_columns.len()
+                    target_columns.len(),
                 ),
             )
             .to_compile_error()
@@ -199,11 +206,12 @@ pub(crate) fn derive_into_table(input: TokenStream) -> TokenStream {
         }
         for column in &source_columns {
             if !column_names.iter().any(|name| name == column) {
+                let label = foreign_key.name.as_deref().unwrap_or("<unnamed>");
                 return syn::Error::new_spanned(
                     &args.ident,
                     format!(
                         "foreign key '{}' references unknown source column '{column}'",
-                        foreign_key.name
+                        label
                     ),
                 )
                 .to_compile_error()
@@ -214,9 +222,15 @@ pub(crate) fn derive_into_table(input: TokenStream) -> TokenStream {
         let target_table = foreign_key.references.table;
         let columns = foreign_key.columns;
         let target_columns = foreign_key.references.columns;
-        table_stmts.push(
-            quote! { .foreign_key_named_columns(#name, &[#(#columns),*], #target_table, &[#(#target_columns),*]) },
-        );
+        if let Some(name) = name {
+            table_stmts.push(
+                quote! { .foreign_key_named_columns(#name, &[#(#columns),*], #target_table, &[#(#target_columns),*]) },
+            );
+        } else {
+            table_stmts.push(
+                quote! { .foreign_key_columns(&[#(#columns),*], #target_table, &[#(#target_columns),*]) },
+            );
+        }
     }
 
     let schema_stmt = if let Some(ref schema) = args.schema {

@@ -1,7 +1,10 @@
 use crate::dialects::DialectError;
 use crate::migrations::Migration;
 use crate::operations::Operation;
-use crate::states::{Column, Constraint, Index, Schema, SchemaValidationError, Table, ViewDef};
+use crate::states::{
+    Column, Constraint, Index, Schema, SchemaValidationError, Table, TriggerDef, TriggerEvent,
+    TriggerScope, TriggerTiming, ViewDef,
+};
 
 mod data_types;
 mod extension_types;
@@ -689,6 +692,23 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             format!("DROP VIEW {}", qualified_view(old)?),
             format!("CREATE VIEW {} AS {}", qualified_view(new)?, new.definition),
         ]),
+        Operation::CreateTrigger {
+            table_name,
+            trigger,
+        }
+        | Operation::AlterTrigger {
+            table_name,
+            new: trigger,
+            ..
+        } => Ok(vec![create_trigger_sql(table_name, trigger)?]),
+        Operation::DropTrigger {
+            table_name,
+            trigger,
+        } => {
+            let name = trigger.name.as_deref().unwrap_or("");
+            let _ = table_name;
+            Ok(vec![format!("DROP TRIGGER {}", quote_ident(name))])
+        }
         Operation::DropColumn { .. }
         | Operation::AlterColumn { .. }
         | Operation::AddForeignKey { .. }
@@ -701,9 +721,6 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
         Operation::CreateFunction { .. }
         | Operation::AlterFunction { .. }
         | Operation::DropFunction { .. }
-        | Operation::CreateTrigger { .. }
-        | Operation::AlterTrigger { .. }
-        | Operation::DropTrigger { .. }
         | Operation::CreateExtension { .. }
         | Operation::DropExtension { .. }
         | Operation::CreateEnum { .. }
@@ -714,6 +731,72 @@ pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             "operation is not supported by the SQLite dialect",
         )),
     }
+}
+
+fn create_trigger_sql(table_name: &str, trigger: &TriggerDef) -> Result<String, DialectError> {
+    if trigger.function_name.is_some() {
+        return Err(unsupported(
+            "create_trigger",
+            "SQLite trigger rendering requires `query`; `function_name` is PostgreSQL-only",
+        ));
+    }
+    if trigger.language.is_some() {
+        return Err(unsupported(
+            "create_trigger",
+            "SQLite trigger rendering does not support `language`",
+        ));
+    }
+    let Some(query) = trigger.query.as_deref() else {
+        return Err(unsupported(
+            "create_trigger",
+            "SQLite trigger rendering requires `query`",
+        ));
+    };
+    let name = trigger.name.as_deref().unwrap_or("");
+    let timing = match trigger.timing {
+        TriggerTiming::Before => "BEFORE",
+        TriggerTiming::After => "AFTER",
+        TriggerTiming::InsteadOf => "INSTEAD OF",
+    };
+    let mut events = Vec::new();
+    for event in &trigger.events {
+        events.push(match event {
+            TriggerEvent::Insert => "INSERT",
+            TriggerEvent::Update => "UPDATE",
+            TriggerEvent::Delete => "DELETE",
+            TriggerEvent::Truncate => {
+                return Err(unsupported(
+                    "create_trigger",
+                    "SQLite triggers do not support TRUNCATE events",
+                ));
+            }
+        });
+    }
+    events.sort_unstable();
+    let scope = match trigger.scope {
+        TriggerScope::Row => "FOR EACH ROW",
+        TriggerScope::Statement => {
+            return Err(unsupported(
+                "create_trigger",
+                "SQLite only supports row-level triggers",
+            ));
+        }
+    };
+    let when_clause = trigger
+        .when
+        .as_deref()
+        .map(|condition| format!("\nWHEN {condition}"))
+        .unwrap_or_default();
+    Ok(format!(
+        "CREATE TRIGGER {}\n{} {} ON {}\n{}{}\nBEGIN\n{}\nEND",
+        quote_ident(name),
+        timing,
+        events.join(" OR "),
+        quote_table_name(table_name)?,
+        scope,
+        when_clause,
+        query.trim()
+    ))
 }
 
 pub(crate) fn migration_to_sql(
@@ -832,19 +915,43 @@ pub fn validate_schema(schema: &Schema) -> Result<(), SchemaValidationError> {
                 "SQLite does not support schema-qualified tables: {table_name}"
             )));
         }
-        if !table.triggers.is_empty() {
-            let names = table
-                .triggers
-                .iter()
-                .map(|trigger| trigger.name.as_deref().unwrap_or("<unnamed>"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(SchemaValidationError::Invalid(format!(
-                "SQLite does not support modeled triggers on table {table_name}: {names}"
-            )));
+        for trigger in &table.triggers {
+            validate_sqlite_trigger(table_name, trigger)?;
         }
     }
 
+    Ok(())
+}
+
+fn validate_sqlite_trigger(
+    table_name: &str,
+    trigger: &TriggerDef,
+) -> Result<(), SchemaValidationError> {
+    let name = trigger.name.as_deref().unwrap_or("<unnamed>");
+    if trigger.function_name.is_some() {
+        return Err(SchemaValidationError::Invalid(format!(
+            "SQLite trigger {table_name}.{name} must use `query`; `function_name` is PostgreSQL-only"
+        )));
+    }
+    if trigger.language.is_some() {
+        return Err(SchemaValidationError::Invalid(format!(
+            "SQLite trigger {table_name}.{name} must not set `language`"
+        )));
+    }
+    if trigger
+        .events
+        .iter()
+        .any(|event| *event == TriggerEvent::Truncate)
+    {
+        return Err(SchemaValidationError::Invalid(format!(
+            "SQLite trigger {table_name}.{name} does not support truncate events"
+        )));
+    }
+    if trigger.scope == TriggerScope::Statement {
+        return Err(SchemaValidationError::Invalid(format!(
+            "SQLite trigger {table_name}.{name} must be row-level"
+        )));
+    }
     Ok(())
 }
 

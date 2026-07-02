@@ -515,7 +515,7 @@ fn basic_trigger(name: &str) -> crate::states::TriggerDef {
         scope: crate::states::TriggerScope::Row,
         function_name: Some("audit_fn".to_string()),
         when: None,
-        body: None,
+        query: None,
         language: None,
     }
 }
@@ -664,6 +664,102 @@ fn create_trigger_sql_qualifies_function_name() {
         "got: {}",
         sql[0]
     );
+}
+
+/// Query triggers render a generated trigger function followed by the trigger.
+#[test]
+fn create_query_trigger_sql_generates_row_function() {
+    let mut trigger = basic_trigger("audit_trg");
+    trigger.function_name = None;
+    trigger.query = Some("INSERT INTO audit_log(user_id) VALUES (NEW.id);".to_string());
+
+    let sql = operation_to_sql(&Operation::CreateTrigger {
+        table_name: "users".to_string(),
+        trigger,
+    })
+    .unwrap();
+
+    assert_eq!(sql.len(), 2);
+    assert!(
+        sql[0].starts_with("CREATE OR REPLACE FUNCTION \"audit_trg_fn\"()"),
+        "got: {}",
+        sql[0]
+    );
+    assert!(sql[0].contains("RETURNS trigger"), "got: {}", sql[0]);
+    assert!(sql[0].contains("LANGUAGE plpgsql"), "got: {}", sql[0]);
+    assert!(
+        sql[0].contains("INSERT INTO audit_log(user_id) VALUES (NEW.id);"),
+        "got: {}",
+        sql[0]
+    );
+    assert!(sql[0].contains("RETURN NEW;"), "got: {}", sql[0]);
+    assert!(
+        sql[1].contains("EXECUTE FUNCTION \"audit_trg_fn\"()"),
+        "got: {}",
+        sql[1]
+    );
+}
+
+/// Statement-level query triggers use RETURN NULL in generated PostgreSQL functions.
+#[test]
+fn create_query_trigger_sql_generates_statement_function() {
+    let mut trigger = basic_trigger("audit_trg");
+    trigger.function_name = None;
+    trigger.query = Some("INSERT INTO audit_log(action) VALUES ('bulk');".to_string());
+    trigger.scope = crate::states::TriggerScope::Statement;
+    trigger.language = Some("plpgsql".to_string());
+
+    let sql = operation_to_sql(&Operation::CreateTrigger {
+        table_name: "users".to_string(),
+        trigger,
+    })
+    .unwrap();
+
+    assert_eq!(sql.len(), 2);
+    assert!(sql[0].contains("RETURN NULL;"), "got: {}", sql[0]);
+    assert!(sql[1].contains("FOR EACH STATEMENT"), "got: {}", sql[1]);
+}
+
+/// Dropping query triggers also drops their generated PostgreSQL trigger function.
+#[test]
+fn drop_query_trigger_sql_drops_generated_function() {
+    let mut trigger = basic_trigger("audit_trg");
+    trigger.function_name = None;
+    trigger.query = Some("INSERT INTO audit_log(user_id) VALUES (OLD.id);".to_string());
+
+    let sql = operation_to_sql(&Operation::DropTrigger {
+        table_name: "users".to_string(),
+        trigger,
+    })
+    .unwrap();
+
+    assert_eq!(
+        sql,
+        vec![
+            "DROP TRIGGER \"audit_trg\" ON \"users\"",
+            "DROP FUNCTION \"audit_trg_fn\"()"
+        ]
+    );
+}
+
+/// Switching from query to function trigger drops the old generated function.
+#[test]
+fn alter_query_trigger_to_function_drops_generated_function() {
+    let mut old = basic_trigger("audit_trg");
+    old.function_name = None;
+    old.query = Some("INSERT INTO audit_log(user_id) VALUES (NEW.id);".to_string());
+    let new = basic_trigger("audit_trg");
+
+    let sql = operation_to_sql(&Operation::AlterTrigger {
+        table_name: "users".to_string(),
+        old,
+        new,
+    })
+    .unwrap();
+
+    assert_eq!(sql.len(), 2);
+    assert!(sql[0].contains("EXECUTE FUNCTION \"audit_fn\"()"));
+    assert_eq!(sql[1], "DROP FUNCTION \"audit_trg_fn\"()");
 }
 
 /// AlterTrigger SQL is CREATE OR REPLACE TRIGGER (PG14+).

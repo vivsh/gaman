@@ -137,7 +137,6 @@ extensions:
 tables:
   order_lines:
     primary_key:
-      name: order_lines_pkey
       columns: [tenant_id, order_id]
     columns:
       - name: order_id
@@ -158,12 +157,11 @@ tables:
         nullable: false
         default: "now()"
     indexes:
-      - name: users_email_idx
-        columns: [email]
+      - columns: [email]
         unique: true
 ```
 
-Inline shorthands such as `primary_key`, `references`, and `check` are normalized before diffing. Multiple columns may use `primary_key: true`; if no explicit table-level `primary_key` is provided, Gaman creates one deterministically from the table name and column order. Use the explicit `primary_key: { name, columns }` form when the constraint name or primary-key column order matters. `SCHEMA_FILE` can point to a `.yaml`, a `.sql`, or a directory; when you pass a directory, Gaman merges files in alphabetical order.
+Inline shorthands such as `primary_key`, `references`, and `check` are normalized before diffing. Multiple columns may use `primary_key: true`; if no explicit table-level `primary_key` is provided, Gaman creates one deterministically from the table name and column order. Names for primary keys, foreign keys, indexes, unique constraints, and check constraints may be omitted when Gaman can derive them; use explicit `name` fields only when the database object name must be preserved. `SCHEMA_FILE` can point to a `.yaml`, a `.sql`, or a directory; when you pass a directory, Gaman merges files in alphabetical order.
 
 ### SQL DDL
 
@@ -344,7 +342,7 @@ Legend: ✅ implemented, 🚧 planned but not implemented, ❌ unsupported by de
 | Extensions as opaque schema objects | ✅ | ❌ | ❌ |
 | Enums | ✅ | ❌ | 🚧 |
 | Functions as opaque schema objects | ✅ | ❌ | 🚧 |
-| Triggers as opaque schema objects | ✅ | ❌ | 🚧 |
+| Trigger query schema objects | ✅ | 🚧 | 🚧 |
 | Views as opaque schema objects | ✅ | ✅ | 🚧 |
 | Raw SQL statements | ✅ | ✅ | 🚧 |
 | SQLite-style table rebuilds for limited ALTER TABLE | ❌ | ✅ | ❌ |
@@ -354,7 +352,8 @@ Legend: ✅ implemented, 🚧 planned but not implemented, ❌ unsupported by de
 
 - Column-level `references` is single-column shorthand; use table-level `foreign_keys` for composite references
 - Offline diff preserves opaque source exactly and uses lexical canonicalization only as a fallback to suppress formatting-only churn
+- Trigger `query` source is preserved exactly. PostgreSQL wraps query triggers in generated trigger functions with default return behavior; SQLite renders query triggers directly.
 - `verify_db` compares deterministic opaque metadata where available, but does not prove function, trigger, or view body equivalence from live catalog text
 - PostgreSQL enum value additions have no inverse; enum value renames are reversible
-- SQLite table rebuilds require `atomic: true`; primary-key changes, modeled triggers, and dependent views are rejected until Gaman can preserve them safely
+- SQLite table rebuilds require `atomic: true`; primary-key changes, tables with modeled triggers, and dependent views are rejected until Gaman can preserve them safely
 - SQLite nullable-to-not-null rebuilds require a default or explicit cast expression so existing rows can be copied deterministically

@@ -575,7 +575,7 @@ impl Introspectable for PostgresExecutor {
                             scope,
                             function_name: Some(fn_key),
                             when: None,
-                            body: None,
+                            query: None,
                             language: None,
                         });
                     }
