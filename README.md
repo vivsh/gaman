@@ -5,7 +5,7 @@
 [![Crates.io](https://img.shields.io/crates/v/gaman)](https://crates.io/crates/gaman)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A deterministic, offline-first migration engine for PostgreSQL, written in Rust. SQLite support is available behind the `sqlite` Cargo feature as an engine-specific dialect with explicit errors for unsupported operations.
+A deterministic, offline-first migration engine for SQLx-backed databases, written in Rust. PostgreSQL is the default and broadest engine; SQLite support is available behind the `sqlite` Cargo feature as an engine-specific dialect with explicit errors for unsupported operations.
 
 Declare your schema as **YAML**, **SQL DDL**, or **Rust structs**. Gaman diffs that desired state against replayed migration history and writes the next migration without touching a database at plan time.
 
@@ -226,8 +226,7 @@ operations:
         - { name: title, type: text, nullable: false }
         - { name: author_id, type: bigint, nullable: false }
       foreign_keys:
-        - name: fk_posts_author
-          columns: [author_id]
+        - columns: [author_id]
           to_table: users
           to_columns: [id]
 ```
@@ -313,24 +312,24 @@ Offline transform cases live under `tests/cases/offline/`, and PostgreSQL-backed
 
 Engine-specific migration files are expected; Gaman does not try to make one file portable across databases. Unsupported operations fail during validation or SQL rendering instead of silently producing no-op SQL. `sql_migrate` is offline and excludes runtime lifecycle SQL such as tracking-table installation, locks, transactions, and record/unrecord statements. `Statement` remains the escape hatch for database-specific SQL outside the modeled schema superset.
 
-Legend: ✅ implemented, 🚧 planned but not implemented, ❌ unsupported by design or by the database engine.
+Unless a row explicitly says live introspection or `verify_db`, support means the feature is modeled for offline diff/replay and SQL rendering. Legend: ✅ implemented, 🚧 planned but not implemented, ❌ unsupported by design or by the database engine.
 
 | Feature | PostgreSQL | SQLite | MySQL / MariaDB |
 | --- | --- | --- | --- |
 | Offline replay, diff, and migration generation | ✅ | ✅ | 🚧 |
 | Offline SQL rendering through `sql_migrate` | ✅ | ✅ | 🚧 |
 | Live migration application | ✅ | ✅ | 🚧 |
-| Live database introspection | ✅ | ✅ | 🚧 |
+| Live database introspection for supported metadata | ✅ | ✅ | 🚧 |
 | Live `verify_db` for supported metadata | ✅ | ✅ | 🚧 |
 | Migration tracking table | ✅ | ✅ | 🚧 |
-| Database locking | ✅ | 🚧 | 🚧 |
+| Dedicated migration lock | ✅ | ❌ | 🚧 |
 | Tables: create, drop, rename | ✅ | ✅ | 🚧 |
 | Columns: add, drop, rename | ✅ | ✅ | 🚧 |
 | Columns: type, nullability, default changes | ✅ | ✅ | 🚧 |
 | Generated columns | ✅ | ✅ | 🚧 |
 | Single-column primary keys | ✅ | ✅ | 🚧 |
 | Composite primary keys | ✅ | ✅ | 🚧 |
-| Primary-key changes after table creation | ❌ | ❌ | ❌ |
+| Automatic primary-key mutation generation | ❌ | ❌ | ❌ |
 | Single-column foreign keys | ✅ | ✅ | 🚧 |
 | Composite foreign keys | ✅ | ✅ | 🚧 |
 | Unique constraints | ✅ | ✅ | 🚧 |
@@ -342,18 +341,21 @@ Legend: ✅ implemented, 🚧 planned but not implemented, ❌ unsupported by de
 | Extensions as opaque schema objects | ✅ | ❌ | ❌ |
 | Enums | ✅ | ❌ | 🚧 |
 | Functions as opaque schema objects | ✅ | ❌ | 🚧 |
-| Trigger query schema objects | ✅ | 🚧 | 🚧 |
+| Trigger query schema objects | ✅ | ✅ | 🚧 |
 | Views as opaque schema objects | ✅ | ✅ | 🚧 |
 | Raw SQL statements | ✅ | ✅ | 🚧 |
-| SQLite-style table rebuilds for limited ALTER TABLE | ❌ | ✅ | ❌ |
+| SQLite table-rebuild planner for ALTER TABLE | ❌ | ✅ | ❌ |
 | Opaque source formatting fallback in offline diff | ✅ | ✅ | 🚧 |
 
 ### Known limitations
 
-- Column-level `references` is single-column shorthand; use table-level `foreign_keys` for composite references
-- Offline diff preserves opaque source exactly and uses lexical canonicalization only as a fallback to suppress formatting-only churn
-- Trigger `query` source is preserved exactly. PostgreSQL wraps query triggers in generated trigger functions with default return behavior; SQLite renders query triggers directly.
-- `verify_db` compares deterministic opaque metadata where available, but does not prove function, trigger, or view body equivalence from live catalog text
-- PostgreSQL enum value additions have no inverse; enum value renames are reversible
-- SQLite table rebuilds require `atomic: true`; primary-key changes, tables with modeled triggers, and dependent views are rejected until Gaman can preserve them safely
-- SQLite nullable-to-not-null rebuilds require a default or explicit cast expression so existing rows can be copied deterministically
+- Column-level `references` is single-column shorthand; use table-level `foreign_keys` for composite references.
+- Automatic primary-key mutation generation is intentionally unsupported for now, including single-column and composite PK mutations. PostgreSQL can perform these changes with hand-written SQL; use `Statement` when backend-specific PK surgery is intentional.
+- Offline diff preserves opaque source exactly and uses lexical canonicalization only as a fallback to suppress formatting-only churn.
+- `verify_db` compares deterministic opaque metadata where available, but does not prove function, trigger, or view body equivalence from live catalog text.
+- PostgreSQL trigger `query` source is wrapped in generated trigger functions with default return behavior. Use an explicit modeled function and `function_name` for custom `RETURN OLD`, conditional returns, or `TG_OP` branching.
+- PostgreSQL enum value additions have no inverse; enum value renames are reversible.
+- SQLite renders query triggers directly, but function-backed triggers, statement-level triggers, `TRUNCATE` triggers, and trigger `language` are unsupported.
+- SQLite table rebuilds require `atomic: true`; primary-key changes, tables with modeled triggers, and dependent views are rejected until Gaman can preserve them safely.
+- SQLite nullable-to-not-null rebuilds require a default or explicit cast expression so existing rows can be copied deterministically.
+- SQLite live introspection currently covers tables, columns, primary keys, foreign keys, and user-created indexes. Check constraints, views, generated-column expressions, and trigger bodies should be treated as authored schema/migration metadata rather than guaranteed live-drift detection.

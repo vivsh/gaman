@@ -57,7 +57,7 @@ Print migration-operation SQL for one migration or for the whole plan. This comm
 
 ### `verify_db`
 
-Compare the live database against replayed migration state and report drift. Today this checks tables and columns; it does not validate views or functions.
+Compare the live database against replayed migration state and report drift for the metadata the selected dialect can introspect deterministically. PostgreSQL covers the relational core plus stable opaque metadata such as function signatures and trigger wiring. SQLite currently focuses on tables, columns, primary keys, foreign keys, and user-created indexes.
 
 ```bash
 gaman verify_db
@@ -93,4 +93,4 @@ CLI flags win over environment variables when both are provided.
 
 ## Dialects
 
-PostgreSQL is enabled by default and remains the broadest supported engine. SQLite is available with `--features sqlite` and renders a useful native subset instead of emulating PostgreSQL semantics. Schema-qualified objects, extensions, enums, stored functions, PostgreSQL function-backed triggers, concurrent indexes, advisory locks, and SQLite table-rebuild changes fail with explicit unsupported-operation errors.
+PostgreSQL is enabled by default and remains the broadest supported engine. SQLite is available with `--features sqlite` and renders a useful native subset instead of emulating PostgreSQL semantics. Schema-qualified objects, extensions, enums, stored functions, PostgreSQL function-backed triggers, concurrent indexes, advisory locks, and unsafe SQLite table-rebuild cases fail with explicit unsupported-operation errors.

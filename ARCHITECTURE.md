@@ -466,8 +466,9 @@ High-priority work:
 - Improve live introspection and `verify_db` coverage for supported relational
   metadata.
 - Harden opaque schema object signatures and stable metadata comparison.
-- Expand SQLite introspection for generated columns, constraints, indexes, views,
-  and supported rebuild scenarios.
+- Expand SQLite live introspection for generated-column expressions, check
+  constraints, views, triggers, and other metadata SQLite does not expose in the
+  same structured way as tables, columns, foreign keys, and indexes.
 - Add more round-trip tests:
   - schema to migration to replay;
   - migration to SQL golden output;
