@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.19] - 2026-07-03
+
 ### Added
 
 - `gaman-core` now physically owns the offline engine modules, with the root
@@ -279,7 +281,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `make_migration`, `migrate`, `fake_migrate`, `show_migrations`, `inspect_db` commands
 - DAG-based migration graph with dependency tracking
 
-[unreleased]: https://github.com/vivsh/gaman/compare/0f752c1...HEAD
+[unreleased]: https://github.com/vivsh/gaman/compare/0ddab9c...HEAD
+[0.3.19]: https://github.com/vivsh/gaman/compare/0f752c1...0ddab9c
 [0.3.18]: https://github.com/vivsh/gaman/compare/v0.3.17...0f752c1
 [0.3.17]: https://github.com/vivsh/gaman/compare/v0.3.16...v0.3.17
 [0.3.16]: https://github.com/vivsh/gaman/compare/v0.3.15...v0.3.16

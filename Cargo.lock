@@ -476,7 +476,7 @@ dependencies = [
 
 [[package]]
 name = "gaman"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "argh",
  "dotenvy",
@@ -494,7 +494,7 @@ dependencies = [
 
 [[package]]
 name = "gaman-core"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "proptest",
  "serde",
@@ -507,7 +507,7 @@ dependencies = [
 
 [[package]]
 name = "gaman-macros"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "darling",
  "proc-macro2",

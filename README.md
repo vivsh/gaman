@@ -12,17 +12,11 @@ deterministically replays history, diffs the result, and plans the next
 migration.
 
 ```text
-schema.yaml
-    ↓
-gaman make_migration
-    ↓
-migration.yaml
-    ↓
-gaman sql_migrate
-    ↓
-SQL
-    ↓
-gaman migrate
+desired schema ─┐
+                ├─► canonical Schema ─► deterministic diff ─► migration plan
+migration log ──┘          ▲                                      │
+                           │                                      ▼
+                    offline replay                         dialect SQL
 ```
 
 > **Project status:** Early-stage. Core engine is stable and tested in production use. Public API and file format may change before 1.0.
@@ -32,7 +26,7 @@ available behind the `sqlite` Cargo feature and is intentionally engine-specific
 SQLite migrations are not expected to look like PostgreSQL migrations, and
 unsupported operations fail clearly instead of becoming no-op SQL.
 
-## Why Developers Like Gaman
+## What Gaman Optimizes For
 
 - Migration generation is deterministic and offline.
 - Replay, diffing, and SQL planning use the same schema model.
@@ -64,6 +58,22 @@ gaman make_migration initial
 gaman sql_migrate
 gaman migrate
 gaman verify_db
+```
+
+The end-to-end lifecycle is deliberately simple:
+
+```text
+schema.yaml
+    ↓
+gaman make_migration
+    ↓
+migration.yaml
+    ↓
+gaman sql_migrate
+    ↓
+SQL
+    ↓
+gaman migrate
 ```
 
 For offline commands without a `DATABASE_URL`, pass the dialect explicitly:

@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "gaman"
-version = "0.3.18"
+version = "0.3.19"
 edition = "2024"
 description = "Offline-first schema migration engine for SQLx-backed databases"
 license = "MIT"
@@ -89,8 +89,8 @@ mysql = ["db", "sqlx/mysql"]
 [dependencies]
 argh = { version = "0.1.19", optional = true }
 dotenvy = { version = "0.15.7", optional = true }
-gaman-core = { version = "0.3.18", path = "gaman-core", optional = true, default-features = false }
-gaman-macros = { version = "0.3.18", path = "gaman-macros", optional = true }
+gaman-core = { version = "0.3.19", path = "gaman-core", optional = true, default-features = false }
+gaman-macros = { version = "0.3.19", path = "gaman-macros", optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-native-tls"], optional = true }
 tokio = { version = "1", features = ["rt", "macros"], optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
