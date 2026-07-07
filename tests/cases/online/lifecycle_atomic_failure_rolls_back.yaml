@@ -1,0 +1,66 @@
+description: atomic migration failure rolls back SQL and does not record the failed migration
+features:
+  - live_migration_application
+  - transaction_rollback
+  - migration_tracking
+  - tables_columns
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+  - id: 0002_fail_after_add_column
+    dependencies: [0001_create_users]
+    operations:
+      - type: add_column
+        table_name: users
+        column:
+          name: failed_column
+          type: text
+          nullable: true
+      - type: statement
+        up: "INSERT INTO missing_table (id) VALUES (1)"
+
+dialects:
+  postgres:
+    checks: [migrate, error, migration_records, inspect, data]
+    expect_error: "missing_table"
+    expect_records: [0001_create_users]
+    expect_schema:
+      tables:
+        users:
+          name: users
+          primary_key:
+            name: users_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+    data:
+      - sql: "SELECT failed_column FROM users"
+        expect_error: "does not exist"
+  sqlite:
+    checks: [migrate, error, migration_records, inspect, data]
+    expect_error: "missing_table"
+    expect_records: [0001_create_users]
+    expect_schema:
+      tables:
+        users:
+          name: users
+          primary_key:
+            name: users_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+    data:
+      - sql: "SELECT failed_column FROM users"
+        expect_error: "no such column"

@@ -1,0 +1,38 @@
+---
+description: PostgreSQL renders concurrent index SQL for non-atomic migrations.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- operation.add_index
+- renderer.postgres.add_index
+- sql_rendering.sql_postgres_concurrent_index
+kind: migration_to_sql
+dialect: postgres
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: email
+        type: text
+- id: 0002_add_index_concurrently
+  dependencies: [0001_create_users]
+  atomic: false
+  operations:
+  - type: add_index
+    table_name: users
+    index:
+      name: users_email_active_idx
+      columns: [email]
+      predicate: deleted_at IS NULL
+    concurrent: true
+ids:
+- 0002_add_index_concurrently
+expect_sql: |
+  CREATE INDEX CONCURRENTLY "users_email_active_idx" ON "users" ("email") WHERE deleted_at IS NULL

@@ -1,0 +1,18 @@
+---
+description: A cycle in migration dependencies is detected and rejected.
+group: replay
+features:
+- group.replay
+- kind.migration_to_replay
+- replay.migration_to_replay_cycle
+kind: migration_to_replay
+migrations:
+- id: 0001_a
+  dependencies:
+  - 0002_b
+  operations: []
+- id: 0002_b
+  dependencies:
+  - 0001_a
+  operations: []
+expect_error: cycle detected

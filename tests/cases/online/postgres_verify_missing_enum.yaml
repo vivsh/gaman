@@ -1,0 +1,25 @@
+description: PostgreSQL verify reports missing owned enums
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - enums
+
+migrations:
+  - id: 0001_create_status
+    operations:
+      - type: create_enum
+        enum_def:
+          name: ticket_status
+          values: [open, closed]
+
+mutate_sql: |
+  DROP TYPE ticket_status;
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify:
+      - type: create_enum
+        enum_def:
+          name: ticket_status
+          values: [open, closed]

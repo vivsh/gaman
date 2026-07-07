@@ -1,0 +1,102 @@
+---
+description: PostgreSQL renders explicit drop operations for opaque schema objects.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- operation.drop_enum
+- operation.drop_extension
+- operation.drop_function
+- operation.drop_trigger
+- operation.drop_view
+- renderer.postgres.create_enum
+- renderer.postgres.create_extension
+- renderer.postgres.create_function
+- renderer.postgres.create_table
+- renderer.postgres.create_view
+- renderer.postgres.drop_enum
+- renderer.postgres.drop_extension
+- renderer.postgres.drop_function
+- renderer.postgres.drop_trigger
+- renderer.postgres.drop_view
+- sql_rendering.sql_postgres_drop_opaque_objects
+kind: migration_to_sql
+dialect: postgres
+ids:
+- 0002_drop_objects
+migrations:
+- id: 0001_create_objects
+  operations:
+  - type: create_extension
+    extension:
+      name: pgcrypto
+  - type: create_enum
+    enum_def:
+      name: status
+      values:
+      - active
+      - archived
+  - type: create_function
+    function:
+      name: audit_user
+      arguments: ''
+      returns: trigger
+      language: plpgsql
+      body: BEGIN RETURN NEW; END
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      triggers:
+      - name: users_audit_trg
+        timing: after
+        events:
+        - insert
+        scope: row
+        function_name: audit_user
+  - type: create_view
+    view:
+      name: active_users
+      definition: SELECT id FROM users
+- id: 0002_drop_objects
+  dependencies:
+  - 0001_create_objects
+  operations:
+  - type: drop_view
+    view:
+      name: active_users
+      definition: SELECT id FROM users
+  - type: drop_trigger
+    table_name: users
+    trigger:
+      name: users_audit_trg
+      timing: after
+      events:
+      - insert
+      scope: row
+      function_name: audit_user
+  - type: drop_function
+    function:
+      name: audit_user
+      arguments: ''
+      returns: trigger
+      language: plpgsql
+      body: BEGIN RETURN NEW; END
+  - type: drop_enum
+    enum_def:
+      name: status
+      values:
+      - active
+      - archived
+  - type: drop_extension
+    extension:
+      name: pgcrypto
+expect_sql: |
+  DROP VIEW "active_users"
+  DROP TRIGGER "users_audit_trg" ON "users"
+  DROP FUNCTION "audit_user"()
+  DROP TYPE "status"
+  DROP EXTENSION "pgcrypto"

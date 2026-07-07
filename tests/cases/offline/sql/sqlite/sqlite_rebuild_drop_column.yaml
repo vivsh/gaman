@@ -1,0 +1,50 @@
+---
+description: Render SQLite drop-column SQL through deterministic table rebuild planning.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- operation.drop_column
+- renderer.sqlite.create_table
+- renderer.sqlite.drop_column
+- renderer.sqlite.summary
+- sql_rendering.migration_to_sql_sqlite_rebuild_drop_column
+kind: migration_to_sql
+dialect: sqlite
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: email
+        type: text
+      - name: legacy
+        type: text
+        nullable: true
+- id: 0002_drop_legacy
+  dependencies:
+  - 0001_create_users
+  operations:
+  - type: drop_column
+    table_name: users
+    column:
+      name: legacy
+      type: text
+      nullable: true
+expect_sql: |
+  CREATE TABLE "users" ("id" integer PRIMARY KEY, "email" text NOT NULL, "legacy" text)
+  PRAGMA defer_foreign_keys = ON
+  CREATE TABLE "__gaman_rebuild_users" ("id" integer PRIMARY KEY, "email" text NOT NULL)
+  INSERT INTO "__gaman_rebuild_users" ("id", "email") SELECT "id", "email" FROM "users"
+  DROP TABLE "users"
+  ALTER TABLE "__gaman_rebuild_users" RENAME TO "users"
+  DROP TABLE IF EXISTS temp."__gaman_fk_check_users"
+  CREATE TEMP TABLE "__gaman_fk_check_users" ("violation" integer CHECK ("violation" = 0))
+  INSERT INTO temp."__gaman_fk_check_users" ("violation") SELECT 1 FROM pragma_foreign_key_check
+  DROP TABLE temp."__gaman_fk_check_users"
+  PRAGMA foreign_key_check

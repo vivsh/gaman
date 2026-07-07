@@ -1,0 +1,15 @@
+---
+description: sqlparser does not parse MySQL FULLTEXT index creation.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.mysql.parser_mysql_create_fulltext_index_parse_error
+kind: sql_parse
+parser_dialect: mysql
+sql: 'CREATE FULLTEXT INDEX posts_body_ft_idx ON posts (body);
+
+'
+expect_parse: error
+expect_lowering: error
+expect_error: FULLTEXT

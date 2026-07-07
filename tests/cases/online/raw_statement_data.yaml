@@ -1,0 +1,32 @@
+description: raw SQL statements run during live migration and can seed deterministic data
+features:
+  - live_migration_application
+  - raw_sql_statements
+  - data_preservation
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email
+              type: text
+      - type: statement
+        up: "INSERT INTO users (id, email) VALUES (1, 'one@example.com')"
+
+dialects:
+  postgres:
+    checks: [migrate, data]
+    data:
+      - sql: "SELECT email FROM users ORDER BY id"
+        expect: ["one@example.com"]
+  sqlite:
+    checks: [migrate, data]
+    data:
+      - sql: "SELECT email FROM users ORDER BY id"
+        expect: ["one@example.com"]

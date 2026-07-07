@@ -1,0 +1,20 @@
+---
+description: MySQL parser accepts composite keys even though Gaman does not lower
+  MySQL yet.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.mysql.parser_mysql_create_table_composite_fk
+kind: sql_parse
+parser_dialect: mysql
+sql: |
+  CREATE TABLE accounts (
+      tenant_id int,
+      region_id int,
+      PRIMARY KEY (tenant_id, region_id),
+      FOREIGN KEY (tenant_id, region_id) REFERENCES tenants (tenant_id, region_id)
+  ) ENGINE=InnoDB;
+expect_parse: ok
+expect_lowering: unsupported
+expect_error: unsupported

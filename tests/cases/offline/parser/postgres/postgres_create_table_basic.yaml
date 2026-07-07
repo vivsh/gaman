@@ -1,0 +1,36 @@
+---
+description: PostgreSQL parser and Gaman lowering handle a basic table.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.postgres.parser_postgres_create_table_basic
+kind: sql_parse
+parser_dialect: postgres
+sql: |
+  CREATE TABLE public.users (
+      id bigserial PRIMARY KEY,
+      email text NOT NULL UNIQUE,
+      created_at timestamptz DEFAULT now()
+  );
+expect_parse: ok
+expect_lowering: ok
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: bigserial
+        primary_key: true
+      - name: email
+        type: text
+      - name: created_at
+        type: timestamp with time zone
+        default: now()
+        nullable: true
+      constraints:
+      - kind: unique
+        name: users_email_key
+        columns:
+        - email

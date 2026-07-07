@@ -1,0 +1,31 @@
+---
+description: A UseType decision rewrites a mistyped column type before diffing.
+group: validation
+features:
+- group.validation
+- kind.schema_to_migration
+- validation.validation_unknown_type_use_type_decision
+kind: schema_to_migration
+dialect: postgres
+name: add_items
+decisions:
+- clarification_id: unknown_type:items:value
+  answer:
+    type: use_type
+    value: integer
+current:
+  tables:
+    items:
+      name: items
+      columns:
+      - name: value
+        type: intger
+        nullable: true
+expect_operations:
+- type: create_table
+  table:
+    name: items
+    columns:
+    - name: value
+      type: integer
+      nullable: true

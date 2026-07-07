@@ -1,0 +1,26 @@
+---
+description: SQLite renders raw SQL statements exactly as authored.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- renderer.sqlite.statement
+- sql_rendering.sql_sqlite_raw_statement
+kind: migration_to_sql
+dialect: sqlite
+migrations:
+- id: 0001_raw_statement
+  operations:
+  - type: statement
+    up: |
+      UPDATE users
+      SET active = 1
+      WHERE archived = 0;
+    down: |
+      UPDATE users
+      SET active = 0
+      WHERE archived = 0;
+expect_sql: |
+  UPDATE users
+  SET active = 1
+  WHERE archived = 0;

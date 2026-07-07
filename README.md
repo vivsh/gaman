@@ -5,107 +5,140 @@ _Pronounced guh-MUN (गमन, /ɡəˈmən/) — Sanskrit for "movement" or "go
 [![Crates.io](https://img.shields.io/crates/v/gaman)](https://crates.io/crates/gaman)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Gaman is an offline-first schema migration engine that generates deterministic migrations without connecting to a live database.
+Gaman is an offline-first schema migration engine that generates deterministic
+migrations without connecting to a live database.
 
-Given the schema you want and the migrations you already committed, Gaman
-deterministically replays history, diffs the result, and plans the next
-migration.
+The crate is intentionally just a Rust library plus a CLI.
+
+It starts from a simple idea: your committed migration history is enough to know
+where the schema is, and your desired schema is enough to plan where it should
+go next.
 
 ```text
 desired schema ─┐
-                ├─► canonical Schema ─► deterministic diff ─► migration plan
-migration log ──┘          ▲                                      │
-                           │                                      ▼
-                    offline replay                         dialect SQL
+                ├─► Schema IR ─► deterministic replay + diff ─► migration YAML
+migration log ──┘                                              │
+                                                               ▼
+                                                        dialect SQL
 ```
 
-> **Project status:** Early-stage. Core engine is stable and tested in production use. Public API and file format may change before 1.0.
+> **Project status:** Early-stage. Core behavior is tested and usable, but
+> public API and file format may still change before 1.0.
 
-PostgreSQL is the default and broadest supported engine. SQLite support is
-available behind the `sqlite` Cargo feature and is intentionally engine-specific:
-SQLite migrations are not expected to look like PostgreSQL migrations, and
-unsupported operations fail clearly instead of becoming no-op SQL.
+PostgreSQL is the default and broadest supported engine. SQLite is supported
+behind the `sqlite` Cargo feature as its own engine, not as a PostgreSQL
+compatibility mode.
 
-## What Gaman Optimizes For
+## Why Use It
 
 - Migration generation is deterministic and offline.
-- Replay, diffing, and SQL planning use the same schema model.
-- YAML, JSON, SQL DDL, and Rust structs can all feed the same engine.
-- Ambiguous or risky changes are surfaced before migration files are written.
-- `sql_migrate` previews the operation SQL without opening a database connection.
+- `sql_migrate` renders the SQL plan without opening a database connection.
+- YAML, JSON, SQL DDL, Rust builders, and live inspection all feed one schema model.
+- Ambiguous or risky changes are surfaced before files are written.
 - Rust applications can use the same `MigrationEngine` API as the CLI.
-- Migration storage is pluggable: embedded files, directories, in-memory stores,
-  and future browser buffers are adapters, not engine assumptions.
+- Storage is pluggable: directories, embedded structs, in-memory stores, and future browser buffers are adapters.
 
 ## Quick Start
 
-Install the CLI:
-
 ```bash
 cargo install gaman
-```
-
-Point it at a schema file and a migrations directory:
-
-```bash
 export DATABASE_URL=postgres://localhost/myapp
 export MIGRATIONS_DIR=migrations
 export SCHEMA_FILE=schema.yaml
-```
 
-Then use the normal loop:
-
-```bash
 gaman make_migration initial
 gaman sql_migrate
 gaman migrate
 gaman verify_db
 ```
 
-The end-to-end lifecycle is deliberately simple:
+The installed CLI includes all currently supported live dialects: PostgreSQL and
+SQLite. MySQL/MariaDB remains planned and is not included in the supported CLI
+profile yet.
+
+The loop is intentionally small:
 
 ```text
-schema.yaml
-    ↓
-gaman make_migration
-    ↓
-migration.yaml
-    ↓
-gaman sql_migrate
-    ↓
-SQL
-    ↓
-gaman migrate
+schema.yaml -> make_migration -> migration.yaml -> sql_migrate -> SQL -> migrate
 ```
 
-For offline commands without a `DATABASE_URL`, pass the dialect explicitly:
+Offline commands can run without `DATABASE_URL` when the dialect is explicit:
 
 ```bash
 gaman make_migration add_posts --dialect postgres
 gaman sql_migrate --dialect sqlite
 ```
 
-`make_migration` can run interactively, or in non-interactive mode when CI should
-fail instead of prompting for risky or ambiguous decisions.
+For smaller custom builds, select dialect features explicitly:
 
-## What Is Supported Today
+```bash
+cargo install gaman --no-default-features --features cli,postgres
+cargo install gaman --no-default-features --features cli,sqlite
+```
 
-Engine-specific migration files are expected. Gaman does not try to make one
-migration portable across PostgreSQL, SQLite, and future engines.
+Use `--non-interactive` in CI when prompts should fail the run instead of
+waiting for input.
 
-Unless a row explicitly says live introspection or `verify_db`, support means the
-feature is modeled for deterministic offline diff/replay and SQL rendering.
+## CLI Reference
 
-Legend: ✅ implemented, 🚧 planned but not implemented, ❌ unsupported by design
-or by the database engine.
+Global flags come before the subcommand:
 
+- `-m <dir>` overrides `MIGRATIONS_DIR`.
+- `-s <file-or-dir>` overrides `SCHEMA_FILE`.
+- `-d <url>` overrides `DATABASE_URL`.
+- `--dialect postgres|sqlite` selects the renderer for offline commands.
+
+Everyday commands:
+
+```bash
+gaman make_migration [name]       # diff schema and write the next migration
+gaman make_migration --check      # CI check; never prompts or writes
+gaman make_migration --dry-run    # print the migration that would be written
+gaman make_migration --empty name # write an empty migration shell
+gaman make_migration --merge name # merge multiple graph heads
+
+gaman sql_migrate [id]            # print offline operation SQL
+gaman sql_migrate --backwards id  # print rollback SQL
+
+gaman migrate                     # apply pending migrations
+gaman migrate --target id         # migrate forward or backward to id
+gaman migrate --fake              # record as applied without running DDL
+gaman migrate --plan              # print the live migration plan
+gaman migrate --check             # fail if anything is pending
+
+gaman inspect_db                  # export live schema
+gaman inspect_db --table users    # export one table
+gaman verify_db                   # compare live DB against replayed history
+gaman show_migrations             # list applied/pending migrations
+gaman config                      # print resolved config
+```
+
+Environment variables:
+
+- `DATABASE_URL`: required for `migrate`, `inspect_db`, and `verify_db`.
+- `MIGRATIONS_DIR`: defaults to `migrations`.
+- `SCHEMA_FILE`: defaults to `schema.yaml`; may be YAML, SQL, or a directory.
+
+## Support
+
+Migration files are engine-specific. Gaman does not try to make one migration
+portable across PostgreSQL, SQLite, and future engines.
+
+The table is generated from checked-in evidence snapshots plus explicit design
+metadata for unsupported-by-design rows. Offline rows come from deterministic
+fixture results; live rows require database-backed evidence.
+
+Legend: ✅ accepted evidence, ◐ bounded support, 🚧 planned or not evidenced
+yet, ❌ unsupported by design or by the database engine.
+
+<!-- gaman:support-matrix:start -->
 | Feature | PostgreSQL | SQLite | MySQL / MariaDB |
 | --- | --- | --- | --- |
 | Offline replay, diff, and migration generation | ✅ | ✅ | 🚧 |
 | Offline SQL rendering through `sql_migrate` | ✅ | ✅ | 🚧 |
 | Live migration application | ✅ | ✅ | 🚧 |
-| Live database introspection for supported metadata | ✅ | ✅ | 🚧 |
-| Live `verify_db` for supported metadata | ✅ | ✅ | 🚧 |
+| Live database introspection | ✅ | ✅ | 🚧 |
+| Live `verify_db` | ✅ | ✅ | 🚧 |
 | Migration tracking table | ✅ | ✅ | 🚧 |
 | Dedicated migration lock | ✅ | ❌ | 🚧 |
 | Tables: create, drop, rename | ✅ | ✅ | 🚧 |
@@ -120,10 +153,10 @@ or by the database engine.
 | Unique constraints | ✅ | ✅ | 🚧 |
 | Check constraints | ✅ | ✅ | 🚧 |
 | Indexes | ✅ | ✅ | 🚧 |
-| Partial indexes | ✅ | ✅ | 🚧 |
+| Partial indexes | ✅ | ◐ | 🚧 |
 | Concurrent indexes | ✅ | ❌ | 🚧 |
 | Schemas / namespaces | ✅ | ❌ | ❌ |
-| Extensions as opaque schema objects | ✅ | ❌ | ❌ |
+| Extensions as opaque schema objects | 🚧 | ❌ | ❌ |
 | Enums | ✅ | ❌ | 🚧 |
 | Functions as opaque schema objects | ✅ | ❌ | 🚧 |
 | Trigger query schema objects | ✅ | ✅ | 🚧 |
@@ -131,22 +164,33 @@ or by the database engine.
 | Raw SQL statements | ✅ | ✅ | 🚧 |
 | SQLite table-rebuild planner for ALTER TABLE | ❌ | ✅ | ❌ |
 | Opaque source formatting fallback in offline diff | ✅ | ✅ | 🚧 |
+| Ownership-scoped `verify_db` | ✅ | ✅ | 🚧 |
 
-## Author Schema Where It Belongs
+Notes:
+- Dedicated migration lock (sqlite): SQLite has no dedicated advisory-lock primitive; migration atomicity relies on SQLite transactions and file locking.
+- Automatic primary-key mutation generation (postgres/sqlite/mysql): Primary-key surgery is intentionally manual/raw SQL for every dialect.
+- Partial indexes (sqlite): SQLite partial-index SQL rendering is proven offline; live predicate introspection/verify is not yet accepted evidence.
+- Concurrent indexes (sqlite): SQLite has no CREATE INDEX CONCURRENTLY syntax.
+- Schemas / namespaces (mysql): MySQL does not use PostgreSQL-style schemas/namespaces in Gaman.
+- Schemas / namespaces (sqlite): SQLite does not support PostgreSQL-style schemas/namespaces in Gaman.
+- Extensions as opaque schema objects (mysql): MySQL extensions are not modeled as migratable schema objects.
+- Extensions as opaque schema objects (sqlite): SQLite extensions are not modeled as migratable schema objects.
+- Enums (sqlite): SQLite has no native enum schema object in Gaman.
+- Functions as opaque schema objects (sqlite): SQLite stored functions are not supported by Gaman.
+- SQLite table-rebuild planner for ALTER TABLE (postgres): PostgreSQL uses native ALTER TABLE paths; SQLite rebuild planning does not apply.
+- SQLite table-rebuild planner for ALTER TABLE (mysql): SQLite rebuild planning does not apply to MySQL.
+<!-- gaman:support-matrix:end -->
 
-Gaman has one schema model and multiple authoring formats:
+Offline parser, replay, diff, disambiguation, rollback, and SQL-rendering
+evidence is tracked separately from live product support. See `TESTING.md` for
+the checked offline evidence matrix and result-recording commands.
 
-- YAML when schema metadata should be explicit and reviewable.
-- SQL DDL when schema is already maintained as SQL.
-- Rust structs when application types are the natural schema source.
+## Author Schema
 
-All of them normalize into the same deterministic schema representation before
-diffing or SQL generation.
+All frontends normalize into the same internal `Schema` before replay, diffing,
+disambiguation, and SQL rendering.
 
-### YAML
-
-YAML is the most explicit format and is a good fit when schema metadata is the
-source of truth.
+YAML is explicit and reviewable:
 
 ```yaml
 tables:
@@ -165,20 +209,9 @@ tables:
       - columns: [product_id]
 ```
 
-Names for primary keys, foreign keys, indexes, unique constraints, and check
-constraints may be omitted when Gaman can derive deterministic names. Add
-explicit names only when you need to preserve database-compatible object names.
-
-The same schema model can also be loaded from JSON. For the exact schema model
-and normalization rules, see [ARCHITECTURE.md](ARCHITECTURE.md).
-
-### SQL DDL
-
-SQL DDL is useful when you already maintain schema in SQL:
+SQL DDL works when schema already lives as SQL:
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
 CREATE TABLE users (
     id bigserial PRIMARY KEY,
     email text NOT NULL,
@@ -188,210 +221,127 @@ CREATE TABLE users (
 CREATE UNIQUE INDEX users_email_idx ON users (email);
 ```
 
-SQL parsing is intentionally focused on the supported schema model. Raw
-statements are available in migration files for dialect-specific work outside
-that model.
-
-### Rust Structs
-
-Rust structs work well when schema lives beside application types:
+Rust uses builders and traits, not a Gaman-owned model derive:
 
 ```rust
-use gaman::IntoTable;
+use gaman::core::Dialect;
+use gaman::schema::TableBuilder;
 
-#[derive(IntoTable)]
-#[table(name = "users", schema = "app")]
-struct User {
-    #[column(primary_key)]
-    id: i64,
-    email: String,
-    bio: Option<String>,
-    #[column(r#type = "timestamptz")]
-    created_at: chrono::DateTime<chrono::Utc>,
-    #[column(references = "orgs.id")]
-    org_id: i64,
-}
+let dialect = Dialect::Postgres;
+let users = TableBuilder::new("users")
+    .column_from_type::<i64>(&dialect, "id", |c| c.primary_key())
+    .column_from_type::<String>(&dialect, "email", |c| c.not_null())
+    .column("created_at", "timestamptz", |c| c.default("now()"))
+    .unique_columns(&["email"])
+    .build();
 ```
 
-Field-level attributes are ergonomic shorthands. Multi-column primary keys and
-foreign keys are represented as table-level metadata so column order and
-constraint names are preserved.
+`IntoTable` remains a plain trait, so model/query crates such as Mool can derive
+or implement it without Gaman owning Rust model macros.
 
-Libraries that cannot or do not want to use proc macros can construct identical
-table metadata through `TableBuilder`, including typed columns through
-`column_from_type::<T>(&dialect, ...)`.
+## Embedded Migration Sources
 
-See [docs/rust-structs.md](docs/rust-structs.md) for the full derive reference.
+Gaman keeps `EmbeddedMigrations` as a plain data structure and migration source
+adapter. It does not provide an embedding macro; external framework/model crates
+can construct or return this Gaman-compatible shape.
 
-## How Gaman Works
+Multiple crates can still compose migration trees:
 
-Gaman treats migration planning as a pure, deterministic replay problem.
+```rust
+use gaman::EmbeddedMigrations;
 
-```text
-YAML / JSON / SQL / Rust structs
-        |
-        v
-Schema IR
-        |
-        v
-normalize -> dialect canonicalize -> validate
-        |
-        v
-diff against replayed migrations
-        |
-        v
-disambiguate -> migration YAML -> deterministic SQL plan
+static MIGRATIONS: EmbeddedMigrations = EmbeddedMigrations {
+    files: &[],
+    dir: "migrations",
+    children: &[("auth", &auth::MIGRATIONS)],
+};
 ```
 
-Migration replay is deterministic, offline, and side-effect free. It produces an
-in-memory `Schema`, not database changes.
+Child IDs are namespaced, for example `auth/0001_init`.
 
-`sql_migrate` uses the same dialect renderer that live migration execution uses,
-but it emits only migration operation SQL. It does not include tracking table
-setup, locks, transactions, or record/unrecord statements.
+## MigrationEngine
 
-Live database access is used deliberately:
+`MigrationEngine` is the public orchestration API. The CLI delegates to it.
+Use `new` when you already have an `EmbeddedMigrations` value from Mool or a
+manual static definition; use `from_source` for custom storage.
 
-- `migrate` applies already planned migrations.
-- `inspect_db` bootstraps schema from an existing database.
-- `verify_db` compares live metadata against replayed migration state.
+```rust
+use gaman::{Config, MigrationEngine};
+use gaman::core::Dialect;
 
-## Deterministic Migration Planning
+let engine = MigrationEngine::new(Config::default(), &MIGRATIONS)
+    .with_dialect(Dialect::Postgres)
+    .with_schema(|s| s.load_file("schema.yaml"))?;
+```
 
-Live-database-first tools are useful, but they make the current database an
-implicit participant in generation. Gaman keeps generation offline: the database
-is where migrations are applied, not where migrations are discovered.
+Common methods:
 
-That matters when schema ownership is spread across generated Rust structs,
-handwritten SQL, YAML files, embedded crates, local development databases, and CI
-environments. Gaman reduces each source to the same schema model before replay,
-diffing, disambiguation, and deterministic SQL generation.
+```rust
+engine.sql_migrate()?;                         // offline operation SQL
+engine.sql_migrate_id("0002_add_posts")?;      // one migration
+engine.sql_rollback(&["0002_add_posts"])?;     // offline rollback SQL
+engine.make_migration_non_interactive(None)?;  // CI-safe generation
+engine.make_migration_check()?;                // fail if schema changed
+engine.inspect_table(&["public"], "users").await?;
+engine.verify("public").await?;
+```
 
-## Disambiguation, Not Guesswork
+Live actions require a database connection. Offline SQL planning does not.
 
-Some schema changes cannot be inferred safely from a diff. A rename can look like
-a drop plus an add. A type change may need an explicit cast. A new `NOT NULL`
-column may need a backfill.
+Custom storage implements `MigrationSource`; it can be file-backed, embedded,
+in-memory, or application-owned.
 
-Gaman asks before generating those migrations. In non-interactive mode, it fails
-instead of guessing.
+## Disambiguation
 
-Unknown data types use trust on first use (TOFU). Type catalogs are intentionally
-incomplete: Gaman knows common built-in aliases and popular extension types, but
-it does not pretend to know every domain, composite, extension, or user-defined
-type your database may support. If a new unknown type appears in desired schema,
-Gaman asks whether to map it to a known type or keep it exactly. Once committed
-in a migration, that type becomes trusted project history.
+Gaman does not guess through risky changes. Renames, new `NOT NULL` columns,
+type casts, and newly introduced unknown data types can require decisions before
+a migration is written.
+
+Unknown data types use trust on first use. Catalogs know common aliases and
+popular extension types, but committed migrations are the project-local approval
+log for custom domains, composites, extension types, and user-defined types.
 
 ## Why Not...
 
-Gaman is not trying to replace every migration workflow. It makes a specific
-architectural tradeoff: deterministic offline planning first, live database
-execution second.
+Gaman is not a universal DDL modeler or a live-database-first planner.
 
-- Flyway-style tools are excellent at applying ordered SQL files. Gaman adds an
-  offline schema model, diffing, disambiguation, and SQL planning before those
-  files exist.
-- Atlas-style tools model desired state and database inspection deeply. Gaman's
-  core planning path is designed to work without connecting to a database.
-- Diesel migrations keep schema evolution close to Rust applications. Gaman also
-  supports Rust-facing schema input, but it treats Rust structs as one frontend
-  into a database-agnostic schema model.
-- Handwritten SQL remains valuable. Gaman keeps `Statement` as the escape hatch
-  instead of pretending every backend-specific operation belongs in the model.
-
-## Ship Migrations Inside Your Binary
-
-Gaman can run as a CLI, but it is also designed to ship inside Rust binaries.
-
-```toml
-[dependencies]
-gaman = "0.3"
-```
-
-```rust
-use gaman::{Config, EmbeddedMigrations, MigrationEngine, embedded_migrations};
-
-static MIGRATIONS: EmbeddedMigrations = embedded_migrations!("migrations");
-
-fn main() {
-    let applied = MigrationEngine::new(Config::default(), &MIGRATIONS)
-        .migrate()
-        .expect("migrations failed");
-
-    if applied > 0 {
-        eprintln!("{applied} migration(s) applied");
-    }
-}
-```
-
-Embedded migrations are resolved at compile time. Applications split across
-multiple crates can compose each crate's migration tree into one ordered graph;
-Gaman namespaces child migrations so IDs do not collide.
-
-`MigrationEngine` is also storage-neutral. Embedded migrations are the common
-binary-shipping path, but library users can provide any `MigrationSource`,
-including in-memory or application-owned stores. The same engine API exposes
-offline SQL rendering through `sql_migrate`, non-interactive migration
-generation, live migration application, inspection, and verification.
-
-See [docs/embedding.md](docs/embedding.md) for the full embedding API.
+- Flyway-style tools apply ordered SQL files; Gaman helps create them from a schema model.
+- Atlas-style tools inspect databases deeply; Gaman’s generation path is offline.
+- Diesel keeps migrations close to Rust; Gaman treats Rust as one frontend into a shared schema IR.
+- Handwritten SQL remains valuable; `Statement` is the escape hatch.
 
 ## Design Boundaries
 
-These are intentional modeling choices or dialect-specific behaviors:
-
 - Column-level `references` is single-column shorthand. Use table-level
-  `foreign_keys` for multi-column references.
-- Multi-column primary keys and foreign keys are canonical table-level metadata.
-  Column-level flags and references are input shorthands only.
-- Primary-key mutation generation is intentionally unsupported for now. Use raw
+  `foreign_keys` for composite references.
+- Composite primary keys and foreign keys are canonical table-level metadata.
+- Primary-key mutation generation is intentionally unsupported; use raw
   `Statement` operations for backend-specific PK surgery.
 - Opaque source text is preserved exactly. Lexical canonicalization is used only
-  as a fallback to suppress formatting-only diff churn.
-- `verify_db` compares deterministic opaque metadata where available, but it does
-  not prove function, trigger, or view body equivalence from live catalog text.
+  to suppress formatting-only diff churn.
+- `verify_db` compares deterministic opaque metadata where available, but it
+  does not prove function, trigger, or view body equivalence from live catalog text.
 - PostgreSQL trigger `query` source is wrapped in generated trigger functions
-  with default return behavior. Use an explicit modeled function and
-  `function_name` for custom returns or `TG_OP` branching.
-- SQLite renders query triggers directly, but function-backed triggers,
-  statement-level triggers, `TRUNCATE` triggers, and trigger `language` are
-  unsupported.
-- SQLite table rebuilds require `atomic: true`; primary-key changes, tables with
-  modeled triggers, and dependent views are rejected until Gaman can preserve
-  them safely.
-- SQLite nullable-to-not-null rebuilds require a default or explicit cast
-  expression so existing rows can be copied deterministically.
-- SQLite live introspection currently covers tables, columns, primary keys,
-  foreign keys, and user-created indexes. Check constraints, views,
-  generated-column expressions, and trigger bodies should be treated as authored
-  schema/migration metadata rather than guaranteed live-drift detection.
-
-## Docs
-
-- [ARCHITECTURE.md](ARCHITECTURE.md): project goals, lifecycle, schema model,
-  offline/WASM boundary, and planned work.
-- [docs/cli.md](docs/cli.md): commands, flags, environment variables, and
-  dialect selection.
-- [docs/rust-structs.md](docs/rust-structs.md): derive macro and Rust schema
-  metadata.
-- [docs/embedding.md](docs/embedding.md): embedding migrations in Rust binaries.
-- [TESTING.md](TESTING.md): fixture layout and test commands.
+  with default return behavior. Use explicit functions for custom returns.
+- SQLite table rebuilds require `atomic: true`; unsafe rebuilds fail early.
+- SQLite live introspection is intentionally narrower than authored schema metadata.
 
 ## Development
 
 ```bash
 cargo test
 cargo test --test offline
-cargo test --features sqlite
+cargo test --features sqlite --test online
 ```
 
-PostgreSQL integration tests require a running database:
+Online PostgreSQL tests need a database:
 
 ```bash
-export TEST_DATABASE_URL=postgres://localhost/gaman_test
-cargo test --test postgres -- --include-ignored
+export POSTGRES_DATABASE_URL=postgres://localhost/gaman_test
+cargo test --test online -- --dialect postgres
 ```
 
-Fixture cases live under `tests/cases/`. The harnesses support focused runs by
-passing one or more case files or directories.
+More detail lives in:
+
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [TESTING.md](TESTING.md)

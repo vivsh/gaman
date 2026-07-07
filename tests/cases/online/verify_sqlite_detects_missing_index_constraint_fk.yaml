@@ -1,0 +1,88 @@
+description: SQLite verify reports missing owned indexes constraints and foreign keys
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - indexes_constraints
+  - indexes
+  - check_constraints
+  - composite_foreign_keys
+  - sqlite_rebuild_planner
+
+migrations:
+  - id: 0001_create_accounts
+    operations:
+      - type: create_table
+        table:
+          name: parents
+          primary_key:
+            columns: [tenant_id, parent_id]
+          columns:
+            - name: tenant_id
+              type: integer
+            - name: parent_id
+              type: integer
+      - type: create_table
+        table:
+          name: accounts
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: tenant_id
+              type: integer
+            - name: parent_id
+              type: integer
+            - name: email
+              type: text
+            - name: age
+              type: integer
+          foreign_keys:
+            - name: accounts_parent_fkey
+              columns: [tenant_id, parent_id]
+              to_table: parents
+              to_columns: [tenant_id, parent_id]
+          indexes:
+            - name: accounts_email_idx
+              columns: [email]
+          constraints:
+            - kind: check
+              name: accounts_age_check
+              expression: age >= 0
+
+dialects:
+  sqlite:
+    checks: [verify]
+    mutate_sql: |
+      PRAGMA foreign_keys = OFF;
+      DROP INDEX accounts_email_idx;
+      CREATE TABLE accounts_rebuild (
+        id integer PRIMARY KEY,
+        tenant_id integer NOT NULL,
+        parent_id integer NOT NULL,
+        email text NOT NULL,
+        age integer NOT NULL
+      );
+      INSERT INTO accounts_rebuild (id, tenant_id, parent_id, email, age)
+        SELECT id, tenant_id, parent_id, email, age FROM accounts;
+      DROP TABLE accounts;
+      ALTER TABLE accounts_rebuild RENAME TO accounts;
+      PRAGMA foreign_keys = ON;
+    expect_verify:
+      - type: add_foreign_key
+        table_name: accounts
+        foreign_key:
+          name: accounts_parent_fkey
+          columns: [tenant_id, parent_id]
+          to_table: parents
+          to_columns: [tenant_id, parent_id]
+      - type: add_index
+        table_name: accounts
+        index:
+          name: accounts_email_idx
+          columns: [email]
+      - type: add_constraint
+        table_name: accounts
+        constraint:
+          kind: check
+          name: accounts_age_check
+          expression: age >= 0

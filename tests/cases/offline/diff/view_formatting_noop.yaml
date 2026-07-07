@@ -1,0 +1,27 @@
+---
+description: Formatting-only view definition changes do not create migration churn.
+group: diff
+features:
+- diff.diff_view_formatting_noop
+- group.diff
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: view_formatting
+migrations:
+- id: 0001_create_view
+  operations:
+  - type: create_view
+    view:
+      name: active_users
+      definition: SELECT id FROM users WHERE active = true
+current:
+  tables: {}
+  views:
+    active_users:
+      name: active_users
+      definition: |
+        SELECT id
+        FROM users
+        WHERE active = true
+expect_no_changes: true

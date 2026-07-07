@@ -1,0 +1,33 @@
+description: SQLite rebuild migrations fail clearly when atomic is false
+features:
+  - unsupported_feature_errors
+  - sqlite_rebuild_planner
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: legacy
+              type: text
+              nullable: true
+  - id: 0002_drop_legacy
+    dependencies: [0001_create_users]
+    atomic: false
+    operations:
+      - type: drop_column
+        table_name: users
+        column:
+          name: legacy
+          type: text
+          nullable: true
+
+dialects:
+  sqlite:
+    checks: [migrate, error]
+    expect_error: "require atomic migrations"

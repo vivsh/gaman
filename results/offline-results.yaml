@@ -1,0 +1,3402 @@
+features:
+  answer.keep_type:
+    status: success
+    evidence:
+    - case: unknown_type_keep_type_action
+      description: KeepType preserves an explicitly approved custom type in the generated migration.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  answer.not_null_default:
+    status: success
+    evidence:
+    - case: not_null_add_default_action
+      description: NotNullDefault records a default for a newly added non-null column.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_default_action
+      description: NotNullDefault for a nullability change emits a backfill statement before altering the column.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  answer.not_null_manual:
+    status: success
+    evidence:
+    - case: not_null_change_manual_action
+      description: NotNullManual for a nullability change acknowledges the risk and leaves the alter unchanged.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_manual_action
+      description: NotNullManual acknowledges the risk and leaves the non-null add unchanged for manual handling.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  answer.not_null_nullable:
+    status: success
+    evidence:
+    - case: not_null_add_nullable_action
+      description: NotNullNullable keeps a newly added column nullable.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_nullable_action
+      description: NotNullNullable for a nullability change keeps the target column nullable.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  answer.rename_no:
+    status: success
+    evidence:
+    - case: rename_enum_value_no_action
+      description: RenameNo for an enum value leaves enum replacement operations unchanged.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_no_action
+      description: RenameNo keeps a column drop/add pair instead of rewriting it to a rename.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_table_no_action
+      description: RenameNo for a table leaves drop/create operations unchanged.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  answer.rename_to:
+    status: success
+    evidence:
+    - case: rename_column_with_decision
+      description: A rename-column decision rewrites drop/add into a rename operation.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_table_with_decision
+      description: A rename-table decision rewrites drop/create into a rename operation.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_enum_value_action
+      description: RenameTo rewrites an enum label replacement into a rename-enum-value operation.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  answer.type_cast:
+    status: success
+    evidence:
+    - case: alter_type_with_cast_decision
+      description: A type-cast decision records explicit cast SQL for an altered column type.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  answer.type_cast_implicit:
+    status: success
+    evidence:
+    - case: type_cast_implicit_action
+      description: TypeCastImplicit allows a type change without an explicit cast expression.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  answer.use_type:
+    status: success
+    evidence:
+    - case: unknown_type_use_type_action
+      description: UseType rewrites an unknown type to a suggested canonical type before diffing.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  clarification.not_null_add:
+    status: success
+    evidence:
+    - case: not_null_add_prompt
+      description: Adding a non-null column without a default emits a structured not-null-add clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  clarification.not_null_change:
+    status: success
+    evidence:
+    - case: not_null_change_prompt
+      description: Tightening nullability emits a structured not-null-change clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  clarification.rename_column:
+    status: success
+    evidence:
+    - case: rename_column_prompt
+      description: Column drop/add emits a structured rename-column clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  clarification.rename_enum_value:
+    status: success
+    evidence:
+    - case: rename_enum_value_prompt
+      description: Enum label replacement emits a structured rename-enum-value clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  clarification.rename_table:
+    status: success
+    evidence:
+    - case: rename_table_prompt
+      description: Table drop/create emits a structured rename-table clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  clarification.type_cast:
+    status: success
+    evidence:
+    - case: type_cast_prompt
+      description: Changing a column type emits a structured type-cast clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  clarification.unknown_type:
+    status: success
+    evidence:
+    - case: unknown_type_prompt
+      description: Unknown type emits a structured type clarification with deterministic suggestions.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_add_non_null_column_with_default:
+    status: success
+    evidence:
+    - case: add_non_null_column_with_default
+      description: Diff adds a non-null column safely when a default is provided.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_add_non_null_column_without_default_error:
+    status: success
+    evidence:
+    - case: add_non_null_column_without_default_error
+      description: Diff asks before adding a non-null column without a default.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_alter_default_added:
+    status: success
+    evidence:
+    - case: alter_default_added
+      description: Diff emits an alter-column operation when a default is added.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_alter_type_with_cast_decision:
+    status: success
+    evidence:
+    - case: alter_type_with_cast_decision
+      description: A type-cast decision records explicit cast SQL for an altered column type.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_check_constraint_added:
+    status: success
+    evidence:
+    - case: check_constraint_added
+      description: Diff adds a table-level check constraint.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_composite_fk_change:
+    status: success
+    evidence:
+    - case: composite_fk_change
+      description: Changing composite foreign-key columns emits drop and add operations.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_create_table:
+    status: success
+    evidence:
+    - case: create_table
+      description: Diff creates a table from an empty replay state.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_drop_table:
+    status: success
+    evidence:
+    - case: drop_table
+      description: Diff drops a table that no longer exists in the desired schema.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_enum_append:
+    status: success
+    evidence:
+    - case: enum_append
+      description: Diff appends enum labels through AlterEnum.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_function_body_changed:
+    status: success
+    evidence:
+    - case: function_body_changed
+      description: Real function body changes produce AlterFunction.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_function_formatting_noop:
+    status: success
+    evidence:
+    - case: function_formatting_noop
+      description: Formatting-only function body changes do not create migration churn.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_function_signature_changed:
+    status: success
+    evidence:
+    - case: function_signature_changed
+      description: Function signature changes produce a function alteration.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_generated_column_added:
+    status: success
+    evidence:
+    - case: generated_column_added
+      description: Diff adds a generated column and renders the generated expression.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_index_added:
+    status: success
+    evidence:
+    - case: index_added
+      description: Diff adds an index for a modeled table.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_index_dropped:
+    status: success
+    evidence:
+    - case: index_dropped
+      description: Diff drops an index removed from the desired schema.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_primary_key_mutation_error:
+    status: success
+    evidence:
+    - case: primary_key_mutation_error
+      description: Primary-key shape changes are not generated automatically.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_rename_column_with_decision:
+    status: success
+    evidence:
+    - case: rename_column_with_decision
+      description: A rename-column decision rewrites drop/add into a rename operation.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_rename_table_with_decision:
+    status: success
+    evidence:
+    - case: rename_table_with_decision
+      description: A rename-table decision rewrites drop/create into a rename operation.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_trigger_query_changed:
+    status: success
+    evidence:
+    - case: trigger_query_changed
+      description: Real trigger query changes produce AlterTrigger.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_trigger_query_formatting_noop:
+    status: success
+    evidence:
+    - case: trigger_query_formatting_noop
+      description: Formatting-only trigger query changes do not create migration churn.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_unique_constraint_added:
+    status: success
+    evidence:
+    - case: unique_constraint_added
+      description: Diff adds a table-level unique constraint.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_view_definition_changed:
+    status: success
+    evidence:
+    - case: view_definition_changed
+      description: Real view definition changes produce ReplaceView.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.diff_view_formatting_noop:
+    status: success
+    evidence:
+    - case: view_formatting_noop
+      description: Formatting-only view definition changes do not create migration churn.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.schema_to_migration_add_nullable_email:
+    status: success
+    evidence:
+    - case: add_nullable_email
+      description: Diff a desired schema into a single add_column migration.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  diff.schema_to_migration_no_changes:
+    status: success
+    evidence:
+    - case: no_changes
+      description: No migration is generated when the schema matches the current state.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  end_to_end.end_to_end_add_email:
+    status: success
+    evidence:
+    - case: add_email
+      description: End-to-end offline planning generates, replays, and renders a migration.
+      group: end_to_end
+      kind: end_to_end
+      dialect: postgres
+  group.diff:
+    status: success
+    evidence:
+    - case: add_non_null_column_with_default
+      description: Diff adds a non-null column safely when a default is provided.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: add_non_null_column_without_default_error
+      description: Diff asks before adding a non-null column without a default.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: add_nullable_email
+      description: Diff a desired schema into a single add_column migration.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: alter_default_added
+      description: Diff emits an alter-column operation when a default is added.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: alter_type_with_cast_decision
+      description: A type-cast decision records explicit cast SQL for an altered column type.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: check_constraint_added
+      description: Diff adds a table-level check constraint.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: composite_fk_change
+      description: Changing composite foreign-key columns emits drop and add operations.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: create_table
+      description: Diff creates a table from an empty replay state.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: drop_table
+      description: Diff drops a table that no longer exists in the desired schema.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: enum_append
+      description: Diff appends enum labels through AlterEnum.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: function_body_changed
+      description: Real function body changes produce AlterFunction.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: function_formatting_noop
+      description: Formatting-only function body changes do not create migration churn.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: function_signature_changed
+      description: Function signature changes produce a function alteration.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: generated_column_added
+      description: Diff adds a generated column and renders the generated expression.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: index_added
+      description: Diff adds an index for a modeled table.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: index_dropped
+      description: Diff drops an index removed from the desired schema.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: no_changes
+      description: No migration is generated when the schema matches the current state.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: primary_key_mutation_error
+      description: Primary-key shape changes are not generated automatically.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_column_with_decision
+      description: A rename-column decision rewrites drop/add into a rename operation.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_table_with_decision
+      description: A rename-table decision rewrites drop/create into a rename operation.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: trigger_query_changed
+      description: Real trigger query changes produce AlterTrigger.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: trigger_query_formatting_noop
+      description: Formatting-only trigger query changes do not create migration churn.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unique_constraint_added
+      description: Diff adds a table-level unique constraint.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: view_definition_changed
+      description: Real view definition changes produce ReplaceView.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: view_formatting_noop
+      description: Formatting-only view definition changes do not create migration churn.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  group.disambiguator:
+    status: success
+    evidence:
+    - case: duplicate_decision_error
+      description: Duplicate disambiguator decisions fail before rewriting operations.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: empty_cast_error
+      description: Empty type-cast decisions fail before operation rewriting.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: empty_default_error
+      description: Empty not-null default decisions fail before operation rewriting.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: invalid_candidate_error
+      description: A rename decision with an invalid candidate fails deterministically.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_add_default_action
+      description: NotNullDefault records a default for a newly added non-null column.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_add_nullable_action
+      description: NotNullNullable keeps a newly added column nullable.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_add_prompt
+      description: Adding a non-null column without a default emits a structured not-null-add clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_default_action
+      description: NotNullDefault for a nullability change emits a backfill statement before altering the column.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_manual_action
+      description: NotNullManual for a nullability change acknowledges the risk and leaves the alter unchanged.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_nullable_action
+      description: NotNullNullable for a nullability change keeps the target column nullable.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_prompt
+      description: Tightening nullability emits a structured not-null-change clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_manual_action
+      description: NotNullManual acknowledges the risk and leaves the non-null add unchanged for manual handling.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: partial_decision_pending
+      description: Partial decisions return only the still-pending clarification set.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_column_prompt
+      description: Column drop/add emits a structured rename-column clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_enum_value_action
+      description: RenameTo rewrites an enum label replacement into a rename-enum-value operation.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_enum_value_no_action
+      description: RenameNo for an enum value leaves enum replacement operations unchanged.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_enum_value_prompt
+      description: Enum label replacement emits a structured rename-enum-value clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_no_action
+      description: RenameNo keeps a column drop/add pair instead of rewriting it to a rename.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_table_no_action
+      description: RenameNo for a table leaves drop/create operations unchanged.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_table_prompt
+      description: Table drop/create emits a structured rename-table clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: type_cast_implicit_action
+      description: TypeCastImplicit allows a type change without an explicit cast expression.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: type_cast_prompt
+      description: Changing a column type emits a structured type-cast clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_keep_type_action
+      description: KeepType preserves an explicitly approved custom type in the generated migration.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_prompt
+      description: Unknown type emits a structured type clarification with deterministic suggestions.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_use_type_action
+      description: UseType rewrites an unknown type to a suggested canonical type before diffing.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  group.end_to_end:
+    status: success
+    evidence:
+    - case: add_email
+      description: End-to-end offline planning generates, replays, and renders a migration.
+      group: end_to_end
+      kind: end_to_end
+      dialect: postgres
+  group.parser:
+    status: success
+    evidence:
+    - case: mysql_create_fulltext_index_parse_error
+      description: sqlparser does not parse MySQL FULLTEXT index creation.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+    - case: mysql_create_function_parse_error
+      description: sqlparser does not parse MySQL routine function syntax.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+    - case: mysql_create_prefix_index
+      description: MySQL parser accepts prefix indexes as parser-only coverage.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+    - case: mysql_create_table_basic
+      description: MySQL parser accepts table options and generated columns.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+    - case: mysql_create_table_composite_fk
+      description: MySQL parser accepts composite keys even though Gaman does not lower MySQL yet.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+    - case: mysql_create_trigger
+      description: MySQL parser accepts simple triggers.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+    - case: postgres_comment_unsupported
+      description: PostgreSQL parser accepts COMMENT but Gaman does not model it.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_collation_unsupported
+      description: PostgreSQL parser accepts collations but Gaman does not model them.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_event_trigger_parse_error
+      description: sqlparser does not parse PostgreSQL event triggers.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_function
+      description: PostgreSQL parser and Gaman lowering handle a simple SQL function.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_materialized_view_tail_parse_error
+      description: sqlparser parses part of materialized views but rejects WITH DATA tail syntax.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_partial_index
+      description: PostgreSQL parser and lowering preserve partial index predicates.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_policy_unsupported
+      description: PostgreSQL parser accepts policies but Gaman does not model them.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_publication_parse_error
+      description: sqlparser does not parse PostgreSQL logical replication publications.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_table_basic
+      description: PostgreSQL parser and Gaman lowering handle a basic table.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_table_composite_fk
+      description: PostgreSQL parser and lowering preserve composite table-level foreign keys.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_table_exclude_parse_error
+      description: sqlparser still cannot parse PostgreSQL exclusion constraints.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_table_generated_column
+      description: PostgreSQL generated columns parse; current SQL lowering records the base column shape only.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_table_identity
+      description: PostgreSQL parser accepts identity columns; lowering records the base column shape.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_trigger
+      description: sqlparser parses PostgreSQL CREATE TRIGGER but Gaman lowering does not model standalone trigger DDL yet.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_view
+      description: PostgreSQL parser and lowering preserve simple views.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_grant_unsupported
+      description: PostgreSQL parser accepts GRANT but Gaman does not model grants.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: sqlite_alter_table_drop_column
+      description: SQLite parser accepts DROP COLUMN syntax.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_alter_table_rename
+      description: SQLite parser accepts ALTER TABLE RENAME syntax.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_create_expression_index
+      description: sqlparser parses SQLite expression indexes; Gaman lowering is intentionally not enabled for SQLite parser fixtures yet.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_create_generated_column
+      description: SQLite parser accepts generated columns.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_create_partial_index
+      description: SQLite parser accepts partial indexes.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_create_strict_table
+      description: SQLite parser accepts STRICT tables; Gaman SQL lowering is PostgreSQL-only.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_create_table_composite_fk
+      description: SQLite parser accepts composite primary keys and composite foreign keys.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_create_trigger
+      description: SQLite parser accepts trigger bodies.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_create_without_rowid
+      description: SQLite parser accepts WITHOUT ROWID tables.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+  group.replay:
+    status: success
+    evidence:
+    - case: replay_branching_merge
+      description: Replay independent branches joined by an explicit merge migration.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+    - case: replay_chain
+      description: Replay a three-migration chain into the expected schema.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+    - case: replay_composite_keys
+      description: Replay preserves composite primary keys and composite foreign keys.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+    - case: replay_cycle
+      description: A cycle in migration dependencies is detected and rejected.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+    - case: replay_duplicate_migration_id
+      description: Replay rejects duplicate migration ids.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+    - case: replay_invalid_migration_id
+      description: Migration generation rejects invalid generated migration ids.
+      group: replay
+      kind: schema_to_migration
+      dialect: postgres
+    - case: replay_missing_dependency
+      description: Replay rejects a migration whose dependency is not present.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+    - case: replay_statement_is_noop
+      description: Raw statements do not mutate replayed schema state.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+  group.rollback:
+    status: success
+    evidence:
+    - case: function_trigger_view_enum
+      description: Rollback SQL reverses function, trigger, view, and enum operations.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: non_reversible_statement_error
+      description: Rollback SQL fails before output when a raw statement has no down SQL.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: reversible_table_column_index_fk_constraint
+      description: Rollback SQL reverses table, column, index, foreign-key, and constraint operations in graph order.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: unknown_selected_id_error
+      description: Rollback SQL fails clearly when a selected migration id is not in the graph.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+  group.sql_rendering:
+    status: success
+    evidence:
+    - case: concurrent_index
+      description: PostgreSQL renders concurrent index SQL for non-atomic migrations.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_add_foreign_key
+      description: PostgreSQL renders ALTER TABLE ADD CONSTRAINT for added foreign keys.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_composite_pk_fk_create_table
+      description: PostgreSQL renders composite primary keys and composite foreign keys in CREATE TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_enum_insert_before
+      description: PostgreSQL renders enum value insertion with BEFORE when order requires it.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_basic
+      description: Render SQL for a simple migration chain.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_features
+      description: Render SQL for richer PostgreSQL-only features.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_raw_statement
+      description: Render raw SQL statements exactly as authored.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_query_trigger_row
+      description: PostgreSQL wraps a row-level query trigger and appends RETURN NEW.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_schema_qualified_create_table
+      description: PostgreSQL renders schema-qualified CREATE TABLE targets.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_schema_qualified_drop_index
+      description: PostgreSQL schema-qualifies DROP INDEX for indexes attached to schema-qualified tables.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_schema_qualified_function_trigger
+      description: PostgreSQL renders schema-qualified functions and trigger function references.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: partial_index
+      description: SQLite renders partial index SQL.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_add_nullable_column
+      description: SQLite renders simple nullable column additions with native ALTER TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_create_table_composite_pk_fk
+      description: SQLite renders composite primary keys and foreign keys during CREATE TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_function_trigger_unsupported
+      description: SQLite rejects PostgreSQL-style function-name triggers.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_raw_statement
+      description: SQLite renders raw SQL statements exactly as authored.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_alter_type_cast
+      description: SQLite rebuild uses explicit cast expressions for type changes.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_constraints_and_fk
+      description: SQLite rebuild adds unique, check, and foreign-key constraints in one table rebuild.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_default_only
+      description: SQLite rebuild preserves existing values when only a column default changes.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_drop_column
+      description: Render SQLite drop-column SQL through deterministic table rebuild planning.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_drop_constraints_and_fk
+      description: SQLite rebuild drops unique, check, and foreign-key constraints from the target table.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_generated_column
+      description: SQLite rebuild omits generated columns from copied insert columns.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_not_null_default
+      description: SQLite rebuild uses COALESCE when tightening nullability with a default.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_recreates_indexes
+      description: SQLite rebuild recreates target indexes after renaming the rebuilt table.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_schema_qualified_table_unsupported
+      description: SQLite rejects schema-qualified tables before rendering SQL.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_unsupported_extension
+      description: SQLite migration SQL fails clearly for PostgreSQL extension operations.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  group.sql_to_schema:
+    status: success
+    evidence:
+    - case: postgres_sql_to_schema_basic
+      description: Parse a simple SQL table and index into schema state.
+      group: sql_to_schema
+      kind: sql_to_schema
+      dialect: postgres
+    - case: postgres_sql_to_schema_invalid
+      description: Invalid SQL is rejected with a parse error.
+      group: sql_to_schema
+      kind: sql_to_schema
+      dialect: postgres
+  group.unsupported:
+    status: success
+    evidence:
+    - case: sqlite_unsupported_enum_unsupported
+      description: SQLite rejects enum operations instead of emitting no-op SQL.
+      group: unsupported
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_unsupported_function_unsupported
+      description: SQLite rejects stored function operations instead of emitting no-op SQL.
+      group: unsupported
+      kind: migration_to_sql
+      dialect: sqlite
+  group.validation:
+    status: success
+    evidence:
+    - case: duplicate_column_error
+      description: Schema preparation rejects duplicate columns before SQL rendering.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+    - case: generated_name_collision_error
+      description: Schema preparation rejects two unnamed indexes that derive the same name.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+    - case: postgres_type_alias_noop
+      description: Postgres type aliases canonicalize before diffing.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+    - case: sqlite_type_alias_noop
+      description: SQLite declared type aliases canonicalize before diffing.
+      group: validation
+      kind: schema_to_migration
+      dialect: sqlite
+    - case: unknown_fk_target_error
+      description: Schema preparation rejects foreign keys that reference unknown tables.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_index_column_error
+      description: Schema preparation rejects indexes that reference unknown columns.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_keep_type_decision
+      description: A KeepType decision preserves an approved custom type in generated migrations.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_needs_decision
+      description: A newly introduced unknown type asks before migration generation.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_use_type_decision
+      description: A UseType decision rewrites a mistyped column type before diffing.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+  kind.end_to_end:
+    status: success
+    evidence:
+    - case: add_email
+      description: End-to-end offline planning generates, replays, and renders a migration.
+      group: end_to_end
+      kind: end_to_end
+      dialect: postgres
+  kind.migration_to_replay:
+    status: success
+    evidence:
+    - case: replay_branching_merge
+      description: Replay independent branches joined by an explicit merge migration.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+    - case: replay_chain
+      description: Replay a three-migration chain into the expected schema.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+    - case: replay_composite_keys
+      description: Replay preserves composite primary keys and composite foreign keys.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+    - case: replay_cycle
+      description: A cycle in migration dependencies is detected and rejected.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+    - case: replay_duplicate_migration_id
+      description: Replay rejects duplicate migration ids.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+    - case: replay_missing_dependency
+      description: Replay rejects a migration whose dependency is not present.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+    - case: replay_statement_is_noop
+      description: Raw statements do not mutate replayed schema state.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+  kind.migration_to_sql:
+    status: success
+    evidence:
+    - case: function_trigger_view_enum
+      description: Rollback SQL reverses function, trigger, view, and enum operations.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: non_reversible_statement_error
+      description: Rollback SQL fails before output when a raw statement has no down SQL.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: reversible_table_column_index_fk_constraint
+      description: Rollback SQL reverses table, column, index, foreign-key, and constraint operations in graph order.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: unknown_selected_id_error
+      description: Rollback SQL fails clearly when a selected migration id is not in the graph.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: concurrent_index
+      description: PostgreSQL renders concurrent index SQL for non-atomic migrations.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_add_foreign_key
+      description: PostgreSQL renders ALTER TABLE ADD CONSTRAINT for added foreign keys.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_composite_pk_fk_create_table
+      description: PostgreSQL renders composite primary keys and composite foreign keys in CREATE TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_enum_insert_before
+      description: PostgreSQL renders enum value insertion with BEFORE when order requires it.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_basic
+      description: Render SQL for a simple migration chain.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_features
+      description: Render SQL for richer PostgreSQL-only features.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_raw_statement
+      description: Render raw SQL statements exactly as authored.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_query_trigger_row
+      description: PostgreSQL wraps a row-level query trigger and appends RETURN NEW.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_schema_qualified_create_table
+      description: PostgreSQL renders schema-qualified CREATE TABLE targets.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_schema_qualified_drop_index
+      description: PostgreSQL schema-qualifies DROP INDEX for indexes attached to schema-qualified tables.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_schema_qualified_function_trigger
+      description: PostgreSQL renders schema-qualified functions and trigger function references.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: partial_index
+      description: SQLite renders partial index SQL.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_add_nullable_column
+      description: SQLite renders simple nullable column additions with native ALTER TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_create_table_composite_pk_fk
+      description: SQLite renders composite primary keys and foreign keys during CREATE TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_function_trigger_unsupported
+      description: SQLite rejects PostgreSQL-style function-name triggers.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_raw_statement
+      description: SQLite renders raw SQL statements exactly as authored.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_alter_type_cast
+      description: SQLite rebuild uses explicit cast expressions for type changes.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_constraints_and_fk
+      description: SQLite rebuild adds unique, check, and foreign-key constraints in one table rebuild.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_default_only
+      description: SQLite rebuild preserves existing values when only a column default changes.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_drop_column
+      description: Render SQLite drop-column SQL through deterministic table rebuild planning.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_drop_constraints_and_fk
+      description: SQLite rebuild drops unique, check, and foreign-key constraints from the target table.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_generated_column
+      description: SQLite rebuild omits generated columns from copied insert columns.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_not_null_default
+      description: SQLite rebuild uses COALESCE when tightening nullability with a default.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_recreates_indexes
+      description: SQLite rebuild recreates target indexes after renaming the rebuilt table.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_schema_qualified_table_unsupported
+      description: SQLite rejects schema-qualified tables before rendering SQL.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_unsupported_enum_unsupported
+      description: SQLite rejects enum operations instead of emitting no-op SQL.
+      group: unsupported
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_unsupported_extension
+      description: SQLite migration SQL fails clearly for PostgreSQL extension operations.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_unsupported_function_unsupported
+      description: SQLite rejects stored function operations instead of emitting no-op SQL.
+      group: unsupported
+      kind: migration_to_sql
+      dialect: sqlite
+  kind.schema_to_migration:
+    status: success
+    evidence:
+    - case: add_non_null_column_with_default
+      description: Diff adds a non-null column safely when a default is provided.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: add_non_null_column_without_default_error
+      description: Diff asks before adding a non-null column without a default.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: add_nullable_email
+      description: Diff a desired schema into a single add_column migration.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: alter_default_added
+      description: Diff emits an alter-column operation when a default is added.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: alter_type_with_cast_decision
+      description: A type-cast decision records explicit cast SQL for an altered column type.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: check_constraint_added
+      description: Diff adds a table-level check constraint.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: composite_fk_change
+      description: Changing composite foreign-key columns emits drop and add operations.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: create_table
+      description: Diff creates a table from an empty replay state.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: drop_table
+      description: Diff drops a table that no longer exists in the desired schema.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: enum_append
+      description: Diff appends enum labels through AlterEnum.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: function_body_changed
+      description: Real function body changes produce AlterFunction.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: function_formatting_noop
+      description: Formatting-only function body changes do not create migration churn.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: function_signature_changed
+      description: Function signature changes produce a function alteration.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: generated_column_added
+      description: Diff adds a generated column and renders the generated expression.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: index_added
+      description: Diff adds an index for a modeled table.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: index_dropped
+      description: Diff drops an index removed from the desired schema.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: no_changes
+      description: No migration is generated when the schema matches the current state.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: primary_key_mutation_error
+      description: Primary-key shape changes are not generated automatically.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_column_with_decision
+      description: A rename-column decision rewrites drop/add into a rename operation.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_table_with_decision
+      description: A rename-table decision rewrites drop/create into a rename operation.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: trigger_query_changed
+      description: Real trigger query changes produce AlterTrigger.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: trigger_query_formatting_noop
+      description: Formatting-only trigger query changes do not create migration churn.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unique_constraint_added
+      description: Diff adds a table-level unique constraint.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: view_definition_changed
+      description: Real view definition changes produce ReplaceView.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: view_formatting_noop
+      description: Formatting-only view definition changes do not create migration churn.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: duplicate_decision_error
+      description: Duplicate disambiguator decisions fail before rewriting operations.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: empty_cast_error
+      description: Empty type-cast decisions fail before operation rewriting.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: empty_default_error
+      description: Empty not-null default decisions fail before operation rewriting.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: invalid_candidate_error
+      description: A rename decision with an invalid candidate fails deterministically.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_add_default_action
+      description: NotNullDefault records a default for a newly added non-null column.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_add_nullable_action
+      description: NotNullNullable keeps a newly added column nullable.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_add_prompt
+      description: Adding a non-null column without a default emits a structured not-null-add clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_default_action
+      description: NotNullDefault for a nullability change emits a backfill statement before altering the column.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_manual_action
+      description: NotNullManual for a nullability change acknowledges the risk and leaves the alter unchanged.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_nullable_action
+      description: NotNullNullable for a nullability change keeps the target column nullable.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_prompt
+      description: Tightening nullability emits a structured not-null-change clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_manual_action
+      description: NotNullManual acknowledges the risk and leaves the non-null add unchanged for manual handling.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: partial_decision_pending
+      description: Partial decisions return only the still-pending clarification set.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_column_prompt
+      description: Column drop/add emits a structured rename-column clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_enum_value_action
+      description: RenameTo rewrites an enum label replacement into a rename-enum-value operation.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_enum_value_no_action
+      description: RenameNo for an enum value leaves enum replacement operations unchanged.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_enum_value_prompt
+      description: Enum label replacement emits a structured rename-enum-value clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_no_action
+      description: RenameNo keeps a column drop/add pair instead of rewriting it to a rename.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_table_no_action
+      description: RenameNo for a table leaves drop/create operations unchanged.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_table_prompt
+      description: Table drop/create emits a structured rename-table clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: type_cast_implicit_action
+      description: TypeCastImplicit allows a type change without an explicit cast expression.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: type_cast_prompt
+      description: Changing a column type emits a structured type-cast clarification.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_keep_type_action
+      description: KeepType preserves an explicitly approved custom type in the generated migration.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_prompt
+      description: Unknown type emits a structured type clarification with deterministic suggestions.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_use_type_action
+      description: UseType rewrites an unknown type to a suggested canonical type before diffing.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+    - case: replay_invalid_migration_id
+      description: Migration generation rejects invalid generated migration ids.
+      group: replay
+      kind: schema_to_migration
+      dialect: postgres
+    - case: duplicate_column_error
+      description: Schema preparation rejects duplicate columns before SQL rendering.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+    - case: generated_name_collision_error
+      description: Schema preparation rejects two unnamed indexes that derive the same name.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+    - case: postgres_type_alias_noop
+      description: Postgres type aliases canonicalize before diffing.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+    - case: sqlite_type_alias_noop
+      description: SQLite declared type aliases canonicalize before diffing.
+      group: validation
+      kind: schema_to_migration
+      dialect: sqlite
+    - case: unknown_fk_target_error
+      description: Schema preparation rejects foreign keys that reference unknown tables.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_index_column_error
+      description: Schema preparation rejects indexes that reference unknown columns.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_keep_type_decision
+      description: A KeepType decision preserves an approved custom type in generated migrations.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_needs_decision
+      description: A newly introduced unknown type asks before migration generation.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_use_type_decision
+      description: A UseType decision rewrites a mistyped column type before diffing.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+  kind.sql_parse:
+    status: success
+    evidence:
+    - case: mysql_create_fulltext_index_parse_error
+      description: sqlparser does not parse MySQL FULLTEXT index creation.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+    - case: mysql_create_function_parse_error
+      description: sqlparser does not parse MySQL routine function syntax.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+    - case: mysql_create_prefix_index
+      description: MySQL parser accepts prefix indexes as parser-only coverage.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+    - case: mysql_create_table_basic
+      description: MySQL parser accepts table options and generated columns.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+    - case: mysql_create_table_composite_fk
+      description: MySQL parser accepts composite keys even though Gaman does not lower MySQL yet.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+    - case: mysql_create_trigger
+      description: MySQL parser accepts simple triggers.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+    - case: postgres_comment_unsupported
+      description: PostgreSQL parser accepts COMMENT but Gaman does not model it.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_collation_unsupported
+      description: PostgreSQL parser accepts collations but Gaman does not model them.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_event_trigger_parse_error
+      description: sqlparser does not parse PostgreSQL event triggers.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_function
+      description: PostgreSQL parser and Gaman lowering handle a simple SQL function.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_materialized_view_tail_parse_error
+      description: sqlparser parses part of materialized views but rejects WITH DATA tail syntax.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_partial_index
+      description: PostgreSQL parser and lowering preserve partial index predicates.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_policy_unsupported
+      description: PostgreSQL parser accepts policies but Gaman does not model them.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_publication_parse_error
+      description: sqlparser does not parse PostgreSQL logical replication publications.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_table_basic
+      description: PostgreSQL parser and Gaman lowering handle a basic table.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_table_composite_fk
+      description: PostgreSQL parser and lowering preserve composite table-level foreign keys.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_table_exclude_parse_error
+      description: sqlparser still cannot parse PostgreSQL exclusion constraints.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_table_generated_column
+      description: PostgreSQL generated columns parse; current SQL lowering records the base column shape only.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_table_identity
+      description: PostgreSQL parser accepts identity columns; lowering records the base column shape.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_trigger
+      description: sqlparser parses PostgreSQL CREATE TRIGGER but Gaman lowering does not model standalone trigger DDL yet.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_create_view
+      description: PostgreSQL parser and lowering preserve simple views.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: postgres_grant_unsupported
+      description: PostgreSQL parser accepts GRANT but Gaman does not model grants.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+    - case: sqlite_alter_table_drop_column
+      description: SQLite parser accepts DROP COLUMN syntax.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_alter_table_rename
+      description: SQLite parser accepts ALTER TABLE RENAME syntax.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_create_expression_index
+      description: sqlparser parses SQLite expression indexes; Gaman lowering is intentionally not enabled for SQLite parser fixtures yet.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_create_generated_column
+      description: SQLite parser accepts generated columns.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_create_partial_index
+      description: SQLite parser accepts partial indexes.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_create_strict_table
+      description: SQLite parser accepts STRICT tables; Gaman SQL lowering is PostgreSQL-only.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_create_table_composite_fk
+      description: SQLite parser accepts composite primary keys and composite foreign keys.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_create_trigger
+      description: SQLite parser accepts trigger bodies.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+    - case: sqlite_create_without_rowid
+      description: SQLite parser accepts WITHOUT ROWID tables.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+  kind.sql_to_schema:
+    status: success
+    evidence:
+    - case: postgres_sql_to_schema_basic
+      description: Parse a simple SQL table and index into schema state.
+      group: sql_to_schema
+      kind: sql_to_schema
+      dialect: postgres
+    - case: postgres_sql_to_schema_invalid
+      description: Invalid SQL is rejected with a parse error.
+      group: sql_to_schema
+      kind: sql_to_schema
+      dialect: postgres
+  operation.add_column:
+    status: success
+    evidence:
+    - case: add_nullable_email
+      description: Diff a desired schema into a single add_column migration.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  operation.add_constraint:
+    status: success
+    evidence:
+    - case: check_constraint_added
+      description: Diff adds a table-level check constraint.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unique_constraint_added
+      description: Diff adds a table-level unique constraint.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  operation.add_foreign_key:
+    status: success
+    evidence:
+    - case: postgres_add_foreign_key
+      description: PostgreSQL renders ALTER TABLE ADD CONSTRAINT for added foreign keys.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  operation.add_index:
+    status: success
+    evidence:
+    - case: index_added
+      description: Diff adds an index for a modeled table.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: concurrent_index
+      description: PostgreSQL renders concurrent index SQL for non-atomic migrations.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: partial_index
+      description: SQLite renders partial index SQL.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  operation.alter_column:
+    status: success
+    evidence:
+    - case: alter_type_with_cast_decision
+      description: A type-cast decision records explicit cast SQL for an altered column type.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  operation.alter_enum:
+    status: success
+    evidence:
+    - case: enum_append
+      description: Diff appends enum labels through AlterEnum.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  operation.alter_function:
+    status: success
+    evidence:
+    - case: function_body_changed
+      description: Real function body changes produce AlterFunction.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  operation.alter_trigger:
+    status: success
+    evidence:
+    - case: trigger_query_changed
+      description: Real trigger query changes produce AlterTrigger.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  operation.create_enum:
+    status: success
+    evidence:
+    - case: postgres_migration_to_sql_features
+      description: Render SQL for richer PostgreSQL-only features.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  operation.create_extension:
+    status: success
+    evidence:
+    - case: postgres_migration_to_sql_features
+      description: Render SQL for richer PostgreSQL-only features.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  operation.create_function:
+    status: success
+    evidence:
+    - case: postgres_create_function
+      description: PostgreSQL parser and Gaman lowering handle a simple SQL function.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  operation.create_table:
+    status: success
+    evidence:
+    - case: create_table
+      description: Diff creates a table from an empty replay state.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  operation.create_trigger:
+    status: success
+    evidence:
+    - case: postgres_query_trigger_row
+      description: PostgreSQL wraps a row-level query trigger and appends RETURN NEW.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  operation.create_view:
+    status: success
+    evidence:
+    - case: postgres_create_view
+      description: PostgreSQL parser and lowering preserve simple views.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  operation.drop_column:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_drop_column
+      description: Render SQLite drop-column SQL through deterministic table rebuild planning.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  operation.drop_constraint:
+    status: success
+    evidence:
+    - case: reversible_table_column_index_fk_constraint
+      description: Rollback SQL reverses table, column, index, foreign-key, and constraint operations in graph order.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+  operation.drop_enum:
+    status: success
+    evidence:
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  operation.drop_extension:
+    status: success
+    evidence:
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  operation.drop_foreign_key:
+    status: success
+    evidence:
+    - case: reversible_table_column_index_fk_constraint
+      description: Rollback SQL reverses table, column, index, foreign-key, and constraint operations in graph order.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+  operation.drop_function:
+    status: success
+    evidence:
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  operation.drop_index:
+    status: success
+    evidence:
+    - case: index_dropped
+      description: Diff drops an index removed from the desired schema.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  operation.drop_table:
+    status: success
+    evidence:
+    - case: drop_table
+      description: Diff drops a table that no longer exists in the desired schema.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  operation.drop_trigger:
+    status: success
+    evidence:
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  operation.drop_view:
+    status: success
+    evidence:
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  operation.rename_column:
+    status: success
+    evidence:
+    - case: rename_column_with_decision
+      description: A rename-column decision rewrites drop/add into a rename operation.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  operation.rename_enum_value:
+    status: success
+    evidence:
+    - case: rename_enum_value_action
+      description: RenameTo rewrites an enum label replacement into a rename-enum-value operation.
+      group: disambiguator
+      kind: schema_to_migration
+      dialect: postgres
+  operation.rename_table:
+    status: success
+    evidence:
+    - case: rename_table_with_decision
+      description: A rename-table decision rewrites drop/create into a rename operation.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  operation.replace_view:
+    status: success
+    evidence:
+    - case: view_definition_changed
+      description: Real view definition changes produce ReplaceView.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  operation.statement:
+    status: success
+    evidence:
+    - case: postgres_migration_to_sql_raw_statement
+      description: Render raw SQL statements exactly as authored.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  parser.mysql.parser_mysql_create_fulltext_index_parse_error:
+    status: success
+    evidence:
+    - case: mysql_create_fulltext_index_parse_error
+      description: sqlparser does not parse MySQL FULLTEXT index creation.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+  parser.mysql.parser_mysql_create_function_parse_error:
+    status: success
+    evidence:
+    - case: mysql_create_function_parse_error
+      description: sqlparser does not parse MySQL routine function syntax.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+  parser.mysql.parser_mysql_create_prefix_index:
+    status: success
+    evidence:
+    - case: mysql_create_prefix_index
+      description: MySQL parser accepts prefix indexes as parser-only coverage.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+  parser.mysql.parser_mysql_create_table_basic:
+    status: success
+    evidence:
+    - case: mysql_create_table_basic
+      description: MySQL parser accepts table options and generated columns.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+  parser.mysql.parser_mysql_create_table_composite_fk:
+    status: success
+    evidence:
+    - case: mysql_create_table_composite_fk
+      description: MySQL parser accepts composite keys even though Gaman does not lower MySQL yet.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+  parser.mysql.parser_mysql_create_trigger:
+    status: success
+    evidence:
+    - case: mysql_create_trigger
+      description: MySQL parser accepts simple triggers.
+      group: parser
+      kind: sql_parse
+      dialect: mysql
+  parser.postgres.parser_postgres_comment_unsupported:
+    status: success
+    evidence:
+    - case: postgres_comment_unsupported
+      description: PostgreSQL parser accepts COMMENT but Gaman does not model it.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_create_collation_unsupported:
+    status: success
+    evidence:
+    - case: postgres_create_collation_unsupported
+      description: PostgreSQL parser accepts collations but Gaman does not model them.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_create_event_trigger_parse_error:
+    status: success
+    evidence:
+    - case: postgres_create_event_trigger_parse_error
+      description: sqlparser does not parse PostgreSQL event triggers.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_create_function:
+    status: success
+    evidence:
+    - case: postgres_create_function
+      description: PostgreSQL parser and Gaman lowering handle a simple SQL function.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_create_materialized_view_tail_parse_error:
+    status: success
+    evidence:
+    - case: postgres_create_materialized_view_tail_parse_error
+      description: sqlparser parses part of materialized views but rejects WITH DATA tail syntax.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_create_partial_index:
+    status: success
+    evidence:
+    - case: postgres_create_partial_index
+      description: PostgreSQL parser and lowering preserve partial index predicates.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_create_policy_unsupported:
+    status: success
+    evidence:
+    - case: postgres_create_policy_unsupported
+      description: PostgreSQL parser accepts policies but Gaman does not model them.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_create_publication_parse_error:
+    status: success
+    evidence:
+    - case: postgres_create_publication_parse_error
+      description: sqlparser does not parse PostgreSQL logical replication publications.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_create_table_basic:
+    status: success
+    evidence:
+    - case: postgres_create_table_basic
+      description: PostgreSQL parser and Gaman lowering handle a basic table.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_create_table_composite_fk:
+    status: success
+    evidence:
+    - case: postgres_create_table_composite_fk
+      description: PostgreSQL parser and lowering preserve composite table-level foreign keys.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_create_table_exclude_parse_error:
+    status: success
+    evidence:
+    - case: postgres_create_table_exclude_parse_error
+      description: sqlparser still cannot parse PostgreSQL exclusion constraints.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_create_table_generated_column:
+    status: success
+    evidence:
+    - case: postgres_create_table_generated_column
+      description: PostgreSQL generated columns parse; current SQL lowering records the base column shape only.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_create_table_identity:
+    status: success
+    evidence:
+    - case: postgres_create_table_identity
+      description: PostgreSQL parser accepts identity columns; lowering records the base column shape.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_create_trigger:
+    status: success
+    evidence:
+    - case: postgres_create_trigger
+      description: sqlparser parses PostgreSQL CREATE TRIGGER but Gaman lowering does not model standalone trigger DDL yet.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_create_view:
+    status: success
+    evidence:
+    - case: postgres_create_view
+      description: PostgreSQL parser and lowering preserve simple views.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.postgres.parser_postgres_grant_unsupported:
+    status: success
+    evidence:
+    - case: postgres_grant_unsupported
+      description: PostgreSQL parser accepts GRANT but Gaman does not model grants.
+      group: parser
+      kind: sql_parse
+      dialect: postgres
+  parser.sqlite.parser_sqlite_alter_table_drop_column:
+    status: success
+    evidence:
+    - case: sqlite_alter_table_drop_column
+      description: SQLite parser accepts DROP COLUMN syntax.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+  parser.sqlite.parser_sqlite_alter_table_rename:
+    status: success
+    evidence:
+    - case: sqlite_alter_table_rename
+      description: SQLite parser accepts ALTER TABLE RENAME syntax.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+  parser.sqlite.parser_sqlite_create_expression_index:
+    status: success
+    evidence:
+    - case: sqlite_create_expression_index
+      description: sqlparser parses SQLite expression indexes; Gaman lowering is intentionally not enabled for SQLite parser fixtures yet.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+  parser.sqlite.parser_sqlite_create_generated_column:
+    status: success
+    evidence:
+    - case: sqlite_create_generated_column
+      description: SQLite parser accepts generated columns.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+  parser.sqlite.parser_sqlite_create_partial_index:
+    status: success
+    evidence:
+    - case: sqlite_create_partial_index
+      description: SQLite parser accepts partial indexes.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+  parser.sqlite.parser_sqlite_create_strict_table:
+    status: success
+    evidence:
+    - case: sqlite_create_strict_table
+      description: SQLite parser accepts STRICT tables; Gaman SQL lowering is PostgreSQL-only.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+  parser.sqlite.parser_sqlite_create_table_composite_fk:
+    status: success
+    evidence:
+    - case: sqlite_create_table_composite_fk
+      description: SQLite parser accepts composite primary keys and composite foreign keys.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+  parser.sqlite.parser_sqlite_create_trigger:
+    status: success
+    evidence:
+    - case: sqlite_create_trigger
+      description: SQLite parser accepts trigger bodies.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+  parser.sqlite.parser_sqlite_create_without_rowid:
+    status: success
+    evidence:
+    - case: sqlite_create_without_rowid
+      description: SQLite parser accepts WITHOUT ROWID tables.
+      group: parser
+      kind: sql_parse
+      dialect: sqlite
+  renderer.postgres.add_column:
+    status: success
+    evidence:
+    - case: add_non_null_column_with_default
+      description: Diff adds a non-null column safely when a default is provided.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: add_nullable_email
+      description: Diff a desired schema into a single add_column migration.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: generated_column_added
+      description: Diff adds a generated column and renders the generated expression.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: add_email
+      description: End-to-end offline planning generates, replays, and renders a migration.
+      group: end_to_end
+      kind: end_to_end
+      dialect: postgres
+    - case: reversible_table_column_index_fk_constraint
+      description: Rollback SQL reverses table, column, index, foreign-key, and constraint operations in graph order.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_basic
+      description: Render SQL for a simple migration chain.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.add_constraint:
+    status: success
+    evidence:
+    - case: check_constraint_added
+      description: Diff adds a table-level check constraint.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unique_constraint_added
+      description: Diff adds a table-level unique constraint.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: reversible_table_column_index_fk_constraint
+      description: Rollback SQL reverses table, column, index, foreign-key, and constraint operations in graph order.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.add_foreign_key:
+    status: success
+    evidence:
+    - case: reversible_table_column_index_fk_constraint
+      description: Rollback SQL reverses table, column, index, foreign-key, and constraint operations in graph order.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_add_foreign_key
+      description: PostgreSQL renders ALTER TABLE ADD CONSTRAINT for added foreign keys.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.add_index:
+    status: success
+    evidence:
+    - case: index_added
+      description: Diff adds an index for a modeled table.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: reversible_table_column_index_fk_constraint
+      description: Rollback SQL reverses table, column, index, foreign-key, and constraint operations in graph order.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: concurrent_index
+      description: PostgreSQL renders concurrent index SQL for non-atomic migrations.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.alter_column:
+    status: success
+    evidence:
+    - case: alter_default_added
+      description: Diff emits an alter-column operation when a default is added.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: alter_type_with_cast_decision
+      description: A type-cast decision records explicit cast SQL for an altered column type.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  renderer.postgres.alter_enum:
+    status: success
+    evidence:
+    - case: enum_append
+      description: Diff appends enum labels through AlterEnum.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: postgres_enum_insert_before
+      description: PostgreSQL renders enum value insertion with BEFORE when order requires it.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.alter_function:
+    status: success
+    evidence:
+    - case: function_trigger_view_enum
+      description: Rollback SQL reverses function, trigger, view, and enum operations.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.alter_trigger:
+    status: success
+    evidence:
+    - case: function_trigger_view_enum
+      description: Rollback SQL reverses function, trigger, view, and enum operations.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.create_enum:
+    status: success
+    evidence:
+    - case: enum_append
+      description: Diff appends enum labels through AlterEnum.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: function_trigger_view_enum
+      description: Rollback SQL reverses function, trigger, view, and enum operations.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_enum_insert_before
+      description: PostgreSQL renders enum value insertion with BEFORE when order requires it.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_features
+      description: Render SQL for richer PostgreSQL-only features.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.create_extension:
+    status: success
+    evidence:
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_features
+      description: Render SQL for richer PostgreSQL-only features.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.create_function:
+    status: success
+    evidence:
+    - case: function_trigger_view_enum
+      description: Rollback SQL reverses function, trigger, view, and enum operations.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_schema_qualified_function_trigger
+      description: PostgreSQL renders schema-qualified functions and trigger function references.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.create_table:
+    status: success
+    evidence:
+    - case: add_non_null_column_with_default
+      description: Diff adds a non-null column safely when a default is provided.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: add_nullable_email
+      description: Diff a desired schema into a single add_column migration.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: alter_default_added
+      description: Diff emits an alter-column operation when a default is added.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: alter_type_with_cast_decision
+      description: A type-cast decision records explicit cast SQL for an altered column type.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: check_constraint_added
+      description: Diff adds a table-level check constraint.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: create_table
+      description: Diff creates a table from an empty replay state.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: drop_table
+      description: Diff drops a table that no longer exists in the desired schema.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: generated_column_added
+      description: Diff adds a generated column and renders the generated expression.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: index_added
+      description: Diff adds an index for a modeled table.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: index_dropped
+      description: Diff drops an index removed from the desired schema.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_column_with_decision
+      description: A rename-column decision rewrites drop/add into a rename operation.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_table_with_decision
+      description: A rename-table decision rewrites drop/create into a rename operation.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unique_constraint_added
+      description: Diff adds a table-level unique constraint.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: add_email
+      description: End-to-end offline planning generates, replays, and renders a migration.
+      group: end_to_end
+      kind: end_to_end
+      dialect: postgres
+    - case: function_trigger_view_enum
+      description: Rollback SQL reverses function, trigger, view, and enum operations.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: reversible_table_column_index_fk_constraint
+      description: Rollback SQL reverses table, column, index, foreign-key, and constraint operations in graph order.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: unknown_selected_id_error
+      description: Rollback SQL fails clearly when a selected migration id is not in the graph.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_add_foreign_key
+      description: PostgreSQL renders ALTER TABLE ADD CONSTRAINT for added foreign keys.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_composite_pk_fk_create_table
+      description: PostgreSQL renders composite primary keys and composite foreign keys in CREATE TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_basic
+      description: Render SQL for a simple migration chain.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_features
+      description: Render SQL for richer PostgreSQL-only features.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_query_trigger_row
+      description: PostgreSQL wraps a row-level query trigger and appends RETURN NEW.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_schema_qualified_create_table
+      description: PostgreSQL renders schema-qualified CREATE TABLE targets.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_schema_qualified_drop_index
+      description: PostgreSQL schema-qualifies DROP INDEX for indexes attached to schema-qualified tables.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_schema_qualified_function_trigger
+      description: PostgreSQL renders schema-qualified functions and trigger function references.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.create_trigger:
+    status: success
+    evidence:
+    - case: postgres_query_trigger_row
+      description: PostgreSQL wraps a row-level query trigger and appends RETURN NEW.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_schema_qualified_function_trigger
+      description: PostgreSQL renders schema-qualified functions and trigger function references.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.create_view:
+    status: success
+    evidence:
+    - case: view_definition_changed
+      description: Real view definition changes produce ReplaceView.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: function_trigger_view_enum
+      description: Rollback SQL reverses function, trigger, view, and enum operations.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_features
+      description: Render SQL for richer PostgreSQL-only features.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.drop_enum:
+    status: success
+    evidence:
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.drop_extension:
+    status: success
+    evidence:
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.drop_function:
+    status: success
+    evidence:
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.drop_index:
+    status: success
+    evidence:
+    - case: index_dropped
+      description: Diff drops an index removed from the desired schema.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: postgres_schema_qualified_drop_index
+      description: PostgreSQL schema-qualifies DROP INDEX for indexes attached to schema-qualified tables.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.drop_table:
+    status: success
+    evidence:
+    - case: drop_table
+      description: Diff drops a table that no longer exists in the desired schema.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  renderer.postgres.drop_trigger:
+    status: success
+    evidence:
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.drop_view:
+    status: success
+    evidence:
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.rename_column:
+    status: success
+    evidence:
+    - case: rename_column_with_decision
+      description: A rename-column decision rewrites drop/add into a rename operation.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  renderer.postgres.rename_enum_value:
+    status: success
+    evidence:
+    - case: function_trigger_view_enum
+      description: Rollback SQL reverses function, trigger, view, and enum operations.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.rename_table:
+    status: success
+    evidence:
+    - case: rename_table_with_decision
+      description: A rename-table decision rewrites drop/create into a rename operation.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  renderer.postgres.replace_view:
+    status: success
+    evidence:
+    - case: view_definition_changed
+      description: Real view definition changes produce ReplaceView.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: function_trigger_view_enum
+      description: Rollback SQL reverses function, trigger, view, and enum operations.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.statement:
+    status: success
+    evidence:
+    - case: non_reversible_statement_error
+      description: Rollback SQL fails before output when a raw statement has no down SQL.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_features
+      description: Render SQL for richer PostgreSQL-only features.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_raw_statement
+      description: Render raw SQL statements exactly as authored.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.postgres.summary:
+    status: success
+    evidence:
+    - case: postgres_composite_pk_fk_create_table
+      description: PostgreSQL renders composite primary keys and composite foreign keys in CREATE TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_migration_to_sql_features
+      description: Render SQL for richer PostgreSQL-only features.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  renderer.sqlite.add_column:
+    status: success
+    evidence:
+    - case: sqlite_add_nullable_column
+      description: SQLite renders simple nullable column additions with native ALTER TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_generated_column
+      description: SQLite rebuild omits generated columns from copied insert columns.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.add_constraint:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_constraints_and_fk
+      description: SQLite rebuild adds unique, check, and foreign-key constraints in one table rebuild.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.add_foreign_key:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_constraints_and_fk
+      description: SQLite rebuild adds unique, check, and foreign-key constraints in one table rebuild.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.add_index:
+    status: success
+    evidence:
+    - case: partial_index
+      description: SQLite renders partial index SQL.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.alter_column:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_alter_type_cast
+      description: SQLite rebuild uses explicit cast expressions for type changes.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_default_only
+      description: SQLite rebuild preserves existing values when only a column default changes.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_not_null_default
+      description: SQLite rebuild uses COALESCE when tightening nullability with a default.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.alter_enum:
+    status: success
+    evidence:
+    - case: sqlite_unsupported_enum_unsupported
+      description: SQLite rejects enum operations instead of emitting no-op SQL.
+      group: unsupported
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.create_enum:
+    status: success
+    evidence:
+    - case: sqlite_unsupported_enum_unsupported
+      description: SQLite rejects enum operations instead of emitting no-op SQL.
+      group: unsupported
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.create_extension:
+    status: success
+    evidence:
+    - case: sqlite_unsupported_extension
+      description: SQLite migration SQL fails clearly for PostgreSQL extension operations.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.create_function:
+    status: success
+    evidence:
+    - case: sqlite_unsupported_function_unsupported
+      description: SQLite rejects stored function operations instead of emitting no-op SQL.
+      group: unsupported
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.create_table:
+    status: success
+    evidence:
+    - case: sqlite_add_nullable_column
+      description: SQLite renders simple nullable column additions with native ALTER TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_create_table_composite_pk_fk
+      description: SQLite renders composite primary keys and foreign keys during CREATE TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_function_trigger_unsupported
+      description: SQLite rejects PostgreSQL-style function-name triggers.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_alter_type_cast
+      description: SQLite rebuild uses explicit cast expressions for type changes.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_constraints_and_fk
+      description: SQLite rebuild adds unique, check, and foreign-key constraints in one table rebuild.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_default_only
+      description: SQLite rebuild preserves existing values when only a column default changes.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_drop_column
+      description: Render SQLite drop-column SQL through deterministic table rebuild planning.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_drop_constraints_and_fk
+      description: SQLite rebuild drops unique, check, and foreign-key constraints from the target table.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_generated_column
+      description: SQLite rebuild omits generated columns from copied insert columns.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_not_null_default
+      description: SQLite rebuild uses COALESCE when tightening nullability with a default.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_recreates_indexes
+      description: SQLite rebuild recreates target indexes after renaming the rebuilt table.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_schema_qualified_table_unsupported
+      description: SQLite rejects schema-qualified tables before rendering SQL.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.drop_column:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_drop_column
+      description: Render SQLite drop-column SQL through deterministic table rebuild planning.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_recreates_indexes
+      description: SQLite rebuild recreates target indexes after renaming the rebuilt table.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.drop_constraint:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_drop_constraints_and_fk
+      description: SQLite rebuild drops unique, check, and foreign-key constraints from the target table.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.drop_enum:
+    status: success
+    evidence:
+    - case: sqlite_unsupported_enum_unsupported
+      description: SQLite rejects enum operations instead of emitting no-op SQL.
+      group: unsupported
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.drop_foreign_key:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_drop_constraints_and_fk
+      description: SQLite rebuild drops unique, check, and foreign-key constraints from the target table.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.drop_function:
+    status: success
+    evidence:
+    - case: sqlite_unsupported_function_unsupported
+      description: SQLite rejects stored function operations instead of emitting no-op SQL.
+      group: unsupported
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.rename_enum_value:
+    status: success
+    evidence:
+    - case: sqlite_unsupported_enum_unsupported
+      description: SQLite rejects enum operations instead of emitting no-op SQL.
+      group: unsupported
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.statement:
+    status: success
+    evidence:
+    - case: sqlite_raw_statement
+      description: SQLite renders raw SQL statements exactly as authored.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  renderer.sqlite.summary:
+    status: success
+    evidence:
+    - case: sqlite_create_table_composite_pk_fk
+      description: SQLite renders composite primary keys and foreign keys during CREATE TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_constraints_and_fk
+      description: SQLite rebuild adds unique, check, and foreign-key constraints in one table rebuild.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_rebuild_drop_column
+      description: Render SQLite drop-column SQL through deterministic table rebuild planning.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  replay.migration_to_replay_chain:
+    status: success
+    evidence:
+    - case: replay_chain
+      description: Replay a three-migration chain into the expected schema.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+  replay.migration_to_replay_cycle:
+    status: success
+    evidence:
+    - case: replay_cycle
+      description: A cycle in migration dependencies is detected and rejected.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+  replay.replay_branching_merge:
+    status: success
+    evidence:
+    - case: replay_branching_merge
+      description: Replay independent branches joined by an explicit merge migration.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+  replay.replay_composite_keys:
+    status: success
+    evidence:
+    - case: replay_composite_keys
+      description: Replay preserves composite primary keys and composite foreign keys.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+  replay.replay_duplicate_migration_id:
+    status: success
+    evidence:
+    - case: replay_duplicate_migration_id
+      description: Replay rejects duplicate migration ids.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+  replay.replay_invalid_migration_id:
+    status: success
+    evidence:
+    - case: replay_invalid_migration_id
+      description: Migration generation rejects invalid generated migration ids.
+      group: replay
+      kind: schema_to_migration
+      dialect: postgres
+  replay.replay_missing_dependency:
+    status: success
+    evidence:
+    - case: replay_missing_dependency
+      description: Replay rejects a migration whose dependency is not present.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+  replay.replay_statement_is_noop:
+    status: success
+    evidence:
+    - case: replay_statement_is_noop
+      description: Raw statements do not mutate replayed schema state.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+  rollback.non_reversible:
+    status: success
+    evidence:
+    - case: non_reversible_statement_error
+      description: Rollback SQL fails before output when a raw statement has no down SQL.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+  rollback.reversible:
+    status: success
+    evidence:
+    - case: function_trigger_view_enum
+      description: Rollback SQL reverses function, trigger, view, and enum operations.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+    - case: reversible_table_column_index_fk_constraint
+      description: Rollback SQL reverses table, column, index, foreign-key, and constraint operations in graph order.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+  rollback.unknown_selected_id:
+    status: success
+    evidence:
+    - case: unknown_selected_id_error
+      description: Rollback SQL fails clearly when a selected migration id is not in the graph.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+  rollback.unknown_selection:
+    status: success
+    evidence:
+    - case: unknown_selected_id_error
+      description: Rollback SQL fails clearly when a selected migration id is not in the graph.
+      group: rollback
+      kind: migration_to_sql
+      dialect: postgres
+  sql_rendering.migration_to_sql_basic:
+    status: success
+    evidence:
+    - case: postgres_migration_to_sql_basic
+      description: Render SQL for a simple migration chain.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  sql_rendering.migration_to_sql_postgres_features:
+    status: success
+    evidence:
+    - case: postgres_migration_to_sql_features
+      description: Render SQL for richer PostgreSQL-only features.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  sql_rendering.migration_to_sql_raw_statement:
+    status: success
+    evidence:
+    - case: postgres_migration_to_sql_raw_statement
+      description: Render raw SQL statements exactly as authored.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  sql_rendering.migration_to_sql_sqlite_rebuild_drop_column:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_drop_column
+      description: Render SQLite drop-column SQL through deterministic table rebuild planning.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  sql_rendering.migration_to_sql_sqlite_unsupported_extension:
+    status: success
+    evidence:
+    - case: sqlite_unsupported_extension
+      description: SQLite migration SQL fails clearly for PostgreSQL extension operations.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  sql_rendering.sql_postgres_add_foreign_key:
+    status: success
+    evidence:
+    - case: postgres_add_foreign_key
+      description: PostgreSQL renders ALTER TABLE ADD CONSTRAINT for added foreign keys.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  sql_rendering.sql_postgres_composite_pk_fk_create_table:
+    status: success
+    evidence:
+    - case: postgres_composite_pk_fk_create_table
+      description: PostgreSQL renders composite primary keys and composite foreign keys in CREATE TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  sql_rendering.sql_postgres_concurrent_index:
+    status: success
+    evidence:
+    - case: concurrent_index
+      description: PostgreSQL renders concurrent index SQL for non-atomic migrations.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  sql_rendering.sql_postgres_drop_opaque_objects:
+    status: success
+    evidence:
+    - case: postgres_drop_opaque_objects
+      description: PostgreSQL renders explicit drop operations for opaque schema objects.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  sql_rendering.sql_postgres_enum_insert_before:
+    status: success
+    evidence:
+    - case: postgres_enum_insert_before
+      description: PostgreSQL renders enum value insertion with BEFORE when order requires it.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  sql_rendering.sql_postgres_query_trigger_row:
+    status: success
+    evidence:
+    - case: postgres_query_trigger_row
+      description: PostgreSQL wraps a row-level query trigger and appends RETURN NEW.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  sql_rendering.sql_postgres_schema_qualified_create_table:
+    status: success
+    evidence:
+    - case: postgres_schema_qualified_create_table
+      description: PostgreSQL renders schema-qualified CREATE TABLE targets.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  sql_rendering.sql_postgres_schema_qualified_drop_index:
+    status: success
+    evidence:
+    - case: postgres_schema_qualified_drop_index
+      description: PostgreSQL schema-qualifies DROP INDEX for indexes attached to schema-qualified tables.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  sql_rendering.sql_postgres_schema_qualified_function_trigger:
+    status: success
+    evidence:
+    - case: postgres_schema_qualified_function_trigger
+      description: PostgreSQL renders schema-qualified functions and trigger function references.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+  sql_rendering.sql_sqlite_add_nullable_column:
+    status: success
+    evidence:
+    - case: sqlite_add_nullable_column
+      description: SQLite renders simple nullable column additions with native ALTER TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  sql_rendering.sql_sqlite_create_table_composite_pk_fk:
+    status: success
+    evidence:
+    - case: sqlite_create_table_composite_pk_fk
+      description: SQLite renders composite primary keys and foreign keys during CREATE TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  sql_rendering.sql_sqlite_function_trigger_unsupported:
+    status: success
+    evidence:
+    - case: sqlite_function_trigger_unsupported
+      description: SQLite rejects PostgreSQL-style function-name triggers.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  sql_rendering.sql_sqlite_partial_index:
+    status: success
+    evidence:
+    - case: partial_index
+      description: SQLite renders partial index SQL.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  sql_rendering.sql_sqlite_raw_statement:
+    status: success
+    evidence:
+    - case: sqlite_raw_statement
+      description: SQLite renders raw SQL statements exactly as authored.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  sql_rendering.sql_sqlite_rebuild_alter_type_cast:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_alter_type_cast
+      description: SQLite rebuild uses explicit cast expressions for type changes.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  sql_rendering.sql_sqlite_rebuild_constraints_and_fk:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_constraints_and_fk
+      description: SQLite rebuild adds unique, check, and foreign-key constraints in one table rebuild.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  sql_rendering.sql_sqlite_rebuild_default_only:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_default_only
+      description: SQLite rebuild preserves existing values when only a column default changes.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  sql_rendering.sql_sqlite_rebuild_drop_constraints_and_fk:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_drop_constraints_and_fk
+      description: SQLite rebuild drops unique, check, and foreign-key constraints from the target table.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  sql_rendering.sql_sqlite_rebuild_generated_column:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_generated_column
+      description: SQLite rebuild omits generated columns from copied insert columns.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  sql_rendering.sql_sqlite_rebuild_not_null_default:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_not_null_default
+      description: SQLite rebuild uses COALESCE when tightening nullability with a default.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  sql_rendering.sql_sqlite_rebuild_recreates_indexes:
+    status: success
+    evidence:
+    - case: sqlite_rebuild_recreates_indexes
+      description: SQLite rebuild recreates target indexes after renaming the rebuilt table.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  sql_rendering.sql_sqlite_schema_qualified_table_unsupported:
+    status: success
+    evidence:
+    - case: sqlite_schema_qualified_table_unsupported
+      description: SQLite rejects schema-qualified tables before rendering SQL.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  unsupported.primary_key_mutation:
+    status: success
+    evidence:
+    - case: primary_key_mutation_error
+      description: Primary-key shape changes are not generated automatically.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+  unsupported.sqlite_enum:
+    status: success
+    evidence:
+    - case: sqlite_unsupported_enum_unsupported
+      description: SQLite rejects enum operations instead of emitting no-op SQL.
+      group: unsupported
+      kind: migration_to_sql
+      dialect: sqlite
+  unsupported.sqlite_extension:
+    status: success
+    evidence:
+    - case: sqlite_unsupported_extension
+      description: SQLite migration SQL fails clearly for PostgreSQL extension operations.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  unsupported.sqlite_function:
+    status: success
+    evidence:
+    - case: sqlite_unsupported_function_unsupported
+      description: SQLite rejects stored function operations instead of emitting no-op SQL.
+      group: unsupported
+      kind: migration_to_sql
+      dialect: sqlite
+  unsupported.sqlite_function_trigger:
+    status: success
+    evidence:
+    - case: sqlite_function_trigger_unsupported
+      description: SQLite rejects PostgreSQL-style function-name triggers.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  unsupported.sqlite_schema_qualified_table:
+    status: success
+    evidence:
+    - case: sqlite_schema_qualified_table_unsupported
+      description: SQLite rejects schema-qualified tables before rendering SQL.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+  validation.validation_duplicate_column_error:
+    status: success
+    evidence:
+    - case: duplicate_column_error
+      description: Schema preparation rejects duplicate columns before SQL rendering.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+  validation.validation_generated_name_collision_error:
+    status: success
+    evidence:
+    - case: generated_name_collision_error
+      description: Schema preparation rejects two unnamed indexes that derive the same name.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+  validation.validation_postgres_type_alias_noop:
+    status: success
+    evidence:
+    - case: postgres_type_alias_noop
+      description: Postgres type aliases canonicalize before diffing.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+  validation.validation_sqlite_type_alias_noop:
+    status: success
+    evidence:
+    - case: sqlite_type_alias_noop
+      description: SQLite declared type aliases canonicalize before diffing.
+      group: validation
+      kind: schema_to_migration
+      dialect: sqlite
+  validation.validation_unknown_fk_target_error:
+    status: success
+    evidence:
+    - case: unknown_fk_target_error
+      description: Schema preparation rejects foreign keys that reference unknown tables.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+  validation.validation_unknown_index_column_error:
+    status: success
+    evidence:
+    - case: unknown_index_column_error
+      description: Schema preparation rejects indexes that reference unknown columns.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+  validation.validation_unknown_type_keep_type_decision:
+    status: success
+    evidence:
+    - case: unknown_type_keep_type_decision
+      description: A KeepType decision preserves an approved custom type in generated migrations.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+  validation.validation_unknown_type_needs_decision:
+    status: success
+    evidence:
+    - case: unknown_type_needs_decision
+      description: A newly introduced unknown type asks before migration generation.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres
+  validation.validation_unknown_type_use_type_decision:
+    status: success
+    evidence:
+    - case: unknown_type_use_type_decision
+      description: A UseType decision rewrites a mistyped column type before diffing.
+      group: validation
+      kind: schema_to_migration
+      dialect: postgres

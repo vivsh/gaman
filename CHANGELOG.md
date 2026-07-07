@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.20] - 2026-07-07
+
 ### Added
 
 - `MigrationEngine` now exposes CLI-equivalent orchestration APIs for offline
@@ -16,15 +18,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MigrationEngine::from_source` and `MigrationEngine::from_shared_source` allow
   callers to provide custom migration storage through `MigrationSource` instead
   of assuming filesystem-backed migrations.
-- `TableBuilder::column_from_type<T>()` exposes the same dialect-aware Rust type
-  mapping used by `IntoTable` derive for non-macro integrations.
+- `TableBuilder::column_from_type<T>()` exposes dialect-aware Rust type mapping
+  for direct Rust schema construction and external `IntoTable` implementors.
+- Formal local coverage measurement via `scripts/coverage.sh`, using
+  `cargo-llvm-cov` with terminal, HTML, and LCOV outputs.
+- Local non-live release gate via `scripts/check.sh`.
+- Additional offline SQL/parser fixtures and live SQLite/PostgreSQL fixture
+  coverage for raw statements, SQLite rebuild SQL, unsupported dialect errors,
+  parser classification, and composite key introspection.
+- Property-based tests for deterministic `gaman-core` invariants covering
+  normalization, replay, diffing, SQL planning, rollback, and identifier
+  rendering.
 
 ### Changed
 
+- `cargo install gaman` now installs the CLI with all currently supported live
+  dialects: PostgreSQL and SQLite.
 - CLI command handling now delegates orchestration to `MigrationEngine`, keeping
   CLI code focused on argument parsing and output formatting.
-- `IntoTable` derive now emits thinner `TableBuilder` calls for typed columns
-  and unnamed indexes/constraints instead of duplicating name derivation.
+- Gaman now treats `TableBuilder` and the `IntoTable` trait as its Rust schema
+  API; model derives belong in external model/query crates such as Mool.
+- `EmbeddedMigrations` remains as a library data structure and migration source
+  adapter, while compile-time embedding macros move out of Gaman.
+- Live migration futures are now `Send`, with matching `Send`/`Sync` bounds on
+  custom migration sources and live executor abstractions.
+- README now contains the user-facing CLI, Rust schema, and embedding guidance
+  directly instead of splitting it across separate docs pages.
+- `TESTING.md` is now the canonical test and coverage guide, including the
+  initial coverage baseline and fixture-authoring rules.
+
+### Removed
+
+- Removed the `gaman::IntoTable` derive macro. The `gaman::schema::IntoTable`
+  trait remains available for manual implementations and external derive macros.
+- Removed the Gaman-owned `embedded_migrations!` proc macro and the
+  `gaman-macros` crate. Mool now owns the embedding macro surface.
+- Removed the standalone Rust schema and embedding docs after merging their
+  current guidance into the README.
+- Removed the standalone CLI docs after merging the command reference into the
+  README.
+- Removed the old prototype property-test module and stale proptest regression
+  file.
 
 ## [0.3.19] - 2026-07-03
 
@@ -300,7 +334,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `make_migration`, `migrate`, `fake_migrate`, `show_migrations`, `inspect_db` commands
 - DAG-based migration graph with dependency tracking
 
-[unreleased]: https://github.com/vivsh/gaman/compare/0ddab9c...HEAD
+[unreleased]: https://github.com/vivsh/gaman/compare/v0.3.20...HEAD
+[0.3.20]: https://github.com/vivsh/gaman/compare/0ddab9c...v0.3.20
 [0.3.19]: https://github.com/vivsh/gaman/compare/0f752c1...0ddab9c
 [0.3.18]: https://github.com/vivsh/gaman/compare/v0.3.17...0f752c1
 [0.3.17]: https://github.com/vivsh/gaman/compare/v0.3.16...v0.3.17

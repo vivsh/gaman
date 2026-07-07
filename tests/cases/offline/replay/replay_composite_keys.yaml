@@ -1,0 +1,94 @@
+---
+description: Replay preserves composite primary keys and composite foreign keys.
+group: replay
+features:
+- group.replay
+- kind.migration_to_replay
+- replay.replay_composite_keys
+kind: migration_to_replay
+dialect: postgres
+migrations:
+- id: 0001_create_tenants
+  operations:
+  - type: create_table
+    table:
+      name: tenants
+      primary_key:
+        name: tenants_region_id_pkey
+        columns:
+        - region_id
+        - tenant_id
+      columns:
+      - name: region_id
+        type: integer
+      - name: tenant_id
+        type: integer
+- id: 0002_create_accounts
+  dependencies:
+  - 0001_create_tenants
+  operations:
+  - type: create_table
+    table:
+      name: accounts
+      primary_key:
+        name: accounts_region_account_pkey
+        columns:
+        - region_id
+        - account_id
+      columns:
+      - name: region_id
+        type: integer
+      - name: account_id
+        type: integer
+      - name: tenant_id
+        type: integer
+      foreign_keys:
+      - name: accounts_region_tenant_fkey
+        columns:
+        - region_id
+        - tenant_id
+        to_table: tenants
+        to_columns:
+        - region_id
+        - tenant_id
+expect_schema:
+  tables:
+    accounts:
+      name: accounts
+      primary_key:
+        name: accounts_region_account_pkey
+        columns:
+        - region_id
+        - account_id
+      columns:
+      - name: region_id
+        type: integer
+        primary_key: true
+      - name: account_id
+        type: integer
+        primary_key: true
+      - name: tenant_id
+        type: integer
+      foreign_keys:
+      - name: accounts_region_tenant_fkey
+        columns:
+        - region_id
+        - tenant_id
+        to_table: tenants
+        to_columns:
+        - region_id
+        - tenant_id
+    tenants:
+      name: tenants
+      primary_key:
+        name: tenants_region_id_pkey
+        columns:
+        - region_id
+        - tenant_id
+      columns:
+      - name: region_id
+        type: integer
+        primary_key: true
+      - name: tenant_id
+        type: integer
+        primary_key: true

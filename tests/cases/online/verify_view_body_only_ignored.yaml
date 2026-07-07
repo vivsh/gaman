@@ -1,0 +1,36 @@
+description: verify ignores body-only view definition drift
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - views_opaque
+
+migrations:
+  - id: 0001_create_view
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: active
+              type: boolean
+              default: "true"
+      - type: create_view
+        view:
+          name: user_ids
+          definition: "SELECT id FROM users"
+
+dialects:
+  postgres:
+    checks: [verify]
+    mutate_sql: |
+      CREATE OR REPLACE VIEW user_ids AS SELECT id FROM users WHERE active;
+    expect_verify: []
+  sqlite:
+    checks: [verify]
+    mutate_sql: |
+      DROP VIEW user_ids;
+      CREATE VIEW user_ids AS SELECT id FROM users WHERE active;
+    expect_verify: []

@@ -1,0 +1,30 @@
+---
+description: Raw statements do not mutate replayed schema state.
+group: replay
+features:
+- group.replay
+- kind.migration_to_replay
+- replay.replay_statement_is_noop
+kind: migration_to_replay
+dialect: postgres
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+  - type: statement
+    up: COMMENT ON TABLE users IS 'tracked elsewhere'
+    down: COMMENT ON TABLE users IS NULL
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true

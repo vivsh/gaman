@@ -1,0 +1,19 @@
+---
+description: A newly introduced unknown type asks before migration generation.
+group: validation
+features:
+- group.validation
+- kind.schema_to_migration
+- validation.validation_unknown_type_needs_decision
+kind: schema_to_migration
+dialect: postgres
+name: add_custom_type
+current:
+  tables:
+    items:
+      name: items
+      columns:
+      - name: value
+        type: custom_domain
+        nullable: true
+expect_error: clarification needed

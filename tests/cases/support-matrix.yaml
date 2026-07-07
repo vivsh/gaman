@@ -1,0 +1,448 @@
+rows:
+  - id: offline_planning
+    label: Offline replay, diff, and migration generation
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          offline: [kind.migration_to_replay, kind.schema_to_migration, group.diff]
+      sqlite:
+        status: supported
+        evidence:
+          offline: [kind.migration_to_replay, kind.schema_to_migration, group.diff]
+      mysql:
+        status: planned
+        note: MySQL dialect support is not implemented yet.
+  - id: offline_sql_rendering
+    label: Offline SQL rendering through `sql_migrate`
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          offline: [kind.migration_to_sql, renderer.postgres.summary]
+      sqlite:
+        status: supported
+        evidence:
+          offline: [kind.migration_to_sql, renderer.sqlite.summary]
+      mysql:
+        status: planned
+        note: MySQL SQL rendering is planned after the dialect exists.
+  - id: live_migration_application
+    label: Live migration application
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [live_migration_application]
+      sqlite:
+        status: supported
+        evidence:
+          online: [live_migration_application]
+      mysql:
+        status: planned
+        note: MySQL executor support is not implemented yet.
+  - id: live_introspection
+    label: Live database introspection
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [live_inspect_verify]
+      sqlite:
+        status: supported
+        evidence:
+          online: [live_inspect_verify]
+      mysql:
+        status: planned
+        note: MySQL introspection is not implemented yet.
+  - id: live_verify_db
+    label: Live `verify_db`
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [ownership_scoped_verify]
+      sqlite:
+        status: supported
+        evidence:
+          online: [ownership_scoped_verify]
+      mysql:
+        status: planned
+        note: MySQL verify is not implemented yet.
+  - id: migration_tracking
+    label: Migration tracking table
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [migration_tracking]
+      sqlite:
+        status: supported
+        evidence:
+          online: [migration_tracking]
+      mysql:
+        status: planned
+        note: MySQL tracking table support is not implemented yet.
+  - id: dedicated_migration_lock
+    label: Dedicated migration lock
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [lock_cleanup]
+      sqlite:
+        status: unsupported
+        note: SQLite has no dedicated advisory-lock primitive; migration atomicity relies on SQLite transactions and file locking.
+      mysql:
+        status: planned
+        note: MySQL locking is planned with the MySQL executor.
+  - id: table_create_drop_rename
+    label: "Tables: create, drop, rename"
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [table_create_drop_rename]
+          offline: [operation.create_table, operation.drop_table, operation.rename_table]
+      sqlite:
+        status: supported
+        evidence:
+          online: [table_create_drop_rename]
+          offline: [operation.create_table, operation.drop_table, operation.rename_table]
+      mysql:
+        status: planned
+        note: MySQL table operations are planned after the dialect exists.
+  - id: column_add_drop_rename
+    label: "Columns: add, drop, rename"
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [column_add_drop_rename]
+          offline: [operation.add_column, operation.drop_column, operation.rename_column]
+      sqlite:
+        status: supported
+        evidence:
+          online: [column_add_drop_rename]
+          offline: [operation.add_column, operation.drop_column, operation.rename_column]
+      mysql:
+        status: planned
+        note: MySQL column operations are planned after the dialect exists.
+  - id: column_type_null_default
+    label: "Columns: type, nullability, default changes"
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [type_null_default_changes]
+          offline: [operation.alter_column]
+      sqlite:
+        status: supported
+        evidence:
+          online: [type_null_default_changes, sqlite_rebuild_planner]
+          offline: [operation.alter_column, renderer.sqlite.alter_column]
+      mysql:
+        status: planned
+        note: MySQL column alteration support is planned after the dialect exists.
+  - id: generated_columns
+    label: Generated columns
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [generated_columns]
+      sqlite:
+        status: supported
+        evidence:
+          online: [generated_columns]
+      mysql:
+        status: planned
+        note: MySQL generated columns are planned after the dialect exists.
+  - id: single_primary_keys
+    label: Single-column primary keys
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [single_primary_keys]
+      sqlite:
+        status: supported
+        evidence:
+          online: [single_primary_keys]
+      mysql:
+        status: planned
+        note: MySQL primary keys are planned after the dialect exists.
+  - id: composite_primary_keys
+    label: Multi-column / composite primary keys
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [composite_primary_keys]
+      sqlite:
+        status: supported
+        evidence:
+          online: [composite_primary_keys]
+      mysql:
+        status: planned
+        note: MySQL composite primary keys are planned after the dialect exists.
+  - id: primary_key_mutation_generation
+    label: Automatic primary-key mutation generation
+    dialects:
+      postgres:
+        status: unsupported
+        evidence:
+          offline: [unsupported.primary_key_mutation]
+        note: Primary-key surgery is intentionally manual/raw SQL for every dialect.
+      sqlite:
+        status: unsupported
+        evidence:
+          offline: [unsupported.primary_key_mutation]
+        note: Primary-key surgery is intentionally manual/raw SQL for every dialect.
+      mysql:
+        status: unsupported
+        note: Primary-key surgery is intentionally manual/raw SQL for every dialect.
+  - id: single_foreign_keys
+    label: Single-column foreign keys
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [single_foreign_keys]
+      sqlite:
+        status: supported
+        evidence:
+          online: [single_foreign_keys]
+      mysql:
+        status: planned
+        note: MySQL foreign keys are planned after the dialect exists.
+  - id: composite_foreign_keys
+    label: Multi-column / composite foreign keys
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [composite_foreign_keys]
+      sqlite:
+        status: supported
+        evidence:
+          online: [composite_foreign_keys]
+      mysql:
+        status: planned
+        note: MySQL composite foreign keys are planned after the dialect exists.
+  - id: unique_constraints
+    label: Unique constraints
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [unique_constraints]
+      sqlite:
+        status: supported
+        evidence:
+          online: [unique_constraints]
+      mysql:
+        status: planned
+        note: MySQL unique constraints are planned after the dialect exists.
+  - id: check_constraints
+    label: Check constraints
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [check_constraints]
+      sqlite:
+        status: supported
+        evidence:
+          online: [check_constraints]
+      mysql:
+        status: planned
+        note: MySQL check constraints are planned after the dialect exists.
+  - id: indexes
+    label: Indexes
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [indexes]
+      sqlite:
+        status: supported
+        evidence:
+          online: [indexes]
+      mysql:
+        status: planned
+        note: MySQL indexes are planned after the dialect exists.
+  - id: partial_indexes
+    label: Partial indexes
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [partial_indexes]
+          offline: [parser.postgres.parser_postgres_create_partial_index]
+      sqlite:
+        status: partial
+        evidence:
+          offline: [parser.sqlite.parser_sqlite_create_partial_index, sql_rendering.sql_sqlite_partial_index]
+        note: SQLite partial-index SQL rendering is proven offline; live predicate introspection/verify is not yet accepted evidence.
+      mysql:
+        status: planned
+        note: MySQL partial-index behavior is not implemented.
+  - id: concurrent_indexes
+    label: Concurrent indexes
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          offline: [sql_rendering.sql_postgres_concurrent_index]
+      sqlite:
+        status: unsupported
+        note: SQLite has no CREATE INDEX CONCURRENTLY syntax.
+      mysql:
+        status: planned
+        note: MySQL online/concurrent index behavior is not implemented.
+  - id: schemas_namespaces
+    label: Schemas / namespaces
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [schemas_namespaces]
+      sqlite:
+        status: unsupported
+        evidence:
+          offline: [unsupported.sqlite_schema_qualified_table]
+        note: SQLite does not support PostgreSQL-style schemas/namespaces in Gaman.
+      mysql:
+        status: unsupported
+        note: MySQL does not use PostgreSQL-style schemas/namespaces in Gaman.
+  - id: extensions
+    label: Extensions as opaque schema objects
+    dialects:
+      postgres:
+        status: planned
+        note: PostgreSQL extension modeling exists, but README support stays planned until safe live evidence is accepted.
+      sqlite:
+        status: unsupported
+        evidence:
+          offline: [unsupported.sqlite_extension]
+        note: SQLite extensions are not modeled as migratable schema objects.
+      mysql:
+        status: unsupported
+        note: MySQL extensions are not modeled as migratable schema objects.
+  - id: enums
+    label: Enums
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [enums]
+      sqlite:
+        status: unsupported
+        evidence:
+          offline: [unsupported.sqlite_enum]
+        note: SQLite has no native enum schema object in Gaman.
+      mysql:
+        status: planned
+        note: MySQL enum support is not implemented.
+  - id: functions
+    label: Functions as opaque schema objects
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [functions_opaque]
+      sqlite:
+        status: unsupported
+        evidence:
+          offline: [unsupported.sqlite_function]
+        note: SQLite stored functions are not supported by Gaman.
+      mysql:
+        status: planned
+        note: MySQL stored function support is not implemented.
+  - id: trigger_query_objects
+    label: Trigger query schema objects
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [trigger_query_objects]
+      sqlite:
+        status: supported
+        evidence:
+          online: [trigger_query_objects]
+      mysql:
+        status: planned
+        note: MySQL triggers are planned after the dialect exists.
+  - id: views
+    label: Views as opaque schema objects
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [views_opaque]
+      sqlite:
+        status: supported
+        evidence:
+          online: [views_opaque]
+      mysql:
+        status: planned
+        note: MySQL views are planned after the dialect exists.
+  - id: raw_sql_statements
+    label: Raw SQL statements
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [raw_sql_statements]
+          offline: [renderer.postgres.statement]
+      sqlite:
+        status: supported
+        evidence:
+          online: [raw_sql_statements]
+          offline: [renderer.sqlite.statement]
+      mysql:
+        status: planned
+        note: MySQL raw SQL execution is planned after the executor exists.
+  - id: sqlite_table_rebuilds
+    label: SQLite table-rebuild planner for ALTER TABLE
+    dialects:
+      postgres:
+        status: unsupported
+        note: PostgreSQL uses native ALTER TABLE paths; SQLite rebuild planning does not apply.
+      sqlite:
+        status: supported
+        evidence:
+          online: [sqlite_rebuild_planner]
+          offline: [renderer.sqlite.alter_column, sql_rendering.sql_sqlite_rebuild_recreates_indexes]
+      mysql:
+        status: unsupported
+        note: SQLite rebuild planning does not apply to MySQL.
+  - id: opaque_source_formatting_fallback
+    label: Opaque source formatting fallback in offline diff
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          offline: [diff.diff_function_formatting_noop, diff.diff_trigger_query_formatting_noop, diff.diff_view_formatting_noop]
+      sqlite:
+        status: supported
+        evidence:
+          offline: [diff.diff_trigger_query_formatting_noop, diff.diff_view_formatting_noop]
+      mysql:
+        status: planned
+        note: MySQL opaque-object diffing is not implemented yet.
+  - id: ownership_scoped_verify
+    label: Ownership-scoped `verify_db`
+    dialects:
+      postgres:
+        status: supported
+        evidence:
+          online: [ownership_scoped_verify]
+      sqlite:
+        status: supported
+        evidence:
+          online: [ownership_scoped_verify]
+      mysql:
+        status: planned
+        note: MySQL verify is not implemented yet.

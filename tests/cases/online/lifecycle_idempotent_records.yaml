@@ -1,0 +1,39 @@
+description: repeated migrate is idempotent and records applied migrations
+features:
+  - live_migration_application
+  - idempotent_migrations
+  - migration_tracking
+  - tables_columns
+  - data_preservation
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: name
+              type: text
+  - id: 0002_seed_users
+    dependencies: [0001_create_users]
+    operations:
+      - type: statement
+        up: "INSERT INTO users (id, name) VALUES (1, 'Ada')"
+
+dialects:
+  postgres:
+    checks: [migrate_twice, migration_records, data]
+    expect_records: [0001_create_users, 0002_seed_users]
+    data:
+      - sql: "SELECT name FROM users ORDER BY id"
+        expect: ["Ada"]
+  sqlite:
+    checks: [migrate_twice, migration_records, data]
+    expect_records: [0001_create_users, 0002_seed_users]
+    data:
+      - sql: "SELECT name FROM users ORDER BY id"
+        expect: ["Ada"]

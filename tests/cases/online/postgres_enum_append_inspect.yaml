@@ -1,0 +1,33 @@
+description: PostgreSQL enum append preserves ordered labels during inspect
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - enums
+
+migrations:
+  - id: 0001_create_status
+    operations:
+      - type: create_enum
+        enum_def:
+          name: ticket_status
+          values: [open, closed]
+  - id: 0002_append_status
+    dependencies: [0001_create_status]
+    operations:
+      - type: alter_enum
+        old:
+          name: ticket_status
+          values: [open, closed]
+        new:
+          name: ticket_status
+          values: [open, pending, closed]
+
+dialects:
+  postgres:
+    checks: [migrate, inspect]
+    expect_schema:
+      tables: {}
+      enums:
+        ticket_status:
+          name: ticket_status
+          values: [open, pending, closed]

@@ -1,0 +1,80 @@
+---
+description: Rollback SQL reverses table, column, index, foreign-key, and constraint
+  operations in graph order.
+group: rollback
+features:
+- group.rollback
+- kind.migration_to_sql
+- operation.drop_constraint
+- operation.drop_foreign_key
+- renderer.postgres.add_column
+- renderer.postgres.add_constraint
+- renderer.postgres.add_foreign_key
+- renderer.postgres.add_index
+- renderer.postgres.create_table
+- rollback.reversible
+kind: migration_to_sql
+direction: rollback
+dialect: postgres
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: email
+        type: text
+        nullable: true
+- id: 0002_add_orgs
+  dependencies:
+  - 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: orgs
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+- id: 0003_modify_users
+  dependencies:
+  - 0002_add_orgs
+  operations:
+  - type: add_column
+    table_name: users
+    column:
+      name: org_id
+      type: integer
+      nullable: true
+  - type: add_foreign_key
+    table_name: users
+    foreign_key:
+      name: users_org_id_fkey
+      columns:
+      - org_id
+      to_table: orgs
+      to_columns:
+      - id
+  - type: add_index
+    table_name: users
+    index:
+      name: users_email_idx
+      columns:
+      - email
+  - type: add_constraint
+    table_name: users
+    constraint:
+      kind: check
+      name: users_email_check
+      expression: email <> ''
+expect_sql: |
+  ALTER TABLE "users" DROP CONSTRAINT "users_email_check"
+  DROP INDEX "users_email_idx"
+  ALTER TABLE "users" DROP CONSTRAINT "users_org_id_fkey"
+  ALTER TABLE "users" DROP COLUMN "org_id"
+  DROP TABLE "orgs"
+  DROP TABLE "users"

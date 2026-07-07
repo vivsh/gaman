@@ -1,0 +1,53 @@
+---
+description: A type-cast decision records explicit cast SQL for an altered column
+  type.
+group: diff
+features:
+- answer.type_cast
+- diff.diff_alter_type_with_cast_decision
+- group.diff
+- kind.schema_to_migration
+- operation.alter_column
+- renderer.postgres.alter_column
+- renderer.postgres.create_table
+kind: schema_to_migration
+dialect: postgres
+name: alter_age_type
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: age
+        type: text
+        nullable: true
+decisions:
+- clarification_id: typecast:users:age
+  answer:
+    type: type_cast
+    value: age::integer
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: age
+        type: integer
+        nullable: true
+expect_operations:
+- type: alter_column
+  table_name: users
+  old:
+    name: age
+    type: text
+    nullable: true
+  new:
+    name: age
+    type: integer
+    nullable: true
+  cast_expr: age::integer
+expect_sql: 'ALTER TABLE "users" ALTER COLUMN "age" TYPE integer USING age::integer
+
+'

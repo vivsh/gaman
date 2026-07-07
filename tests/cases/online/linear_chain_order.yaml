@@ -1,0 +1,57 @@
+description: linear migration chains apply in dependency order
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - tables_columns
+  - composite_foreign_keys
+  - data_preservation
+
+migrations:
+  - id: 0001_create_authors
+    operations:
+      - type: create_table
+        table:
+          name: authors
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: name
+              type: text
+  - id: 0002_create_posts
+    dependencies: [0001_create_authors]
+    operations:
+      - type: create_table
+        table:
+          name: posts
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: author_id
+              type: integer
+            - name: title
+              type: text
+          foreign_keys:
+            - columns: [author_id]
+              to_table: authors
+              to_columns: [id]
+  - id: 0003_seed
+    dependencies: [0002_create_posts]
+    operations:
+      - type: statement
+        up: "INSERT INTO authors (id, name) VALUES (1, 'Ada')"
+      - type: statement
+        up: "INSERT INTO posts (id, author_id, title) VALUES (10, 1, 'First')"
+
+dialects:
+  postgres:
+    checks: [migrate, data]
+    data:
+      - sql: "SELECT authors.name || ':' || posts.title FROM posts JOIN authors ON authors.id = posts.author_id ORDER BY posts.id"
+        expect: ["Ada:First"]
+  sqlite:
+    checks: [migrate, data]
+    data:
+      - sql: "SELECT authors.name || ':' || posts.title FROM posts JOIN authors ON authors.id = posts.author_id ORDER BY posts.id"
+        expect: ["Ada:First"]

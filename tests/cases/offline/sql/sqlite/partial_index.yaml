@@ -1,0 +1,39 @@
+---
+description: SQLite renders partial index SQL.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- operation.add_index
+- renderer.sqlite.add_index
+- sql_rendering.sql_sqlite_partial_index
+kind: migration_to_sql
+dialect: sqlite
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: email
+        type: text
+      - name: active
+        type: integer
+        default: "1"
+- id: 0002_add_partial_index
+  dependencies: [0001_create_users]
+  operations:
+  - type: add_index
+    table_name: users
+    index:
+      name: users_active_email_idx
+      columns: [email]
+      predicate: active = 1
+ids:
+- 0002_add_partial_index
+expect_sql: |
+  CREATE INDEX "users_active_email_idx" ON "users" ("email") WHERE active = 1

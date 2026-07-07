@@ -1,0 +1,20 @@
+---
+description: Schema preparation rejects duplicate columns before SQL rendering.
+group: validation
+features:
+- group.validation
+- kind.schema_to_migration
+- validation.validation_duplicate_column_error
+kind: schema_to_migration
+dialect: postgres
+name: duplicate_column
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+      - name: id
+        type: integer
+expect_error: duplicate column

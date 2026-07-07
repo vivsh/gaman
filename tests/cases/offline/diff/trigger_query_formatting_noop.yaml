@@ -1,0 +1,45 @@
+---
+description: Formatting-only trigger query changes do not create migration churn.
+group: diff
+features:
+- diff.diff_trigger_query_formatting_noop
+- group.diff
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: trigger_formatting
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      triggers:
+      - name: users_audit_trg
+        timing: after
+        events:
+        - insert
+        scope: row
+        query: INSERT INTO audit_log(user_id) VALUES (NEW.id);
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      triggers:
+      - name: users_audit_trg
+        timing: after
+        events:
+        - insert
+        scope: row
+        query: |
+          INSERT INTO audit_log(user_id)
+          VALUES (NEW.id);
+expect_no_changes: true

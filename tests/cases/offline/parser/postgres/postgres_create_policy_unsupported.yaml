@@ -1,0 +1,16 @@
+---
+description: PostgreSQL parser accepts policies but Gaman does not model them.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.postgres.parser_postgres_create_policy_unsupported
+kind: sql_parse
+parser_dialect: postgres
+sql: |
+  CREATE POLICY tenant_isolation
+  ON invoices
+  USING (tenant_id = current_setting('app.tenant_id')::uuid);
+expect_parse: ok
+expect_lowering: unsupported
+expect_error: unsupported

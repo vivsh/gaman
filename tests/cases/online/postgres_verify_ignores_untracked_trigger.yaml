@@ -1,0 +1,33 @@
+description: PostgreSQL verify ignores a live-only trigger on an owned table
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - trigger_query_objects
+  - functions_opaque
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+      - type: create_function
+        function:
+          name: audit_users_fn
+          arguments: ""
+          returns: trigger
+          language: plpgsql
+          body: "BEGIN\nRETURN NEW;\nEND;"
+
+mutate_sql: |
+  CREATE TRIGGER users_live_only_trg AFTER INSERT ON users
+  FOR EACH ROW EXECUTE FUNCTION audit_users_fn();
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify: []

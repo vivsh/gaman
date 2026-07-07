@@ -1,0 +1,43 @@
+---
+description: Diff appends enum labels through AlterEnum.
+group: diff
+features:
+- diff.diff_enum_append
+- group.diff
+- kind.schema_to_migration
+- operation.alter_enum
+- renderer.postgres.alter_enum
+- renderer.postgres.create_enum
+kind: schema_to_migration
+dialect: postgres
+name: add_enum_value
+migrations:
+- id: 0001_create_status
+  operations:
+  - type: create_enum
+    enum_def:
+      name: status
+      values:
+      - active
+current:
+  tables: {}
+  enums:
+    status:
+      name: status
+      values:
+      - active
+      - archived
+expect_operations:
+- type: alter_enum
+  old:
+    name: status
+    values:
+    - active
+  new:
+    name: status
+    values:
+    - active
+    - archived
+expect_sql: 'ALTER TYPE "status" ADD VALUE ''archived'' AFTER ''active''
+
+'

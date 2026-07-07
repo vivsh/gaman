@@ -1,0 +1,44 @@
+---
+description: Real function body changes produce AlterFunction.
+group: diff
+features:
+- diff.diff_function_body_changed
+- group.diff
+- kind.schema_to_migration
+- operation.alter_function
+kind: schema_to_migration
+dialect: postgres
+name: alter_function_body
+migrations:
+- id: 0001_create_function
+  operations:
+  - type: create_function
+    function:
+      name: add_one
+      arguments: integer
+      returns: integer
+      language: sql
+      body: SELECT $1 + 1
+current:
+  tables: {}
+  functions:
+    add_one:
+      name: add_one
+      arguments: integer
+      returns: integer
+      language: sql
+      body: SELECT $1 + 2
+expect_operations:
+- type: alter_function
+  old:
+    name: add_one
+    arguments: integer
+    returns: integer
+    language: sql
+    body: SELECT $1 + 1
+  new:
+    name: add_one
+    arguments: integer
+    returns: integer
+    language: sql
+    body: SELECT $1 + 2

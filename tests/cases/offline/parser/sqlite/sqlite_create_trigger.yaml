@@ -1,0 +1,18 @@
+---
+description: SQLite parser accepts trigger bodies.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.sqlite.parser_sqlite_create_trigger
+kind: sql_parse
+parser_dialect: sqlite
+sql: |
+  CREATE TRIGGER users_ai
+  AFTER INSERT ON users
+  BEGIN
+      UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+  END;
+expect_parse: ok
+expect_lowering: unsupported
+expect_error: unsupported

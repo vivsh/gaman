@@ -1,0 +1,64 @@
+description: verify reports no drift for a representative owned schema
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - tables_columns
+  - generated_columns
+  - composite_primary_keys
+  - composite_foreign_keys
+  - indexes_constraints
+
+migrations:
+  - id: 0001_create_accounts
+    operations:
+      - type: create_table
+        table:
+          name: tenants
+          primary_key:
+            columns: [tenant_id, region_id]
+          columns:
+            - name: tenant_id
+              type: integer
+            - name: region_id
+              type: integer
+          constraints:
+            - kind: check
+              name: tenants_region_check
+              expression: region_id > 0
+      - type: create_table
+        table:
+          name: accounts
+          primary_key:
+            columns: [tenant_id, region_id, account_id]
+          columns:
+            - name: tenant_id
+              type: integer
+            - name: region_id
+              type: integer
+            - name: account_id
+              type: integer
+            - name: email
+              type: text
+            - name: email_len
+              type: integer
+              nullable: true
+              generated: "length(email)"
+          foreign_keys:
+            - columns: [tenant_id, region_id]
+              to_table: tenants
+              to_columns: [tenant_id, region_id]
+          indexes:
+            - name: accounts_email_idx
+              columns: [email]
+          constraints:
+            - kind: unique
+              name: accounts_tenant_email_key
+              columns: [tenant_id, email]
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify: []
+  sqlite:
+    checks: [verify]
+    expect_verify: []

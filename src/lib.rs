@@ -15,9 +15,6 @@ pub mod core {
     pub use gaman_core::{EmbeddedMigrations, Migration, OfflineError, OfflinePlanner};
 }
 
-#[cfg(all(feature = "macros", not(feature = "native")))]
-pub use gaman_macros::{IntoTable, embedded_migrations};
-
 #[cfg(feature = "native")]
 pub(crate) mod adapters;
 #[cfg(feature = "cli")]
@@ -47,8 +44,6 @@ pub use conf::{Config, TlsMode};
 pub use engine::{EmbeddedMigrations, EngineError, MigrationEngine};
 #[cfg(feature = "native")]
 pub use gaman_core::Migration;
-#[cfg(all(feature = "native", feature = "macros"))]
-pub use gaman_macros::{IntoTable, embedded_migrations};
 
 /// Schema types and builders.
 #[cfg(feature = "native")]

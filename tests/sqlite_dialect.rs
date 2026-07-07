@@ -7,8 +7,8 @@ use gaman::core::{
     SqliteExecutor, VecAdapter,
 };
 use gaman::schema::{
-    Column, Constraint, ExtensionDef, ForeignKey, Index, Operation, PrimaryKey, Table, TriggerDef,
-    TriggerEvent, TriggerScope, TriggerTiming, ViewDef,
+    Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, Operation,
+    PrimaryKey, Table, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming, ViewDef, Volatility,
 };
 use gaman::{Config, Migration};
 use sqlx::ConnectOptions;
@@ -248,6 +248,201 @@ fn sqlite_trigger_truncate_is_unsupported() {
     assert!(err.to_string().contains("TRUNCATE"));
 }
 
+/// SQLite renders trigger alteration as direct CREATE TRIGGER for the new trigger shape.
+#[test]
+fn sqlite_renders_alter_trigger_as_create_trigger() {
+    let old = TriggerDef {
+        name: Some("orders_insert_after_trg".to_string()),
+        timing: TriggerTiming::After,
+        events: vec![TriggerEvent::Insert],
+        scope: TriggerScope::Row,
+        function_name: None,
+        when: None,
+        query: Some("INSERT INTO audit_log(action) VALUES ('old');".to_string()),
+        language: None,
+    };
+    let new = TriggerDef {
+        name: Some("orders_insert_after_trg".to_string()),
+        timing: TriggerTiming::After,
+        events: vec![TriggerEvent::Insert],
+        scope: TriggerScope::Row,
+        function_name: None,
+        when: None,
+        query: Some("INSERT INTO audit_log(action) VALUES ('new');".to_string()),
+        language: None,
+    };
+
+    let sql = Dialect::Sqlite
+        .operation_to_sql(&Operation::AlterTrigger {
+            table_name: "orders".to_string(),
+            old,
+            new,
+        })
+        .unwrap();
+
+    assert_eq!(
+        sql,
+        vec![
+            "CREATE TRIGGER \"orders_insert_after_trg\"\nAFTER INSERT ON \"orders\"\nFOR EACH ROW\nBEGIN\nINSERT INTO audit_log(action) VALUES ('new');\nEND"
+        ]
+    );
+}
+
+/// SQLite renders trigger drops by name.
+#[test]
+fn sqlite_renders_drop_trigger() {
+    let trigger = TriggerDef {
+        name: Some("orders_insert_after_trg".to_string()),
+        timing: TriggerTiming::After,
+        events: vec![TriggerEvent::Insert],
+        scope: TriggerScope::Row,
+        function_name: None,
+        when: None,
+        query: Some("INSERT INTO audit_log(order_id) VALUES (OLD.id);".to_string()),
+        language: None,
+    };
+
+    let sql = Dialect::Sqlite
+        .operation_to_sql(&Operation::DropTrigger {
+            table_name: "orders".to_string(),
+            trigger,
+        })
+        .unwrap();
+
+    assert_eq!(sql, vec![r#"DROP TRIGGER "orders_insert_after_trg""#]);
+}
+
+/// SQLite direct operation rendering rejects every table rebuild operation with a context-required error.
+#[test]
+fn sqlite_rebuild_operations_require_migration_context() {
+    let operations = vec![
+        Operation::DropColumn {
+            table_name: "users".to_string(),
+            column: col("email", "text", true),
+            cascade: false,
+        },
+        Operation::AlterColumn {
+            table_name: "users".to_string(),
+            old: col("age", "text", true),
+            new: col("age", "integer", true),
+            cast_expr: None,
+        },
+        Operation::AddForeignKey {
+            table_name: "users".to_string(),
+            foreign_key: ForeignKey::single(
+                "users_account_id_fkey",
+                "account_id",
+                "accounts",
+                "id",
+            ),
+        },
+        Operation::DropForeignKey {
+            table_name: "users".to_string(),
+            foreign_key: ForeignKey::single(
+                "users_account_id_fkey",
+                "account_id",
+                "accounts",
+                "id",
+            ),
+            cascade: false,
+        },
+        Operation::AddConstraint {
+            table_name: "users".to_string(),
+            constraint: Constraint::Check {
+                name: "users_age_check".to_string(),
+                expression: "age >= 0".to_string(),
+            },
+        },
+        Operation::DropConstraint {
+            table_name: "users".to_string(),
+            constraint: Constraint::Check {
+                name: "users_age_check".to_string(),
+                expression: "age >= 0".to_string(),
+            },
+        },
+    ];
+
+    for operation in operations {
+        let err = Dialect::Sqlite.operation_to_sql(&operation).unwrap_err();
+        assert!(
+            err.to_string().contains("render through Migrator"),
+            "unexpected error for {operation:?}: {err}"
+        );
+    }
+}
+
+fn sqlite_unsupported_function(name: &str) -> FunctionDef {
+    FunctionDef {
+        name: name.to_string(),
+        schema: None,
+        arguments: String::new(),
+        returns: "void".to_string(),
+        language: "sql".to_string(),
+        body: "SELECT 1".to_string(),
+        volatility: Volatility::Volatile,
+        security_definer: false,
+    }
+}
+
+fn sqlite_unsupported_enum() -> EnumDef {
+    EnumDef {
+        name: "status".to_string(),
+        schema: None,
+        values: vec!["draft".to_string(), "published".to_string()],
+    }
+}
+
+/// SQLite rejects every opaque object family that the dialect does not support.
+#[test]
+fn sqlite_rejects_unsupported_opaque_operations() {
+    let function = sqlite_unsupported_function("notify");
+    let enum_def = sqlite_unsupported_enum();
+    let extension = ExtensionDef {
+        name: "pgcrypto".to_string(),
+        schema: None,
+        version: None,
+    };
+    let operations = vec![
+        Operation::CreateFunction {
+            function: function.clone(),
+        },
+        Operation::AlterFunction {
+            old: function.clone(),
+            new: function.clone(),
+        },
+        Operation::DropFunction { function },
+        Operation::CreateExtension {
+            extension: extension.clone(),
+        },
+        Operation::DropExtension { extension },
+        Operation::CreateEnum {
+            enum_def: enum_def.clone(),
+        },
+        Operation::DropEnum {
+            enum_def: enum_def.clone(),
+        },
+        Operation::RenameEnumValue {
+            enum_name: "status".to_string(),
+            schema: None,
+            old_value: "draft".to_string(),
+            new_value: "new".to_string(),
+        },
+        Operation::AlterEnum {
+            old: enum_def.clone(),
+            new: enum_def,
+        },
+    ];
+
+    for operation in operations {
+        let err = Dialect::Sqlite.operation_to_sql(&operation).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("not supported by the SQLite dialect"),
+            "unexpected error for {operation:?}: {err}"
+        );
+    }
+}
+
 fn migration_atomic(id: &str, atomic: bool, operations: Vec<Operation>) -> Migration {
     Migration {
         id: id.to_string(),
@@ -316,6 +511,155 @@ fn sqlite_renders_supported_create_table_subset() {
             r#"CREATE TABLE "users" ("id" integer PRIMARY KEY, CONSTRAINT "users_id_check" CHECK (id > 0))"#,
             r#"CREATE INDEX "users_id_idx" ON "users" ("id")"#,
         ]
+    );
+}
+
+/// SQLite renders simple table drops directly.
+#[test]
+fn sqlite_renders_drop_table() {
+    let sql = Dialect::Sqlite
+        .operation_to_sql(&Operation::DropTable {
+            table: table("users"),
+        })
+        .unwrap();
+
+    assert_eq!(sql, vec![r#"DROP TABLE "users""#]);
+}
+
+/// SQLite renders simple table renames directly.
+#[test]
+fn sqlite_renders_rename_table() {
+    let sql = Dialect::Sqlite
+        .operation_to_sql(&Operation::RenameTable {
+            old_name: "users".to_string(),
+            new_name: "accounts".to_string(),
+        })
+        .unwrap();
+
+    assert_eq!(sql, vec![r#"ALTER TABLE "users" RENAME TO "accounts""#]);
+}
+
+/// SQLite renders simple column additions directly.
+#[test]
+fn sqlite_renders_simple_add_column() {
+    let sql = Dialect::Sqlite
+        .operation_to_sql(&Operation::AddColumn {
+            table_name: "users".to_string(),
+            column: col("email", "text", true),
+        })
+        .unwrap();
+
+    assert_eq!(sql, vec![r#"ALTER TABLE "users" ADD COLUMN "email" text"#]);
+}
+
+/// SQLite renders column renames directly.
+#[test]
+fn sqlite_renders_rename_column() {
+    let sql = Dialect::Sqlite
+        .operation_to_sql(&Operation::RenameColumn {
+            table_name: "users".to_string(),
+            old_name: "email".to_string(),
+            new_name: "primary_email".to_string(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        sql,
+        vec![r#"ALTER TABLE "users" RENAME COLUMN "email" TO "primary_email""#]
+    );
+}
+
+/// SQLite renders direct index creation.
+#[test]
+fn sqlite_renders_add_index() {
+    let sql = Dialect::Sqlite
+        .operation_to_sql(&Operation::AddIndex {
+            table_name: "users".to_string(),
+            index: Index {
+                name: "users_email_idx".to_string(),
+                columns: vec!["email".to_string()],
+                unique: false,
+                predicate: None,
+            },
+            concurrent: false,
+        })
+        .unwrap();
+
+    assert_eq!(
+        sql,
+        vec![r#"CREATE INDEX "users_email_idx" ON "users" ("email")"#]
+    );
+}
+
+/// SQLite renders direct index drops.
+#[test]
+fn sqlite_renders_drop_index() {
+    let sql = Dialect::Sqlite
+        .operation_to_sql(&Operation::DropIndex {
+            table_name: "users".to_string(),
+            index: Index {
+                name: "users_email_idx".to_string(),
+                columns: vec!["email".to_string()],
+                unique: false,
+                predicate: None,
+            },
+            concurrent: false,
+        })
+        .unwrap();
+
+    assert_eq!(sql, vec![r#"DROP INDEX "users_email_idx""#]);
+}
+
+/// SQLite preserves raw SQL statements exactly.
+#[test]
+fn sqlite_renders_statement_exactly() {
+    let sql = Dialect::Sqlite
+        .operation_to_sql(&Operation::Statement {
+            up: "UPDATE users SET active = 1".to_string(),
+            down: None,
+        })
+        .unwrap();
+
+    assert_eq!(sql, vec!["UPDATE users SET active = 1"]);
+}
+
+/// SQLite renders views directly.
+#[test]
+fn sqlite_renders_view_operations() {
+    let old = ViewDef {
+        name: "active_users".to_string(),
+        schema: None,
+        definition: "SELECT id FROM users".to_string(),
+    };
+    let new = ViewDef {
+        name: "active_users".to_string(),
+        schema: None,
+        definition: "SELECT id FROM users WHERE active = 1".to_string(),
+    };
+
+    assert_eq!(
+        Dialect::Sqlite
+            .operation_to_sql(&Operation::CreateView { view: old.clone() })
+            .unwrap(),
+        vec![r#"CREATE VIEW "active_users" AS SELECT id FROM users"#]
+    );
+    assert_eq!(
+        Dialect::Sqlite
+            .operation_to_sql(&Operation::ReplaceView {
+                old: old.clone(),
+                new
+            })
+            .unwrap(),
+        vec![
+            r#"DROP VIEW "active_users""#,
+            r#"CREATE VIEW "active_users" AS SELECT id FROM users WHERE active = 1"#
+        ]
+    );
+    assert_eq!(
+        Dialect::Sqlite
+            .operation_to_sql(&Operation::DropView { view: old })
+            .unwrap(),
+        vec![r#"DROP VIEW "active_users""#]
     );
 }
 

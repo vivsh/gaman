@@ -1,0 +1,20 @@
+description: SQLite fails clearly for schema-qualified tables
+features:
+  - unsupported_feature_errors
+
+migrations:
+  - id: 0001_create_schema_table
+    operations:
+      - type: create_table
+        table:
+          name: users
+          schema: app
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+
+dialects:
+  sqlite:
+    checks: [migrate, error]
+    expect_error: "SQLite dialect does not support schemas"

@@ -1,0 +1,16 @@
+---
+description: sqlparser does not parse PostgreSQL logical replication publications.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.postgres.parser_postgres_create_publication_parse_error
+kind: sql_parse
+parser_dialect: postgres
+sql: 'CREATE PUBLICATION app_pub FOR TABLE users, orders WITH (publish = ''insert,
+  update, delete'');
+
+'
+expect_parse: error
+expect_lowering: error
+expect_error: PUBLICATION

@@ -118,13 +118,9 @@ impl Executor for PostgresExecutor {
 fn parse_index_def(def: &str) -> Result<(Vec<String>, bool, Option<String>), ExecutorError> {
     let unique = def.contains("CREATE UNIQUE INDEX");
 
-    // Split off the optional WHERE clause before parsing columns
-    let (col_part, predicate) = if let Some(where_pos) = def.find(") WHERE (") {
-        let pred = def[where_pos + 9..]
-            .trim_end_matches(')')
-            .trim()
-            .to_string();
-        (&def[..where_pos + 1], Some(pred))
+    let (col_part, predicate) = if let Some(where_pos) = def.find(" WHERE ") {
+        let pred = normalize_index_predicate(&def[where_pos + " WHERE ".len()..]);
+        (&def[..where_pos], Some(pred))
     } else {
         (def, None)
     };
@@ -154,6 +150,11 @@ fn parse_index_def(def: &str) -> Result<(Vec<String>, bool, Option<String>), Exe
                 .next()
                 .unwrap_or("")
                 .trim_matches('"');
+            if col_name.contains('(') || col_name.contains(')') {
+                return Err(ExecutorError::Fetch(format!(
+                    "unsupported PostgreSQL expression index; model index expressions explicitly before introspecting: {def}"
+                )));
+            }
             if !col_name.is_empty() {
                 cols.push(col_name.to_string());
             }
@@ -170,6 +171,33 @@ fn parse_index_def(def: &str) -> Result<(Vec<String>, bool, Option<String>), Exe
         )));
     }
     Ok((cols, unique, predicate))
+}
+
+fn normalize_index_predicate(predicate: &str) -> String {
+    let trimmed = predicate.trim();
+    if let Some(inner) = strip_balanced_outer_parens(trimmed) {
+        inner.trim().to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn strip_balanced_outer_parens(value: &str) -> Option<&str> {
+    let inner = value.strip_prefix('(')?.strip_suffix(')')?;
+    let mut depth = 0usize;
+    for (idx, ch) in value.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 && idx != value.len() - 1 {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(inner)
 }
 
 // Decodes the tgtype bitmask from pg_trigger into timing, events, and scope.
@@ -250,7 +278,7 @@ impl Introspectable for PostgresExecutor {
                     };
 
                     let col_rows = sqlx::query(
-                        "SELECT c.column_name, c.data_type, c.character_maximum_length, \
+                        "SELECT c.column_name, c.data_type, c.udt_schema, c.udt_name, c.character_maximum_length, \
                          c.numeric_precision, c.numeric_scale, c.is_nullable, c.column_default, \
                          a.attidentity, c.generation_expression \
                          FROM information_schema.columns c \
@@ -302,27 +330,33 @@ impl Introspectable for PostgresExecutor {
                         let data_type: String = cr
                             .try_get(1)
                             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let char_max: Option<i32> = cr
+                        let udt_schema: String = cr
                             .try_get(2)
                             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let num_prec: Option<i32> = cr
+                        let udt_name: String = cr
                             .try_get(3)
                             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let num_scale: Option<i32> = cr
+                        let char_max: Option<i32> = cr
                             .try_get(4)
                             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let is_nullable: String = cr
+                        let num_prec: Option<i32> = cr
                             .try_get(5)
                             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let col_default: Option<String> = cr
+                        let num_scale: Option<i32> = cr
                             .try_get(6)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let is_nullable: String = cr
+                            .try_get(7)
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let col_default: Option<String> = cr
+                            .try_get(8)
                             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                         // attidentity is pg "char" (i8): b'a' = ALWAYS, b'd' = BY DEFAULT, 0 = not identity
                         let attidentity: i8 = cr
-                            .try_get(7)
+                            .try_get(9)
                             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                         let generation_expression: Option<String> = cr
-                            .try_get(8)
+                            .try_get(10)
                             .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
                         let generated = generation_expression.filter(|s| !s.is_empty());
@@ -351,6 +385,8 @@ impl Introspectable for PostgresExecutor {
                                 (Some(p), Some(s)) => format!("numeric({p}, {s})"),
                                 _ => "numeric".to_string(),
                             }
+                        } else if data_type == "USER-DEFINED" {
+                            schema_qualified_key(&udt_name, Some(&udt_schema))
                         } else {
                             data_type.clone()
                         };
@@ -822,6 +858,16 @@ mod tests {
         assert_eq!(predicate.as_deref(), Some("status = 0"));
     }
 
+    /// Verifies unparenthesized PostgreSQL partial-index predicates are preserved.
+    #[test]
+    fn parse_index_def_partial_index_without_predicate_parens() {
+        let def = "CREATE INDEX idx ON public.users USING btree (email) WHERE active";
+        let (cols, unique, predicate) = parse_index_def(def).unwrap();
+        assert_eq!(cols, vec!["email"]);
+        assert!(!unique);
+        assert_eq!(predicate.as_deref(), Some("active"));
+    }
+
     /// Verifies that DESC sort modifiers and operator classes are stripped from column names.
     #[test]
     fn parse_index_def_strips_modifiers() {
@@ -843,6 +889,14 @@ mod tests {
     #[test]
     fn parse_index_def_rejects_expression_indexes() {
         let def = "CREATE INDEX idx ON t USING btree ((lower(username)))";
+        let err = parse_index_def(def).unwrap_err();
+        assert!(err.to_string().contains("expression index"));
+    }
+
+    /// Verifies function-call expression indexes are rejected even without double parentheses.
+    #[test]
+    fn parse_index_def_rejects_function_expression_indexes() {
+        let def = "CREATE INDEX idx ON t USING btree (lower(username))";
         let err = parse_index_def(def).unwrap_err();
         assert!(err.to_string().contains("expression index"));
     }

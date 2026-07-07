@@ -1,0 +1,32 @@
+description: PostgreSQL verify detects missing owned function signatures
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - functions_opaque
+
+migrations:
+  - id: 0001_create_function
+    operations:
+      - type: create_function
+        function:
+          name: add_one
+          arguments: "value integer"
+          returns: integer
+          language: sql
+          body: "SELECT $1 + 1"
+
+mutate_sql: |
+  DROP FUNCTION add_one(integer);
+  CREATE FUNCTION add_one(value text) RETURNS text LANGUAGE sql AS $$ SELECT $1 || '!' $$;
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify:
+      - type: create_function
+        function:
+          name: add_one
+          arguments: value integer
+          returns: integer
+          language: sql
+          body: ""

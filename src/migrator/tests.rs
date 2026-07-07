@@ -7,8 +7,8 @@ use crate::executor::{BoxFuture, Introspectable};
 use gaman_core::dialects::Dialect;
 use gaman_core::operations::Operation;
 use gaman_core::states::{
-    Column, EnumDef, ExtensionDef, ForeignKey, FunctionDef, PrimaryKey, Schema, Table, TriggerDef,
-    TriggerEvent, TriggerScope, TriggerTiming, Volatility,
+    Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, PrimaryKey, Schema,
+    Table, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming, ViewDef, Volatility,
 };
 
 #[derive(Default)]
@@ -952,6 +952,284 @@ async fn verify_treats_same_schema_fk_target_as_default_namespace() {
         .expect("verify should succeed");
 
     assert!(drift.is_empty(), "expected no drift, got: {drift:?}");
+}
+
+/// Verifies live-only tables are outside verify ownership and do not produce drop drift.
+#[tokio::test]
+async fn verify_ignores_live_only_table() {
+    let migrator = migrator_from(vec![migration_with_ops(
+        "0001_create_users",
+        &[],
+        vec![Operation::CreateTable {
+            table: simple_table("users", &["id"]),
+        }],
+    )]);
+    let live = state_with_tables(&[
+        simple_table("users", &["id"]),
+        simple_table("audit_events", &["id"]),
+    ]);
+    let mut executor = InspectingExecutor { live };
+
+    let drift = migrator
+        .verify_with(&mut executor, "public")
+        .await
+        .expect("verify should succeed");
+
+    assert!(drift.is_empty(), "expected no drift, got: {drift:?}");
+}
+
+/// Verifies live-only table children are ignored while checking a tracked table.
+#[tokio::test]
+async fn verify_ignores_live_only_table_children() {
+    let migrator = migrator_from(vec![migration_with_ops(
+        "0001_create_users",
+        &[],
+        vec![Operation::CreateTable {
+            table: simple_table("users", &["id"]),
+        }],
+    )]);
+    let mut live_users = simple_table("users", &["id", "rogue", "account_id"]);
+    live_users.indexes.push(Index {
+        name: "users_rogue_idx".to_string(),
+        columns: vec!["rogue".to_string()],
+        unique: false,
+        predicate: None,
+    });
+    live_users.constraints.push(Constraint::Check {
+        name: "users_rogue_check".to_string(),
+        expression: "rogue IS NOT NULL".to_string(),
+    });
+    live_users.foreign_keys.push(ForeignKey::single(
+        "users_account_id_fkey",
+        "account_id",
+        "accounts",
+        "id",
+    ));
+    let mut trigger = verify_trigger("users_audit_trg", "audit_fn");
+    trigger.function_name = None;
+    trigger.query = Some("SELECT 1".to_string());
+    live_users.triggers.push(trigger);
+    let live = state_with_tables(&[live_users, simple_pk_table("accounts", &["id"], "id")]);
+    let mut executor = InspectingExecutor { live };
+
+    let drift = migrator
+        .verify_with(&mut executor, "public")
+        .await
+        .expect("verify should succeed");
+
+    assert!(drift.is_empty(), "expected no drift, got: {drift:?}");
+}
+
+/// Verifies live-only top-level opaque objects are outside verify ownership.
+#[tokio::test]
+async fn verify_ignores_live_only_opaque_objects() {
+    let migrator = migrator_from(vec![migration_with_ops(
+        "0001_create_users",
+        &[],
+        vec![Operation::CreateTable {
+            table: simple_table("users", &["id"]),
+        }],
+    )]);
+    let mut live = state_with_tables(&[simple_table("users", &["id"])]);
+    live.functions
+        .insert("compute".to_string(), verify_function("compute"));
+    live.views.insert(
+        "user_summary".to_string(),
+        ViewDef {
+            name: "user_summary".to_string(),
+            schema: None,
+            definition: "SELECT id FROM users".to_string(),
+        },
+    );
+    live.enums.insert(
+        "status".to_string(),
+        EnumDef {
+            name: "status".to_string(),
+            schema: None,
+            values: vec!["pending".to_string()],
+        },
+    );
+    live.extensions.insert(
+        "pgcrypto".to_string(),
+        ExtensionDef {
+            name: "pgcrypto".to_string(),
+            schema: None,
+            version: Some("1.0".to_string()),
+        },
+    );
+    let mut executor = InspectingExecutor { live };
+
+    let drift = migrator
+        .verify_with(&mut executor, "public")
+        .await
+        .expect("verify should succeed");
+
+    assert!(drift.is_empty(), "expected no drift, got: {drift:?}");
+}
+
+/// Verifies missing or changed owned columns still produce verify drift.
+#[tokio::test]
+async fn verify_detects_owned_column_drift() {
+    let migrator = migrator_from(vec![migration_with_ops(
+        "0001_create_users",
+        &[],
+        vec![Operation::CreateTable {
+            table: simple_table("users", &["id", "email"]),
+        }],
+    )]);
+    let mut live_users = simple_table("users", &["id"]);
+    live_users.columns[0].col_type = "integer".to_string();
+    let live = state_with_tables(&[live_users]);
+    let mut executor = InspectingExecutor { live };
+
+    let drift = migrator
+        .verify_with(&mut executor, "public")
+        .await
+        .expect("verify should succeed");
+
+    assert!(
+        drift
+            .iter()
+            .any(|op| matches!(op, Operation::AddColumn { .. }))
+            || drift
+                .iter()
+                .any(|op| matches!(op, Operation::AlterColumn { .. })),
+        "expected owned column drift, got: {drift:?}"
+    );
+}
+
+/// Verifies changed owned indexes, constraints, FKs, and triggers remain drift.
+#[tokio::test]
+async fn verify_detects_owned_table_child_metadata_drift() {
+    let mut users = simple_table("users", &["id", "email", "account_id"]);
+    users.indexes.push(Index {
+        name: "users_email_idx".to_string(),
+        columns: vec!["email".to_string()],
+        unique: false,
+        predicate: None,
+    });
+    users.constraints.push(Constraint::Check {
+        name: "users_email_check".to_string(),
+        expression: "email IS NOT NULL".to_string(),
+    });
+    users.foreign_keys.push(ForeignKey::single(
+        "users_account_id_fkey",
+        "account_id",
+        "accounts",
+        "id",
+    ));
+    users
+        .triggers
+        .push(verify_trigger("users_audit_trg", "audit_fn"));
+    let migrator = migrator_from(vec![migration_with_ops(
+        "0001_create_tables",
+        &[],
+        vec![
+            Operation::CreateTable {
+                table: simple_pk_table("accounts", &["id"], "id"),
+            },
+            Operation::CreateTable {
+                table: users.clone(),
+            },
+        ],
+    )]);
+
+    let mut live_users = users;
+    live_users.indexes[0].columns = vec!["account_id".to_string()];
+    live_users.constraints[0] = Constraint::Check {
+        name: "users_email_check".to_string(),
+        expression: "account_id IS NOT NULL".to_string(),
+    };
+    live_users.foreign_keys[0] = ForeignKey::single(
+        "users_account_id_fkey",
+        "account_id",
+        "accounts",
+        "other_id",
+    );
+    live_users.triggers[0].function_name = Some("other_fn".to_string());
+    let mut live_accounts = simple_pk_table("accounts", &["id", "other_id"], "id");
+    live_accounts.constraints.push(Constraint::Unique {
+        name: "accounts_other_id_key".to_string(),
+        columns: vec!["other_id".to_string()],
+    });
+    let live = state_with_tables(&[live_accounts, live_users]);
+    let mut executor = InspectingExecutor { live };
+
+    let drift = migrator
+        .verify_with(&mut executor, "public")
+        .await
+        .expect("verify should succeed");
+
+    assert!(
+        drift
+            .iter()
+            .any(|op| matches!(op, Operation::DropIndex { .. }))
+            && drift
+                .iter()
+                .any(|op| matches!(op, Operation::DropConstraint { .. }))
+            && drift
+                .iter()
+                .any(|op| matches!(op, Operation::DropForeignKey { .. }))
+            && drift
+                .iter()
+                .any(|op| matches!(op, Operation::AlterTrigger { .. })),
+        "expected owned child metadata drift, got: {drift:?}"
+    );
+}
+
+/// Verifies missing owned opaque objects still produce verify drift.
+#[tokio::test]
+async fn verify_detects_missing_owned_opaque_objects() {
+    let function = verify_function("compute");
+    let view = ViewDef {
+        name: "user_summary".to_string(),
+        schema: None,
+        definition: "SELECT 1".to_string(),
+    };
+    let enum_def = EnumDef {
+        name: "status".to_string(),
+        schema: None,
+        values: vec!["pending".to_string()],
+    };
+    let extension = ExtensionDef {
+        name: "pgcrypto".to_string(),
+        schema: None,
+        version: Some("1.0".to_string()),
+    };
+    let migrator = migrator_from(vec![migration_with_ops(
+        "0001_create_opaque",
+        &[],
+        vec![
+            Operation::CreateFunction { function },
+            Operation::CreateView { view },
+            Operation::CreateEnum { enum_def },
+            Operation::CreateExtension { extension },
+        ],
+    )]);
+    let mut executor = InspectingExecutor {
+        live: Schema::default(),
+    };
+
+    let drift = migrator
+        .verify_with(&mut executor, "public")
+        .await
+        .expect("verify should succeed");
+
+    assert!(
+        drift
+            .iter()
+            .any(|op| matches!(op, Operation::CreateFunction { .. }))
+            && drift
+                .iter()
+                .any(|op| matches!(op, Operation::CreateView { .. }))
+            && drift
+                .iter()
+                .any(|op| matches!(op, Operation::CreateEnum { .. }))
+            && drift
+                .iter()
+                .any(|op| matches!(op, Operation::CreateExtension { .. })),
+        "expected missing opaque object drift, got: {drift:?}"
+    );
 }
 
 #[tokio::test]

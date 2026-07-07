@@ -1,0 +1,40 @@
+---
+description: Diff drops a table that no longer exists in the desired schema.
+group: diff
+features:
+- diff.diff_drop_table
+- group.diff
+- kind.schema_to_migration
+- operation.drop_table
+- renderer.postgres.create_table
+- renderer.postgres.drop_table
+kind: schema_to_migration
+dialect: postgres
+name: drop_posts
+migrations:
+- id: 0001_create_posts
+  operations:
+  - type: create_table
+    table:
+      name: posts
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+current:
+  tables: {}
+expect_operations:
+- type: drop_table
+  table:
+    name: posts
+    primary_key:
+      name: posts_pkey
+      columns:
+      - id
+    columns:
+    - name: id
+      type: integer
+      primary_key: true
+expect_sql: 'DROP TABLE "posts"
+
+'

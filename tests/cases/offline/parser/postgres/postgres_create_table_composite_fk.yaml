@@ -1,0 +1,59 @@
+---
+description: PostgreSQL parser and lowering preserve composite table-level foreign
+  keys.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.postgres.parser_postgres_create_table_composite_fk
+kind: sql_parse
+parser_dialect: postgres
+sql: |
+  CREATE TABLE tenants (
+      tenant_id integer,
+      region_id integer,
+      PRIMARY KEY (tenant_id, region_id)
+  );
+  CREATE TABLE accounts (
+      tenant_id integer,
+      region_id integer,
+      CONSTRAINT accounts_tenant_region_fkey
+          FOREIGN KEY (tenant_id, region_id)
+          REFERENCES tenants (tenant_id, region_id)
+  );
+expect_parse: ok
+expect_lowering: ok
+expect_schema:
+  tables:
+    accounts:
+      name: accounts
+      columns:
+      - name: tenant_id
+        type: integer
+        nullable: true
+      - name: region_id
+        type: integer
+        nullable: true
+      foreign_keys:
+      - name: accounts_tenant_region_fkey
+        columns:
+        - tenant_id
+        - region_id
+        to_table: tenants
+        to_columns:
+        - tenant_id
+        - region_id
+    tenants:
+      name: tenants
+      primary_key:
+        name: tenants_pkey
+        columns:
+        - tenant_id
+        - region_id
+      columns:
+      - name: tenant_id
+        type: integer
+        primary_key: true
+      - name: region_id
+        type: integer
+        primary_key: true

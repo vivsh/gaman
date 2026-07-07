@@ -1,0 +1,42 @@
+---
+description: Diff emits an alter-column operation when a default is added.
+group: diff
+features:
+- diff.diff_alter_default_added
+- group.diff
+- kind.schema_to_migration
+- renderer.postgres.alter_column
+- renderer.postgres.create_table
+kind: schema_to_migration
+dialect: postgres
+name: add_default
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: status
+        type: text
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: status
+        type: text
+        default: "'active'"
+expect_operations:
+- type: alter_column
+  table_name: users
+  old:
+    name: status
+    type: text
+  new:
+    name: status
+    type: text
+    default: "'active'"
+expect_sql: 'ALTER TABLE "users" ALTER COLUMN "status" SET DEFAULT ''active''
+
+'

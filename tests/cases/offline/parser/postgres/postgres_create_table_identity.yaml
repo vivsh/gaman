@@ -1,0 +1,28 @@
+---
+description: PostgreSQL parser accepts identity columns; lowering records the base
+  column shape.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.postgres.parser_postgres_create_table_identity
+kind: sql_parse
+parser_dialect: postgres
+sql: |
+  CREATE TABLE users (
+      id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      email text
+  );
+expect_parse: ok
+expect_lowering: ok
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: email
+        type: text
+        nullable: true

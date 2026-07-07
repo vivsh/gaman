@@ -1,0 +1,29 @@
+---
+description: SQLite rejects PostgreSQL-style function-name triggers.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- renderer.sqlite.create_table
+- sql_rendering.sql_sqlite_function_trigger_unsupported
+- unsupported.sqlite_function_trigger
+kind: migration_to_sql
+dialect: sqlite
+migrations:
+- id: 0001_create_trigger
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      triggers:
+      - name: users_audit_trg
+        timing: after
+        events:
+        - insert
+        scope: row
+        function_name: audit_users
+expect_error: PostgreSQL-only

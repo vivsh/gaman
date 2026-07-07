@@ -1,0 +1,23 @@
+---
+description: SQLite parser accepts composite primary keys and composite foreign keys.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.sqlite.parser_sqlite_create_table_composite_fk
+kind: sql_parse
+parser_dialect: sqlite
+sql: |
+  CREATE TABLE tenants (
+      tenant_id integer,
+      region_id integer,
+      PRIMARY KEY (tenant_id, region_id)
+  );
+  CREATE TABLE accounts (
+      tenant_id integer,
+      region_id integer,
+      FOREIGN KEY (tenant_id, region_id) REFERENCES tenants (tenant_id, region_id)
+  );
+expect_parse: ok
+expect_lowering: unsupported
+expect_error: unsupported

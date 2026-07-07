@@ -1,0 +1,18 @@
+---
+description: SQLite parser accepts WITHOUT ROWID tables.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.sqlite.parser_sqlite_create_without_rowid
+kind: sql_parse
+parser_dialect: sqlite
+sql: |
+  CREATE TABLE users (
+      tenant_id INTEGER NOT NULL,
+      id INTEGER NOT NULL,
+      PRIMARY KEY (tenant_id, id)
+  ) WITHOUT ROWID;
+expect_parse: ok
+expect_lowering: unsupported
+expect_error: unsupported

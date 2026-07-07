@@ -1,27 +1,44 @@
 mod support;
 
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+
+use gaman::core::MigratorError;
 use gaman::schema::Schema;
 use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
 
 use support::{
-    LoweringExpectation, OfflineCase, OfflineSpec, ParseExpectation, ParserFixtureDialect,
-    TestSupportError, assert_error_contains, assert_ops_match, assert_schema_matches_with_dialect,
-    assert_sql_matches, build_migrator, case_label, offline_cases_root, ordered_migrations,
-    read_case_file, replay_schema, run_case_set, selected_cases,
+    LoweringExpectation, OfflineCase, OfflineEvidence, OfflineFeatureCatalog, OfflineFeatureResult,
+    OfflineResultStatus, OfflineSpec, OfflineSupportResults, ParseExpectation,
+    ParserFixtureDialect, SqlDirection, TestSupportError, assert_clarifications_match,
+    assert_error_contains, assert_ops_match, assert_schema_matches_with_dialect,
+    assert_sql_matches, build_migrator, case_label, offline_cases_root, offline_features_path,
+    ordered_migrations, read_case_file, replay_schema, selected_cases,
 };
 
+struct OfflineArgs {
+    record: Option<PathBuf>,
+    case_args: Vec<String>,
+}
+
+enum CaseStatus {
+    Success,
+    Failure(String),
+    Skipped(String),
+}
+
 fn main() {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let args = match parse_args() {
+        Ok(args) => args,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
     let root = offline_cases_root();
-    let result = selected_cases(&root, &args).and_then(|files| {
-        run_case_set("offline", files, |file, name| {
-            let case: OfflineCase = read_case_file(file)?;
-            let label = case_label(name, case.description.as_deref());
-            run_offline_case(name, &case)?;
-            Ok(label)
-        })
-    });
+    let result =
+        selected_cases(&root, &args.case_args).and_then(|files| run_offline_cases(args, files));
 
     if let Err(error) = result {
         eprintln!("{error}");
@@ -29,8 +46,219 @@ fn main() {
     }
 }
 
+fn parse_args() -> Result<OfflineArgs, TestSupportError> {
+    let mut record = None;
+    let mut case_args = Vec::new();
+    let mut raw = std::env::args().skip(1);
+    while let Some(arg) = raw.next() {
+        match arg.as_str() {
+            "--record" => {
+                let value = raw
+                    .next()
+                    .ok_or_else(|| TestSupportError::message("--record requires a path"))?;
+                record = Some(PathBuf::from(value));
+            }
+            value if value.starts_with("--") => {
+                return Err(TestSupportError::message(format!(
+                    "unsupported offline harness argument '{value}'"
+                )));
+            }
+            _ => case_args.push(arg),
+        }
+    }
+    Ok(OfflineArgs { record, case_args })
+}
+
+fn run_offline_cases(args: OfflineArgs, files: Vec<PathBuf>) -> Result<(), TestSupportError> {
+    if files.is_empty() {
+        return Err(TestSupportError::message("offline: no case files selected"));
+    }
+
+    let catalog: OfflineFeatureCatalog = read_case_file(&offline_features_path())?;
+    let feature_ids = catalog
+        .features
+        .iter()
+        .map(|feature| feature.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut descriptions = BTreeSet::new();
+    let mut results = initial_results(&catalog);
+    let mut failures = Vec::new();
+
+    for file in files {
+        let name = support::case_name(&file)?;
+        let case: OfflineCase = read_case_file(&file)?;
+        case.validate(&name, &file)?;
+        validate_case_metadata(&name, &case, &feature_ids, &mut descriptions)?;
+        let label = case_label(&name, Some(&case.description));
+        let status = run_case_with_status(&name, &case);
+        record_case_status(&mut results, &name, &case, &status);
+        match status {
+            CaseStatus::Success => println!("  ok: {label} ({})", file.display()),
+            CaseStatus::Skipped(reason) => {
+                println!("  ok: {label} [skipped: {reason}] ({})", file.display());
+            }
+            CaseStatus::Failure(message) => failures.push(format!("{}: {message}", file.display())),
+        }
+    }
+
+    if let Some(path) = args.record {
+        write_results(&path, &results)?;
+        println!("recorded offline support results: {}", path.display());
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(TestSupportError::message(format!(
+            "offline cases failed:\n\n{}",
+            failures.join("\n\n")
+        )))
+    }
+}
+
+fn validate_case_metadata(
+    name: &str,
+    case: &OfflineCase,
+    feature_ids: &BTreeSet<&str>,
+    descriptions: &mut BTreeSet<String>,
+) -> Result<(), TestSupportError> {
+    if !descriptions.insert(case.description.clone()) {
+        return Err(TestSupportError::message(format!(
+            "{name}: duplicate offline fixture description '{}'",
+            case.description
+        )));
+    }
+    for feature in &case.features {
+        if !feature_ids.contains(feature.as_str()) {
+            return Err(TestSupportError::message(format!(
+                "{name}: unknown offline feature '{feature}'"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn run_case_with_status(name: &str, case: &OfflineCase) -> CaseStatus {
+    if !case.dialect.is_available() {
+        return CaseStatus::Skipped("feature not enabled".to_string());
+    }
+    run_offline_case(name, case).map_or_else(
+        |error| CaseStatus::Failure(error.to_string()),
+        |_| CaseStatus::Success,
+    )
+}
+
+fn initial_results(catalog: &OfflineFeatureCatalog) -> OfflineSupportResults {
+    let mut results = OfflineSupportResults::default();
+    for feature in &catalog.features {
+        results.features.insert(
+            feature.id.clone(),
+            OfflineFeatureResult {
+                status: OfflineResultStatus::Skipped,
+                evidence: Vec::new(),
+                reason: Some("no offline evidence recorded".to_string()),
+            },
+        );
+    }
+    results
+}
+
+fn record_case_status(
+    results: &mut OfflineSupportResults,
+    name: &str,
+    case: &OfflineCase,
+    status: &CaseStatus,
+) {
+    for feature in &case.features {
+        let Some(current) = results.features.get_mut(feature) else {
+            continue;
+        };
+        match status {
+            CaseStatus::Success => {
+                if current.status != OfflineResultStatus::Failure {
+                    current.status = OfflineResultStatus::Success;
+                    current.reason = None;
+                }
+                current.evidence.push(offline_evidence(name, case));
+            }
+            CaseStatus::Failure(message) => {
+                current.status = OfflineResultStatus::Failure;
+                current.reason = Some(message.clone());
+                current.evidence.push(offline_evidence(name, case));
+            }
+            CaseStatus::Skipped(reason) => {
+                if current.status == OfflineResultStatus::Skipped {
+                    current.reason = Some(reason.clone());
+                    current.evidence.push(offline_evidence(name, case));
+                }
+            }
+        }
+    }
+}
+
+fn offline_evidence(name: &str, case: &OfflineCase) -> OfflineEvidence {
+    OfflineEvidence {
+        case: name.to_string(),
+        description: case.description.clone(),
+        group: case.group.clone(),
+        kind: offline_kind(&case.spec).to_string(),
+        dialect: offline_dialect(case),
+    }
+}
+
+fn offline_kind(spec: &OfflineSpec) -> &'static str {
+    match spec {
+        OfflineSpec::SqlParse { .. } => "sql_parse",
+        OfflineSpec::SqlToSchema { .. } => "sql_to_schema",
+        OfflineSpec::SchemaToMigration { .. } => "schema_to_migration",
+        OfflineSpec::MigrationToReplay { .. } => "migration_to_replay",
+        OfflineSpec::MigrationToSql { .. } => "migration_to_sql",
+        OfflineSpec::EndToEnd { .. } => "end_to_end",
+    }
+}
+
+fn offline_dialect(case: &OfflineCase) -> Option<String> {
+    match &case.spec {
+        OfflineSpec::SqlParse { parser_dialect, .. } => Some(parser_dialect_name(*parser_dialect)),
+        _ => Some(fixture_dialect_name(case.dialect)),
+    }
+}
+
+fn parser_dialect_name(dialect: ParserFixtureDialect) -> String {
+    match dialect {
+        ParserFixtureDialect::Postgres => "postgres",
+        ParserFixtureDialect::Sqlite => "sqlite",
+        ParserFixtureDialect::Mysql => "mysql",
+    }
+    .to_string()
+}
+
+fn fixture_dialect_name(dialect: support::FixtureDialect) -> String {
+    match dialect {
+        support::FixtureDialect::Postgres => "postgres",
+        support::FixtureDialect::Sqlite => "sqlite",
+    }
+    .to_string()
+}
+
+fn write_results(path: &PathBuf, results: &OfflineSupportResults) -> Result<(), TestSupportError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| TestSupportError::Io {
+            path: parent.display().to_string(),
+            message: error.to_string(),
+        })?;
+    }
+    let yaml = serde_yaml::to_string(results).map_err(|error| {
+        TestSupportError::message(format!("failed to serialize offline results: {error}"))
+    })?;
+    std::fs::write(path, yaml).map_err(|error| TestSupportError::Io {
+        path: path.display().to_string(),
+        message: error.to_string(),
+    })
+}
+
 fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportError> {
-    let dialect = case.dialect.to_dialect();
+    let dialect = case.dialect.to_dialect()?;
     match &case.spec {
         OfflineSpec::SqlParse {
             parser_dialect,
@@ -76,10 +304,18 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
             current,
             decisions,
             expect_no_changes,
+            expect_clarifications,
+            expect_pending_clarifications,
             expect_operations,
             expect_sql,
             expect_error,
         } => {
+            if expect_clarifications.is_some() && expect_pending_clarifications.is_some() {
+                return Err(TestSupportError::message(format!(
+                    "{name}: use either expect_clarifications or expect_pending_clarifications, not both"
+                )));
+            }
+
             let migrator = build_migrator(name, case.dialect, migrations)?;
             let result = migrator.make_migrations(
                 Some(migration_name.clone()),
@@ -87,6 +323,12 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
                 true,
                 decisions,
             );
+            if let Some(expected) = expect_clarifications
+                .as_ref()
+                .or(expect_pending_clarifications.as_ref())
+            {
+                return assert_schema_to_migration_clarifications(name, result, expected);
+            }
             if let Some(expected) = expect_error {
                 return assert_error_contains(name, result.map(|_| ()), expected);
             }
@@ -150,15 +392,15 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
             assert_schema_matches_with_dialect(name, "replayed schema", actual, expected, dialect)
         }
         OfflineSpec::MigrationToSql {
+            direction,
+            ids,
             migrations,
             expect_sql,
             expect_error,
         } => {
             let result = build_migrator(name, case.dialect, migrations).and_then(|migrator| {
-                let ordered = ordered_migrations(name, &migrator)?;
-                migrator.sql_migrate(&ordered).map_err(|error| {
-                    TestSupportError::message(format!("{name}: migration_to_sql failed: {error}"))
-                })
+                let ordered = selected_migrations(name, &migrator, ids)?;
+                render_migration_sql_case(name, &migrator, &ordered, *direction)
             });
             if let Some(expected) = expect_error {
                 return assert_error_contains(name, result.map(|_| ()), expected);
@@ -172,6 +414,167 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
             })?;
             assert_sql_matches(name, &actual, expected)
         }
+        OfflineSpec::EndToEnd {
+            name: migration_name,
+            migrations,
+            current,
+            decisions,
+            expect_operations,
+            expect_schema,
+            expect_sql,
+            expect_error,
+        } => run_end_to_end_case(
+            name,
+            case.dialect,
+            migration_name,
+            migrations,
+            current,
+            decisions,
+            expect_operations,
+            expect_schema,
+            expect_sql,
+            expect_error.as_deref(),
+        ),
+    }
+}
+
+fn selected_migrations(
+    name: &str,
+    migrator: &gaman::core::Migrator,
+    ids: &[String],
+) -> Result<Vec<gaman::Migration>, TestSupportError> {
+    if ids.is_empty() {
+        return ordered_migrations(name, migrator);
+    }
+
+    ids.iter()
+        .map(|id| {
+            migrator.graph.get(id).cloned().ok_or_else(|| {
+                TestSupportError::message(format!("{name}: graph is missing migration '{id}'"))
+            })
+        })
+        .collect()
+}
+
+fn render_migration_sql_case(
+    name: &str,
+    migrator: &gaman::core::Migrator,
+    ordered: &[gaman::Migration],
+    direction: SqlDirection,
+) -> Result<Vec<String>, TestSupportError> {
+    match direction {
+        SqlDirection::Forward => migrator.sql_migrate(ordered).map_err(|error| {
+            TestSupportError::message(format!("{name}: migration_to_sql failed: {error}"))
+        }),
+        SqlDirection::Rollback => migrator.sql_rollback(ordered).map_err(|error| {
+            TestSupportError::message(format!("{name}: migration_to_sql rollback failed: {error}"))
+        }),
+    }
+}
+
+fn run_end_to_end_case(
+    name: &str,
+    fixture_dialect: support::FixtureDialect,
+    migration_name: &str,
+    migrations: &[support::InlineMigration],
+    current: &Schema,
+    decisions: &[gaman::core::Decision],
+    expect_operations: &Option<Vec<gaman::schema::Operation>>,
+    expect_schema: &Option<Schema>,
+    expect_sql: &Option<String>,
+    expect_error: Option<&str>,
+) -> Result<(), TestSupportError> {
+    let dialect = fixture_dialect.to_dialect()?;
+    let migrator = build_migrator(name, fixture_dialect, migrations)?;
+    let result = migrator.make_migrations(
+        Some(migration_name.to_string()),
+        current.clone(),
+        true,
+        decisions,
+    );
+    if let Some(expected) = expect_error {
+        return assert_error_contains(name, result.map(|_| ()), expected);
+    }
+
+    let generated = result
+        .map_err(|error| {
+            TestSupportError::message(format!("{name}: end_to_end diff failed: {error}"))
+        })?
+        .ok_or_else(|| {
+            TestSupportError::message(format!(
+                "{name}: expected generated migration, but diff returned no changes"
+            ))
+        })?;
+
+    if let Some(expected) = expect_operations {
+        assert_ops_match(
+            name,
+            "generated operations",
+            &generated.operations,
+            expected,
+        )?;
+    }
+    if let Some(expected) = expect_schema {
+        let final_schema = replay_with_generated(name, &migrator, &generated)?;
+        assert_schema_matches_with_dialect(
+            name,
+            "final schema",
+            final_schema,
+            expected.clone(),
+            dialect,
+        )?;
+    }
+    if let Some(expected) = expect_sql {
+        let actual = migrator
+            .sql_migrate(std::slice::from_ref(&generated))
+            .map_err(|error| {
+                TestSupportError::message(format!(
+                    "{name}: failed to render generated SQL: {error}"
+                ))
+            })?;
+        assert_sql_matches(name, &actual, expected)?;
+    }
+    Ok(())
+}
+
+fn replay_with_generated(
+    name: &str,
+    migrator: &gaman::core::Migrator,
+    generated: &gaman::Migration,
+) -> Result<Schema, TestSupportError> {
+    let mut schema = replay_schema(name, migrator)?;
+    for (index, op) in generated.operations.iter().enumerate() {
+        schema.apply(op).map_err(|error| {
+            TestSupportError::message(format!(
+                "{name}: generated replay failed at operation {} ({}): {}",
+                index + 1,
+                op.type_name(),
+                error
+            ))
+        })?;
+    }
+    Ok(schema)
+}
+
+fn assert_schema_to_migration_clarifications(
+    name: &str,
+    result: Result<Option<gaman::Migration>, MigratorError>,
+    expected: &[gaman::core::Clarification],
+) -> Result<(), TestSupportError> {
+    match result {
+        Err(MigratorError::NeedsInput(actual)) => {
+            assert_clarifications_match(name, "clarifications", &actual, expected)
+        }
+        Ok(Some(migration)) => Err(TestSupportError::message(format!(
+            "{name}: expected clarifications, but generated migration '{}'",
+            migration.id
+        ))),
+        Ok(None) => Err(TestSupportError::message(format!(
+            "{name}: expected clarifications, but diff returned no changes"
+        ))),
+        Err(error) => Err(TestSupportError::message(format!(
+            "{name}: expected clarification input, but got error: {error}"
+        ))),
     }
 }
 

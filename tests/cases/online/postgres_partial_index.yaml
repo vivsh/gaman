@@ -1,0 +1,53 @@
+description: PostgreSQL migrates and inspects partial indexes
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - indexes_constraints
+  - indexes
+  - partial_indexes
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email
+              type: text
+            - name: active
+              type: boolean
+              default: "true"
+      - type: add_index
+        table_name: users
+        index:
+          name: users_active_email_idx
+          columns: [email]
+          predicate: active
+
+dialects:
+  postgres:
+    checks: [migrate, inspect]
+    expect_schema:
+      tables:
+        users:
+          name: users
+          primary_key:
+            name: users_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email
+              type: text
+            - name: active
+              type: boolean
+              default: "true"
+          indexes:
+            - name: users_active_email_idx
+              columns: [email]
+              predicate: active

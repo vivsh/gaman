@@ -1,0 +1,42 @@
+---
+description: Diff adds an index for a modeled table.
+group: diff
+features:
+- diff.diff_index_added
+- group.diff
+- kind.schema_to_migration
+- operation.add_index
+- renderer.postgres.add_index
+- renderer.postgres.create_table
+kind: schema_to_migration
+dialect: postgres
+name: add_email_index
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: email
+        type: text
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: email
+        type: text
+      indexes:
+      - columns:
+        - email
+expect_operations:
+- type: add_index
+  table_name: users
+  index:
+    name: users_email_idx
+    columns:
+    - email
+expect_sql: 'CREATE INDEX "users_email_idx" ON "users" ("email")
+
+'

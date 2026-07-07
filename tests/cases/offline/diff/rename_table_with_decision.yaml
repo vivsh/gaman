@@ -1,0 +1,44 @@
+---
+description: A rename-table decision rewrites drop/create into a rename operation.
+group: diff
+features:
+- answer.rename_to
+- diff.diff_rename_table_with_decision
+- group.diff
+- kind.schema_to_migration
+- operation.rename_table
+- renderer.postgres.create_table
+- renderer.postgres.rename_table
+kind: schema_to_migration
+dialect: postgres
+name: rename_users
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+decisions:
+- clarification_id: rename_table:users
+  answer:
+    type: rename_to
+    value: accounts
+current:
+  tables:
+    accounts:
+      name: accounts
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+expect_operations:
+- type: rename_table
+  old_name: users
+  new_name: accounts
+expect_sql: 'ALTER TABLE "users" RENAME TO "accounts"
+
+'

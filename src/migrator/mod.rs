@@ -704,11 +704,14 @@ impl Migrator {
             .map_err(|err| MigratorError::Config(err.to_string()))
     }
 
-    /// Compare the replayed schema state against the live database and return any differences.
-    /// An empty vec means the database matches migrations exactly — no drift.
-    /// Scoped to tables/columns/indexes/FKs/constraints only; views, functions,
-    /// extensions, and enums are excluded because their canonical representation
-    /// differs too much between replayed YAML and pg_catalog.
+    /// Compare migration-owned schema objects against the live database.
+    ///
+    /// `verify` replays the migration graph, inspects the live database, projects
+    /// the live schema down to objects present in the replayed state, and returns
+    /// the operations needed to repair drift for those owned objects. Live-only
+    /// objects are ignored. Opaque object bodies are intentionally stripped before
+    /// comparison; verify checks stable metadata such as signatures and trigger
+    /// wiring, not catalog-rendered source text.
     pub async fn verify(&self, schema: &str) -> Result<Vec<Operation>, MigratorError> {
         let mut executor = self.executor().await?;
         self.verify_with(executor.as_mut(), schema).await
@@ -737,6 +740,7 @@ impl Migrator {
         scope_tables_for_verify(&mut live, schema);
         scope_opaque_objects_for_verify(&mut live, schema);
         normalize_state_types(&mut live, &dialect);
+        project_live_schema_to_replay_ownership(&mut live, &replay);
 
         strip_opaque_source_for_verify(&mut replay);
         strip_opaque_source_for_verify(&mut live);
@@ -1026,6 +1030,58 @@ fn function_verify_key(function: &gaman_core::states::FunctionDef) -> String {
     }
 }
 
+fn project_live_schema_to_replay_ownership(live: &mut Schema, replay: &Schema) {
+    live.tables.retain(
+        |table_name, live_table| match replay.tables.get(table_name) {
+            Some(replay_table) => {
+                project_live_table_to_replay_ownership(live_table, replay_table);
+                true
+            }
+            None => false,
+        },
+    );
+    live.views
+        .retain(|name, _| replay.views.contains_key(name.as_str()));
+    live.functions
+        .retain(|name, _| replay.functions.contains_key(name.as_str()));
+    live.extensions
+        .retain(|name, _| replay.extensions.contains_key(name.as_str()));
+    live.enums
+        .retain(|name, _| replay.enums.contains_key(name.as_str()));
+}
+
+fn project_live_table_to_replay_ownership(
+    live: &mut gaman_core::states::Table,
+    replay: &gaman_core::states::Table,
+) {
+    live.columns
+        .retain(|column| replay.columns.iter().any(|owned| owned.name == column.name));
+    if replay.primary_key.is_none() {
+        live.primary_key = None;
+    }
+    live.foreign_keys.retain(|foreign_key| {
+        replay
+            .foreign_keys
+            .iter()
+            .any(|owned| owned.name == foreign_key.name)
+    });
+    live.indexes
+        .retain(|index| replay.indexes.iter().any(|owned| owned.name == index.name));
+    live.constraints.retain(|constraint| {
+        replay
+            .constraints
+            .iter()
+            .any(|owned| owned.name() == constraint.name())
+    });
+    live.triggers.retain(|trigger| {
+        let name = trigger.name.as_deref();
+        replay
+            .triggers
+            .iter()
+            .any(|owned| owned.name.as_deref() == name)
+    });
+}
+
 fn scope_table_references(table: &mut gaman_core::states::Table, schema: &str) {
     let prefix = format!("{schema}.");
     for fk in &mut table.foreign_keys {
@@ -1047,7 +1103,22 @@ fn normalize_state_types(state: &mut Schema, dialect: &gaman_core::dialects::Dia
         for col in table.columns.iter_mut() {
             let normalized = dialect.normalize_type(&col.col_type).to_string();
             col.col_type = normalized;
+            if let Some(default) = &mut col.default {
+                *default = normalize_default_for_compare(default, dialect);
+            }
         }
+    }
+}
+
+fn normalize_default_for_compare(default: &str, dialect: &gaman_core::dialects::Dialect) -> String {
+    match dialect {
+        gaman_core::dialects::Dialect::Postgres => default
+            .strip_suffix("::text")
+            .filter(|value| value.starts_with('\''))
+            .unwrap_or(default)
+            .to_string(),
+        #[cfg(feature = "sqlite")]
+        gaman_core::dialects::Dialect::Sqlite => default.to_string(),
     }
 }
 

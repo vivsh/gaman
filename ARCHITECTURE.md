@@ -23,14 +23,15 @@ All frontends produce the same internal `Schema` representation:
 
 - YAML and JSON schema files.
 - SQL DDL parsing.
-- Rust builders and `IntoTable` derive output.
+- Rust builders and `IntoTable` implementations from application or framework crates.
 - Live database introspection.
 - Replayed migration history.
 
 For Rust schema input, `TableBuilder` is the canonical table-construction API.
-`IntoTable` is a thin compile-time frontend that emits builder calls. Derived
+`IntoTable` is a plain trait that can be implemented manually or by external
+model crates such as Mool. Gaman does not own Rust model derive macros. Derived
 names for keys, indexes, and constraints must come from builder/core naming
-helpers, not from proc-macro-local formatting.
+helpers, not from frontend-local formatting.
 
 The internal schema is the comparison boundary. Frontends build IR; Gaman then
 prepares that IR for a selected dialect before diffing, SQL planning, live
@@ -129,8 +130,10 @@ feature, Gaman must raise a clear error instead of emitting no-op SQL.
 - The offline layer should compile for `wasm32-unknown-unknown`; browser callers
   provide schemas and migrations as strings or in-memory values.
 - Public orchestration APIs must stay storage-neutral. File-backed directories,
-  embedded migrations, in-memory buffers, and future browser-backed string
-  stores are migration-source adapters, not engine assumptions.
+  `EmbeddedMigrations` values, in-memory buffers, and future browser-backed
+  string stores are migration-source adapters, not engine assumptions.
+- Gaman does not own Rust proc macros. Framework/model crates may produce
+  Gaman-compatible `IntoTable` implementations or `EmbeddedMigrations` values.
 - `sql_migrate` is offline and renders the operation SQL live migration
   application would execute for the same migration and replay state.
 - Migration application, `inspect_db`, and the live side of `verify_db` require
@@ -152,8 +155,8 @@ feature, Gaman must raise a clear error instead of emitting no-op SQL.
 - First-class data migration operations.
 - External process invocation during migration application.
 - Lossy introspection that silently drops unsupported modeled metadata.
-- Runtime migration discovery for embedded use. Embedded migrations should be
-  compiled into the binary.
+- Compile-time migration embedding macros. Gaman keeps only the
+  `EmbeddedMigrations` struct and source adapter.
 
 ## Schema Preparation
 
@@ -421,9 +424,10 @@ specific, or future MySQL-specific syntax.
 - `OfflinePlanner`.
 
 The root `gaman` crate is the compatibility facade. Default features expose the
-native CLI and database layer. `--no-default-features --features offline`
-exposes offline APIs without compiling database drivers. `offline-sqlite`
-enables SQLite rendering without linking the live SQLite executor.
+native CLI and database layer with every currently supported live dialect:
+PostgreSQL and SQLite. `--no-default-features --features offline` exposes
+offline APIs without compiling database drivers. `offline-sqlite` enables
+SQLite rendering without linking the live SQLite executor.
 
 Native-only concerns remain outside the offline core:
 

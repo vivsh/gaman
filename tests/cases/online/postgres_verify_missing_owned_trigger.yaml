@@ -1,0 +1,48 @@
+description: PostgreSQL verify reports a missing owned trigger
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - trigger_query_objects
+  - functions_opaque
+
+migrations:
+  - id: 0001_create_trigger
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+      - type: create_function
+        function:
+          name: audit_users_fn
+          arguments: ""
+          returns: trigger
+          language: plpgsql
+          body: "BEGIN\nRETURN NEW;\nEND;"
+      - type: create_trigger
+        table_name: users
+        trigger:
+          name: users_audit_trg
+          timing: after
+          events: [insert]
+          scope: row
+          function_name: audit_users_fn
+
+mutate_sql: |
+  DROP TRIGGER users_audit_trg ON users;
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify:
+      - type: create_trigger
+        table_name: users
+        trigger:
+          name: users_audit_trg
+          timing: after
+          events: [insert]
+          scope: row
+          function_name: audit_users_fn

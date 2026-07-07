@@ -1,0 +1,56 @@
+description: SQLite verify reports owned trigger timing drift
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - trigger_query_objects
+
+migrations:
+  - id: 0001_create_trigger
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+      - type: create_table
+        table:
+          name: audit_log
+          columns:
+            - name: user_id
+              type: integer
+      - type: create_trigger
+        table_name: users
+        trigger:
+          name: users_audit_trg
+          timing: after
+          events: [insert]
+          scope: row
+          query: "INSERT INTO audit_log(user_id) VALUES (NEW.id);"
+
+mutate_sql: |
+  DROP TRIGGER users_audit_trg;
+  CREATE TRIGGER users_audit_trg
+  BEFORE INSERT ON users
+  FOR EACH ROW
+  BEGIN
+  INSERT INTO audit_log(user_id) VALUES (NEW.id);
+  END;
+
+dialects:
+  sqlite:
+    checks: [verify]
+    expect_verify:
+      - type: alter_trigger
+        table_name: users
+        old:
+          name: users_audit_trg
+          timing: before
+          events: [insert]
+          scope: row
+        new:
+          name: users_audit_trg
+          timing: after
+          events: [insert]
+          scope: row

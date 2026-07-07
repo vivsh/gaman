@@ -1,0 +1,69 @@
+description: dropped indexes and constraints stop enforcing their old rules
+features:
+  - live_migration_application
+  - indexes_constraints
+  - indexes
+  - unique_constraints
+  - check_constraints
+  - data_preservation
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email
+              type: text
+            - name: age
+              type: integer
+          indexes:
+            - name: users_age_idx
+              columns: [age]
+          constraints:
+            - kind: unique
+              name: users_email_key
+              columns: [email]
+            - kind: check
+              name: users_age_check
+              expression: age >= 0
+  - id: 0002_drop_rules
+    dependencies: [0001_create_users]
+    operations:
+      - type: drop_index
+        table_name: users
+        index:
+          name: users_age_idx
+          columns: [age]
+      - type: drop_constraint
+        table_name: users
+        constraint:
+          kind: unique
+          name: users_email_key
+          columns: [email]
+      - type: drop_constraint
+        table_name: users
+        constraint:
+          kind: check
+          name: users_age_check
+          expression: age >= 0
+
+dialects:
+  postgres:
+    checks: [migrate, data]
+    data:
+      - sql: "INSERT INTO users (id, email, age) VALUES (1, 'one@example.com', -1)"
+      - sql: "INSERT INTO users (id, email, age) VALUES (2, 'one@example.com', -2)"
+      - sql: "SELECT CAST(COUNT(*) AS text) FROM users"
+        expect: ["2"]
+  sqlite:
+    checks: [migrate, data]
+    data:
+      - sql: "INSERT INTO users (id, email, age) VALUES (1, 'one@example.com', -1)"
+      - sql: "INSERT INTO users (id, email, age) VALUES (2, 'one@example.com', -2)"
+      - sql: "SELECT CAST(COUNT(*) AS text) FROM users"
+        expect: ["2"]

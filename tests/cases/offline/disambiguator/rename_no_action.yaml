@@ -1,0 +1,46 @@
+---
+description: RenameNo keeps a column drop/add pair instead of rewriting it to a rename.
+group: disambiguator
+features:
+- answer.rename_no
+- group.disambiguator
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: replace_username
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: username
+        type: text
+        nullable: true
+decisions:
+- clarification_id: rename_col:users:username
+  answer:
+    type: rename_no
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: handle
+        type: text
+        nullable: true
+expect_operations:
+- type: drop_column
+  table_name: users
+  column:
+    name: username
+    type: text
+    nullable: true
+  cascade: false
+- type: add_column
+  table_name: users
+  column:
+    name: handle
+    type: text
+    nullable: true

@@ -1,0 +1,53 @@
+description: PostgreSQL verify accepts explicitly schema-qualified owned objects
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - schemas_namespaces
+  - composite_foreign_keys
+  - indexes_constraints
+
+migrations:
+  - id: 0001_create_schema_qualified
+    operations:
+      - type: create_table
+        table:
+          name: tenants
+          schema: "{{schema}}"
+          primary_key:
+            columns: [tenant_id, region_id]
+          columns:
+            - name: tenant_id
+              type: integer
+            - name: region_id
+              type: integer
+      - type: create_table
+        table:
+          name: accounts
+          schema: "{{schema}}"
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: tenant_id
+              type: integer
+            - name: region_id
+              type: integer
+            - name: email
+              type: text
+          foreign_keys:
+            - name: accounts_tenant_fkey
+              columns: [tenant_id, region_id]
+              to_table: "{{schema}}.tenants"
+              to_columns: [tenant_id, region_id]
+          indexes:
+            - name: accounts_email_idx
+              columns: [email]
+          constraints:
+            - kind: check
+              name: accounts_email_check
+              expression: length(email) > 3
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify: []

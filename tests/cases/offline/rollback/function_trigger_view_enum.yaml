@@ -1,0 +1,115 @@
+---
+description: Rollback SQL reverses function, trigger, view, and enum operations.
+group: rollback
+features:
+- group.rollback
+- kind.migration_to_sql
+- renderer.postgres.alter_function
+- renderer.postgres.alter_trigger
+- renderer.postgres.create_enum
+- renderer.postgres.create_function
+- renderer.postgres.create_table
+- renderer.postgres.create_view
+- renderer.postgres.rename_enum_value
+- renderer.postgres.replace_view
+- rollback.reversible
+kind: migration_to_sql
+direction: rollback
+dialect: postgres
+migrations:
+- id: 0001_create_objects
+  operations:
+  - type: create_enum
+    enum_def:
+      name: status
+      values:
+      - active
+      - archived
+  - type: create_function
+    function:
+      name: audit_user
+      arguments: ''
+      returns: trigger
+      language: plpgsql
+      body: BEGIN RETURN NEW; END
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      triggers:
+      - name: users_audit_trg
+        timing: after
+        events:
+        - insert
+        scope: row
+        function_name: audit_user
+  - type: create_view
+    view:
+      name: active_users
+      definition: SELECT id FROM users
+- id: 0002_change_objects
+  dependencies:
+  - 0001_create_objects
+  operations:
+  - type: rename_enum_value
+    enum_name: status
+    old_value: archived
+    new_value: pending
+  - type: replace_view
+    old:
+      name: active_users
+      definition: SELECT id FROM users
+    new:
+      name: active_users
+      definition: SELECT id FROM users WHERE id > 0
+  - type: alter_function
+    old:
+      name: audit_user
+      arguments: ''
+      returns: trigger
+      language: plpgsql
+      body: BEGIN RETURN NEW; END
+    new:
+      name: audit_user
+      arguments: ''
+      returns: trigger
+      language: plpgsql
+      body: BEGIN NEW.id := NEW.id; RETURN NEW; END
+  - type: alter_trigger
+    table_name: users
+    old:
+      name: users_audit_trg
+      timing: after
+      events:
+      - insert
+      scope: row
+      function_name: audit_user
+    new:
+      name: users_audit_trg
+      timing: after
+      events:
+      - insert
+      - update
+      scope: row
+      function_name: audit_user
+expect_sql: |
+  CREATE OR REPLACE TRIGGER "users_audit_trg"
+  AFTER INSERT
+  ON "users"
+  FOR EACH ROW
+  EXECUTE FUNCTION "audit_user"()
+  CREATE OR REPLACE FUNCTION "audit_user"()
+  RETURNS trigger
+  LANGUAGE plpgsql
+  AS $func$
+  BEGIN RETURN NEW; END
+  $func$
+  CREATE OR REPLACE VIEW "active_users" AS SELECT id FROM users
+  ALTER TYPE "status" RENAME VALUE 'pending' TO 'archived'
+  DROP VIEW "active_users"
+  DROP TABLE "users"
+  DROP FUNCTION "audit_user"()
+  DROP TYPE "status"

@@ -1,0 +1,67 @@
+features:
+  - id: live_migration_application
+    label: Live migration application
+  - id: idempotent_migrations
+    label: Idempotent migrate
+  - id: target_migrations
+    label: Target migrate
+  - id: rollback_migrations
+    label: Rollback migrations
+  - id: transaction_rollback
+    label: Transaction rollback
+  - id: lock_cleanup
+    label: Lock cleanup
+  - id: migration_tracking
+    label: Migration tracking
+  - id: live_inspect_verify
+    label: Live inspect / verify
+  - id: tables_columns
+    label: Tables and columns
+  - id: table_create_drop_rename
+    label: Table create/drop/rename
+  - id: column_add_drop_rename
+    label: Column add/drop/rename
+  - id: type_null_default_changes
+    label: Type/null/default changes
+  - id: generated_columns
+    label: Generated columns
+  - id: single_primary_keys
+    label: Single-column primary keys
+  - id: composite_primary_keys
+    label: Composite primary keys
+  - id: single_foreign_keys
+    label: Single-column foreign keys
+  - id: composite_foreign_keys
+    label: Composite foreign keys
+  - id: indexes
+    label: Indexes
+  - id: unique_constraints
+    label: Unique constraints
+  - id: check_constraints
+    label: Check constraints
+  - id: indexes_constraints
+    label: Indexes and constraints
+  - id: partial_indexes
+    label: Partial indexes
+  - id: schemas_namespaces
+    label: Schemas / namespaces
+  - id: extensions
+    label: Extensions
+  - id: enums
+    label: Enums
+  - id: functions_opaque
+    label: Functions
+  - id: trigger_query_objects
+    label: Triggers
+  - id: views_opaque
+    label: Views
+  - id: raw_sql_statements
+    label: Raw SQL statements
+  - id: sqlite_rebuild_planner
+    label: SQLite table rebuilds
+  - id: unsupported_feature_errors
+    label: Unsupported-feature errors
+  - id: ownership_scoped_verify
+    label: Ownership-scoped verify
+  - id: data_preservation
+    label: Data preservation

@@ -1,0 +1,30 @@
+---
+description: PostgreSQL parser and lowering preserve partial index predicates.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.postgres.parser_postgres_create_partial_index
+kind: sql_parse
+parser_dialect: postgres
+sql: |
+  CREATE TABLE users (email text, active boolean);
+  CREATE INDEX users_active_email_idx ON users (email) WHERE active = true;
+expect_parse: ok
+expect_lowering: ok
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: email
+        type: text
+        nullable: true
+      - name: active
+        type: boolean
+        nullable: true
+      indexes:
+      - name: users_active_email_idx
+        columns:
+        - email
+        predicate: active = true

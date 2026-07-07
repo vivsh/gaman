@@ -1,0 +1,37 @@
+---
+description: Changing a column type emits a structured type-cast clarification.
+group: disambiguator
+features:
+- clarification.type_cast
+- group.disambiguator
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: alter_age_type
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: age
+        type: text
+        nullable: true
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: age
+        type: integer
+        nullable: true
+expect_clarifications:
+- id: typecast:users:age
+  severity: warning
+  kind:
+    type: type_cast
+    table: users
+    column: age
+    from: text
+    to: integer

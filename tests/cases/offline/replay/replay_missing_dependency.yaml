@@ -1,0 +1,22 @@
+---
+description: Replay rejects a migration whose dependency is not present.
+group: replay
+features:
+- group.replay
+- kind.migration_to_replay
+- replay.replay_missing_dependency
+kind: migration_to_replay
+dialect: postgres
+migrations:
+- id: 0002_add_posts
+  dependencies:
+  - 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: posts
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+expect_error: unknown dependency

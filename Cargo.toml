@@ -1,17 +1,17 @@
 [workspace]
-members = [".", "gaman-core", "gaman-macros"]
+members = [".", "gaman-core"]
 resolver = "2"
 
 [package]
 name = "gaman"
-version = "0.3.19"
+version = "0.3.20"
 edition = "2024"
 description = "Offline-first schema migration engine for SQLx-backed databases"
 license = "MIT"
 repository = "https://github.com/vivsh/gaman"
 homepage = "https://github.com/vivsh/gaman"
 readme = "README.md"
-keywords = ["migrations", "postgresql", "database", "schema", "cli"]
+keywords = ["migrations", "postgresql", "sqlite", "schema", "cli"]
 categories = ["database", "command-line-utilities"]
 exclude = [".env", "output.txt", "tests/", ".github/"]
 
@@ -20,30 +20,10 @@ name = "gaman"
 path = "src/main.rs"
 required-features = ["cli"]
 
-[[example]]
-name = "embedded_migrate"
-path = "examples/embedded_migrate.rs"
-required-features = ["cli"]
-
-[[example]]
-name = "embedded_structs"
-path = "examples/embedded_structs.rs"
-required-features = ["cli"]
-
-[[example]]
-name = "embedded_yaml"
-path = "examples/embedded_yaml.rs"
-required-features = ["cli"]
-
-[[test]]
-name = "derive_into_table"
-path = "tests/derive_into_table.rs"
-required-features = ["macros"]
-
-[[test]]
-name = "embedded_migrations"
-path = "tests/embedded_migrations.rs"
-required-features = ["cli"]
+[[bin]]
+name = "gaman-support-matrix"
+path = "src/bin/gaman-support-matrix.rs"
+required-features = ["native"]
 
 [[test]]
 name = "offline"
@@ -52,16 +32,15 @@ harness = false
 required-features = ["native"]
 
 [[test]]
-name = "postgres"
-path = "tests/postgres.rs"
-harness = false
-required-features = ["postgres"]
+name = "offline_coverage"
+path = "tests/offline_coverage.rs"
+required-features = ["native"]
 
 [[test]]
-name = "sqlite"
-path = "tests/sqlite.rs"
+name = "online"
+path = "tests/online.rs"
 harness = false
-required-features = ["sqlite"]
+required-features = ["db"]
 
 [[test]]
 name = "sqlite_dialect"
@@ -74,14 +53,14 @@ path = "tests/yaml_adapter.rs"
 required-features = ["native"]
 
 [features]
-default = ["native", "cli", "postgres", "macros"]
+default = ["native", "cli", "all-supported-dialects"]
+all-supported-dialects = ["postgres", "sqlite"]
 offline = ["dep:gaman-core"]
 offline-sqlite = ["offline", "gaman-core/sqlite"]
-macros = ["dep:gaman-macros"]
 native = ["dep:gaman-core", "dep:serde", "dep:serde_yaml", "dep:thiserror"]
 fs = ["native", "gaman-core/fs"]
 db = ["native", "dep:sqlx", "dep:tokio"]
-cli = ["fs", "db", "dep:argh", "dep:dotenvy", "macros"]
+cli = ["fs", "db", "dep:argh", "dep:dotenvy"]
 postgres = ["db", "sqlx/postgres"]
 sqlite = ["db", "sqlx/sqlite", "gaman-core/sqlite"]
 mysql = ["db", "sqlx/mysql"]
@@ -89,8 +68,7 @@ mysql = ["db", "sqlx/mysql"]
 [dependencies]
 argh = { version = "0.1.19", optional = true }
 dotenvy = { version = "0.15.7", optional = true }
-gaman-core = { version = "0.3.19", path = "gaman-core", optional = true, default-features = false }
-gaman-macros = { version = "0.3.19", path = "gaman-macros", optional = true }
+gaman-core = { version = "0.3.20", path = "gaman-core", optional = true, default-features = false }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-native-tls"], optional = true }
 tokio = { version = "1", features = ["rt", "macros"], optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
@@ -98,6 +76,5 @@ serde_yaml = { version = "0.9.34", optional = true }
 thiserror = { version = "2.0.18", optional = true }
 
 [dev-dependencies]
-proptest = "1"
 sqlparser = "0.62.0"
 tempfile = "3"

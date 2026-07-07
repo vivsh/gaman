@@ -1,0 +1,23 @@
+---
+description: Schema preparation rejects two unnamed indexes that derive the same name.
+group: validation
+features:
+- group.validation
+- kind.schema_to_migration
+- validation.validation_generated_name_collision_error
+kind: schema_to_migration
+dialect: postgres
+name: duplicate_generated_index
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: email
+        type: text
+      indexes:
+      - columns:
+        - email
+      - columns:
+        - email
+expect_error: duplicate index

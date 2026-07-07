@@ -1,0 +1,32 @@
+---
+description: Formatting-only function body changes do not create migration churn.
+group: diff
+features:
+- diff.diff_function_formatting_noop
+- group.diff
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: no_function_churn
+migrations:
+- id: 0001_create_function
+  operations:
+  - type: create_function
+    function:
+      name: add_one
+      arguments: integer
+      returns: integer
+      language: sql
+      body: SELECT $1 + 1
+current:
+  tables: {}
+  functions:
+    add_one:
+      name: add_one
+      arguments: integer
+      returns: integer
+      language: sql
+      body: |
+        SELECT
+          $1 + 1
+expect_no_changes: true

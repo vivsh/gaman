@@ -1,0 +1,27 @@
+---
+description: Render raw SQL statements exactly as authored.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- operation.statement
+- renderer.postgres.statement
+- sql_rendering.migration_to_sql_raw_statement
+kind: migration_to_sql
+dialect: postgres
+migrations:
+- id: 0001_raw_statement
+  operations:
+  - type: statement
+    up: |
+      UPDATE users
+      SET active = true
+      WHERE archived = false;
+    down: |
+      UPDATE users
+      SET active = false
+      WHERE archived = false;
+expect_sql: |
+  UPDATE users
+  SET active = true
+  WHERE archived = false;

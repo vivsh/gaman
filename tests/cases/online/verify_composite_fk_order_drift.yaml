@@ -1,0 +1,91 @@
+description: verify reports composite foreign key column order drift
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - composite_foreign_keys
+
+migrations:
+  - id: 0001_create_accounts
+    operations:
+      - type: create_table
+        table:
+          name: tenants
+          primary_key:
+            columns: [tenant_id, region_id]
+          columns:
+            - name: tenant_id
+              type: integer
+            - name: region_id
+              type: integer
+          constraints:
+            - kind: unique
+              name: tenants_region_tenant_key
+              columns: [region_id, tenant_id]
+      - type: create_table
+        table:
+          name: accounts
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: tenant_id
+              type: integer
+            - name: region_id
+              type: integer
+          foreign_keys:
+            - columns: [tenant_id, region_id]
+              to_table: tenants
+              to_columns: [tenant_id, region_id]
+
+dialects:
+  postgres:
+    checks: [verify]
+    mutate_sql: |
+      ALTER TABLE accounts DROP CONSTRAINT accounts_tenant_id_region_id_fkey;
+      ALTER TABLE accounts ADD CONSTRAINT accounts_tenant_id_region_id_fkey
+        FOREIGN KEY (tenant_id, region_id) REFERENCES tenants(region_id, tenant_id);
+    expect_verify:
+      - type: drop_foreign_key
+        table_name: accounts
+        foreign_key:
+          name: accounts_tenant_id_region_id_fkey
+          columns: [tenant_id, region_id]
+          to_table: tenants
+          to_columns: [region_id, tenant_id]
+      - type: add_foreign_key
+        table_name: accounts
+        foreign_key:
+          name: accounts_tenant_id_region_id_fkey
+          columns: [tenant_id, region_id]
+          to_table: tenants
+          to_columns: [tenant_id, region_id]
+  sqlite:
+    checks: [verify]
+    mutate_sql: |
+      PRAGMA foreign_keys = OFF;
+      CREATE TABLE accounts_rebuild (
+        id integer PRIMARY KEY,
+        tenant_id integer NOT NULL,
+        region_id integer NOT NULL,
+        CONSTRAINT accounts_tenant_id_region_id_fkey FOREIGN KEY (tenant_id, region_id) REFERENCES tenants (region_id, tenant_id)
+      );
+      INSERT INTO accounts_rebuild (id, tenant_id, region_id)
+        SELECT id, tenant_id, region_id FROM accounts;
+      DROP TABLE accounts;
+      ALTER TABLE accounts_rebuild RENAME TO accounts;
+      PRAGMA foreign_keys = ON;
+    expect_verify:
+      - type: drop_foreign_key
+        table_name: accounts
+        foreign_key:
+          name: accounts_tenant_id_region_id_fkey
+          columns: [tenant_id, region_id]
+          to_table: tenants
+          to_columns: [region_id, tenant_id]
+      - type: add_foreign_key
+        table_name: accounts
+        foreign_key:
+          name: accounts_tenant_id_region_id_fkey
+          columns: [tenant_id, region_id]
+          to_table: tenants
+          to_columns: [tenant_id, region_id]

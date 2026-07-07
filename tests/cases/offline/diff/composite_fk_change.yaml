@@ -1,0 +1,94 @@
+---
+description: Changing composite foreign-key columns emits drop and add operations.
+group: diff
+features:
+- diff.diff_composite_fk_change
+- group.diff
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: change_composite_fk
+migrations:
+- id: 0001_create_schema
+  operations:
+  - type: create_table
+    table:
+      name: tenants
+      primary_key:
+        columns:
+        - tenant_id
+        - region_id
+      columns:
+      - name: tenant_id
+        type: integer
+      - name: region_id
+        type: integer
+  - type: create_table
+    table:
+      name: accounts
+      columns:
+      - name: tenant_id
+        type: integer
+      - name: region_id
+        type: integer
+      foreign_keys:
+      - name: accounts_tenant_region_fkey
+        columns:
+        - tenant_id
+        - region_id
+        to_table: tenants
+        to_columns:
+        - tenant_id
+        - region_id
+current:
+  tables:
+    tenants:
+      name: tenants
+      primary_key:
+        columns:
+        - tenant_id
+        - region_id
+      columns:
+      - name: tenant_id
+        type: integer
+      - name: region_id
+        type: integer
+    accounts:
+      name: accounts
+      columns:
+      - name: tenant_id
+        type: integer
+      - name: region_id
+        type: integer
+      foreign_keys:
+      - name: accounts_tenant_region_fkey
+        columns:
+        - region_id
+        - tenant_id
+        to_table: tenants
+        to_columns:
+        - tenant_id
+        - region_id
+expect_operations:
+- type: drop_foreign_key
+  table_name: accounts
+  foreign_key:
+    name: accounts_tenant_region_fkey
+    columns:
+    - tenant_id
+    - region_id
+    to_table: tenants
+    to_columns:
+    - tenant_id
+    - region_id
+- type: add_foreign_key
+  table_name: accounts
+  foreign_key:
+    name: accounts_tenant_region_fkey
+    columns:
+    - region_id
+    - tenant_id
+    to_table: tenants
+    to_columns:
+    - tenant_id
+    - region_id

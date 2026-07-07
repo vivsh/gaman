@@ -1,0 +1,35 @@
+---
+description: Tightening nullability emits a structured not-null-change clarification.
+group: disambiguator
+features:
+- clarification.not_null_change
+- group.disambiguator
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: require_nickname
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: nickname
+        type: text
+        nullable: true
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: nickname
+        type: text
+        nullable: false
+expect_clarifications:
+- id: notnull_change:users:nickname
+  severity: fatal
+  kind:
+    type: not_null_change
+    table: users
+    column: nickname

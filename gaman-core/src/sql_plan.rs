@@ -5,7 +5,10 @@ use thiserror::Error;
 use crate::dialects::{Dialect, DialectError};
 use crate::graphs::{GraphError, MigrationGraph};
 use crate::migrations::Migration;
-use crate::states::{ReplayError, Schema, SchemaValidationError};
+use crate::operations::Operation;
+use crate::states::{
+    Constraint, ForeignKey, Index, ReplayError, Schema, SchemaValidationError, Table, TriggerDef,
+};
 
 #[derive(Debug, Error)]
 pub enum SqlPlanError {
@@ -305,12 +308,260 @@ pub fn render_migration_sql(
             source,
         })?;
 
+    let normalized = normalized_migration_for_rendering(migration, &target);
     dialect
-        .plan_migration_sql(migration, &start)
+        .plan_migration_sql(&normalized, &start)
         .map_err(|source| SqlPlanError::Dialect {
             migration: migration.id.clone(),
             source,
         })
+}
+
+fn normalized_migration_for_rendering(migration: &Migration, target: &Schema) -> Migration {
+    let mut normalized = migration.clone();
+    normalized.operations = migration
+        .operations
+        .iter()
+        .map(|operation| normalized_operation_for_rendering(operation, target))
+        .collect();
+    normalized
+}
+
+fn normalized_operation_for_rendering(operation: &Operation, target: &Schema) -> Operation {
+    match operation {
+        Operation::CreateTable { table } => table_for(target, &table.qualified_name())
+            .map(|target_table| Operation::CreateTable {
+                table: normalized_create_table_for_rendering(table, target_table),
+            })
+            .unwrap_or_else(|| operation.clone()),
+        Operation::AddForeignKey {
+            table_name,
+            foreign_key,
+        } if foreign_key.name.is_empty() => table_for(target, table_name)
+            .and_then(|table| matching_foreign_key(table, foreign_key))
+            .map(|foreign_key| Operation::AddForeignKey {
+                table_name: table_name.clone(),
+                foreign_key,
+            })
+            .unwrap_or_else(|| operation.clone()),
+        Operation::AddIndex {
+            table_name,
+            index,
+            concurrent,
+        } if index.name.is_empty() => table_for(target, table_name)
+            .and_then(|table| matching_index(table, index))
+            .map(|index| Operation::AddIndex {
+                table_name: table_name.clone(),
+                index,
+                concurrent: *concurrent,
+            })
+            .unwrap_or_else(|| operation.clone()),
+        Operation::AddConstraint {
+            table_name,
+            constraint,
+        } if constraint.name().is_empty() => table_for(target, table_name)
+            .and_then(|table| matching_constraint(table, constraint))
+            .map(|constraint| Operation::AddConstraint {
+                table_name: table_name.clone(),
+                constraint,
+            })
+            .unwrap_or_else(|| operation.clone()),
+        Operation::CreateTrigger {
+            table_name,
+            trigger,
+        } if trigger.name.is_none() => table_for(target, table_name)
+            .and_then(|table| normalized_trigger(table, trigger))
+            .map(|trigger| Operation::CreateTrigger {
+                table_name: table_name.clone(),
+                trigger,
+            })
+            .unwrap_or_else(|| operation.clone()),
+        _ => operation.clone(),
+    }
+}
+
+fn normalized_create_table_for_rendering(table: &Table, target_table: &Table) -> Table {
+    let mut normalized = table.clone();
+    normalized.columns = normalized_columns_for_create_table(table, target_table);
+    normalized.primary_key = normalized_primary_key(table, target_table);
+    normalized.foreign_keys = normalized_foreign_keys_for_create_table(table, target_table);
+    normalized.indexes = normalized_indexes_for_create_table(table, target_table);
+    normalized.constraints = normalized_constraints_for_create_table(table, target_table);
+    normalized.triggers = normalized_triggers_for_create_table(table, target_table);
+    normalized
+}
+
+fn normalized_columns_for_create_table(
+    table: &Table,
+    target_table: &Table,
+) -> Vec<crate::states::Column> {
+    table
+        .columns
+        .iter()
+        .map(|column| {
+            target_table
+                .columns
+                .iter()
+                .find(|candidate| candidate.name == column.name)
+                .cloned()
+                .unwrap_or_else(|| column.clone())
+        })
+        .collect()
+}
+
+fn normalized_foreign_keys_for_create_table(
+    table: &Table,
+    target_table: &Table,
+) -> Vec<ForeignKey> {
+    table
+        .foreign_keys
+        .iter()
+        .map(|foreign_key| {
+            if foreign_key.name.is_empty() {
+                matching_foreign_key(target_table, foreign_key)
+                    .unwrap_or_else(|| foreign_key.clone())
+            } else {
+                foreign_key.clone()
+            }
+        })
+        .collect()
+}
+
+fn normalized_indexes_for_create_table(table: &Table, target_table: &Table) -> Vec<Index> {
+    table
+        .indexes
+        .iter()
+        .map(|index| {
+            if index.name.is_empty() {
+                matching_index(target_table, index).unwrap_or_else(|| index.clone())
+            } else {
+                index.clone()
+            }
+        })
+        .collect()
+}
+
+fn normalized_constraints_for_create_table(table: &Table, target_table: &Table) -> Vec<Constraint> {
+    table
+        .constraints
+        .iter()
+        .map(|constraint| {
+            if constraint.name().is_empty() {
+                matching_constraint(target_table, constraint).unwrap_or_else(|| constraint.clone())
+            } else {
+                constraint.clone()
+            }
+        })
+        .collect()
+}
+
+fn normalized_triggers_for_create_table(table: &Table, target_table: &Table) -> Vec<TriggerDef> {
+    table
+        .triggers
+        .iter()
+        .map(|trigger| {
+            if trigger.name.is_none() {
+                normalized_trigger(target_table, trigger).unwrap_or_else(|| trigger.clone())
+            } else {
+                trigger.clone()
+            }
+        })
+        .collect()
+}
+
+fn normalized_primary_key(
+    table: &Table,
+    target_table: &Table,
+) -> Option<crate::states::PrimaryKey> {
+    match (&table.primary_key, &target_table.primary_key) {
+        (Some(pk), Some(target_pk)) if pk.name.is_empty() => Some(target_pk.clone()),
+        (None, Some(target_pk)) if table.columns.iter().any(|column| column.primary_key) => {
+            Some(target_pk.clone())
+        }
+        (pk, _) => pk.clone(),
+    }
+}
+
+fn matching_foreign_key(table: &Table, foreign_key: &ForeignKey) -> Option<ForeignKey> {
+    table
+        .foreign_keys
+        .iter()
+        .find(|candidate| {
+            candidate.columns == foreign_key.columns
+                && candidate.to_table == foreign_key.to_table
+                && candidate.to_columns == foreign_key.to_columns
+        })
+        .cloned()
+}
+
+fn matching_index(table: &Table, index: &Index) -> Option<Index> {
+    table
+        .indexes
+        .iter()
+        .find(|candidate| {
+            candidate.columns == index.columns
+                && candidate.unique == index.unique
+                && candidate.predicate == index.predicate
+        })
+        .cloned()
+}
+
+fn matching_constraint(table: &Table, constraint: &Constraint) -> Option<Constraint> {
+    table
+        .constraints
+        .iter()
+        .find(|candidate| same_unnamed_constraint_shape(candidate, constraint))
+        .cloned()
+}
+
+fn table_for<'a>(schema: &'a Schema, table_name: &str) -> Option<&'a Table> {
+    schema.tables.get(table_name).or_else(|| {
+        schema
+            .tables
+            .values()
+            .find(|table| table.name == table_name || table.qualified_name() == table_name)
+    })
+}
+
+fn same_unnamed_constraint_shape(left: &Constraint, right: &Constraint) -> bool {
+    match (left, right) {
+        (
+            Constraint::Unique {
+                columns: left_columns,
+                ..
+            },
+            Constraint::Unique {
+                columns: right_columns,
+                ..
+            },
+        ) => left_columns == right_columns,
+        (
+            Constraint::Check {
+                expression: left_expression,
+                ..
+            },
+            Constraint::Check {
+                expression: right_expression,
+                ..
+            },
+        ) => left_expression == right_expression,
+        _ => false,
+    }
+}
+
+fn normalized_trigger(table: &Table, trigger: &TriggerDef) -> Option<TriggerDef> {
+    table
+        .triggers
+        .iter()
+        .find(|candidate| {
+            candidate.timing == trigger.timing
+                && candidate.events == trigger.events
+                && candidate.scope == trigger.scope
+                && candidate.when == trigger.when
+                && candidate.query == trigger.query
+                && candidate.function_name == trigger.function_name
+        })
+        .cloned()
 }
 
 pub fn rollback_migrations(migrations: &[Migration]) -> Result<Vec<Migration>, SqlPlanError> {
@@ -364,7 +615,7 @@ fn validate_unique_requested_ids(migrations: &[Migration]) -> Result<(), SqlPlan
 mod tests {
     use super::*;
     use crate::operations::Operation;
-    use crate::states::{Column, Table};
+    use crate::states::{Column, Table, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming};
 
     fn column(name: &str, col_type: &str) -> Column {
         Column {
@@ -648,6 +899,65 @@ mod tests {
         assert!(sql.contains("ALTER TABLE \"users\" ADD COLUMN \"email\" text"));
     }
 
+    /// Verifies render planning fills derived composite primary-key names before SQL rendering.
+    #[test]
+    fn render_migration_normalizes_unnamed_composite_primary_key() {
+        let mut tenant_id = column("tenant_id", "integer");
+        tenant_id.primary_key = true;
+        let mut region_id = column("region_id", "integer");
+        region_id.primary_key = true;
+        let mut tenants = table("tenants", &[]);
+        tenants.columns = vec![tenant_id, region_id];
+        let migration = migration(
+            "0001_create_tenants",
+            &[],
+            vec![Operation::CreateTable { table: tenants }],
+        );
+        let renderer = SqlPlanRenderer::new(Dialect::Postgres, vec![migration.clone()]).unwrap();
+        let sql = renderer.render_migrations(&[migration]).unwrap().join("\n");
+
+        assert!(sql.contains("CONSTRAINT \"tenants_pkey\" PRIMARY KEY"));
+        assert!(!sql.contains("CONSTRAINT \"\""));
+    }
+
+    /// Verifies render planning fills derived query-trigger names before SQL rendering.
+    #[test]
+    fn render_migration_normalizes_query_trigger_name() {
+        let create_users = Operation::CreateTable {
+            table: table("users", &["id"]),
+        };
+        let create_audit_log = Operation::CreateTable {
+            table: table("audit_log", &["user_id"]),
+        };
+        let trigger = TriggerDef {
+            name: None,
+            timing: TriggerTiming::After,
+            events: vec![TriggerEvent::Insert],
+            scope: TriggerScope::Row,
+            function_name: None,
+            when: None,
+            query: Some("INSERT INTO audit_log(user_id) VALUES (NEW.id);".to_string()),
+            language: None,
+        };
+        let migration = migration(
+            "0001_create_trigger",
+            &[],
+            vec![
+                create_users,
+                create_audit_log,
+                Operation::CreateTrigger {
+                    table_name: "users".to_string(),
+                    trigger,
+                },
+            ],
+        );
+        let renderer = SqlPlanRenderer::new(Dialect::Postgres, vec![migration.clone()]).unwrap();
+        let sql = renderer.render_migrations(&[migration]).unwrap().join("\n");
+
+        assert!(sql.contains("CREATE OR REPLACE FUNCTION \"users_insert_after_trg_fn\""));
+        assert!(sql.contains("CREATE OR REPLACE TRIGGER \"users_insert_after_trg\""));
+    }
+
     #[cfg(feature = "sqlite")]
     #[test]
     fn sqlite_rebuild_forward_starts_from_dependency_replay_state() {
@@ -747,5 +1057,142 @@ mod tests {
         assert!(sql.contains("CREATE TABLE \"__gaman_rebuild_users\""));
         assert!(sql.contains("INSERT INTO \"__gaman_rebuild_users\" (\"id\")"));
         assert!(!sql.contains("\"age\""));
+    }
+
+    mod property_sql_plan {
+        use super::*;
+        use std::collections::BTreeSet;
+
+        use proptest::prelude::*;
+
+        fn arb_identifier() -> impl Strategy<Value = String> {
+            prop_oneof![
+                "[a-z][a-z0-9_]{0,10}".prop_map(|value| value),
+                "[A-Z][A-Za-z0-9_]{0,10}".prop_map(|value| value),
+                "[a-z]{1,8}_[0-9]{1,3}".prop_map(|value| value),
+                Just("user".to_string()),
+                Just("order".to_string()),
+                Just("very_long_identifier_name_for_property_tests".to_string()),
+            ]
+        }
+
+        fn arb_column_names() -> impl Strategy<Value = Vec<String>> {
+            proptest::collection::vec("[a-z][a-z0-9_]{0,8}", 1..5).prop_map(|names| {
+                let mut seen = BTreeSet::new();
+                names
+                    .into_iter()
+                    .filter(|name| seen.insert(name.clone()))
+                    .collect::<Vec<_>>()
+            })
+        }
+
+        fn arb_table() -> impl Strategy<Value = Table> {
+            (arb_identifier(), arb_column_names())
+                .prop_filter("table must have columns", |(_, columns)| {
+                    !columns.is_empty()
+                })
+                .prop_map(|(name, columns)| {
+                    table(
+                        &name,
+                        &columns.iter().map(String::as_str).collect::<Vec<_>>(),
+                    )
+                })
+        }
+
+        fn create_table_migration(table: Table) -> Migration {
+            migration(
+                "0001_create_table",
+                &[],
+                vec![Operation::CreateTable { table }],
+            )
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            #[test]
+            #[doc = "PostgreSQL SQL planning renders generated valid create-table migrations."]
+            fn postgres_create_table_rendering_succeeds(table in arb_table()) {
+                let migration = create_table_migration(table);
+                let renderer = SqlPlanRenderer::new(Dialect::Postgres, vec![migration.clone()])
+                    .expect("renderer should build");
+                let statements = renderer
+                    .render_migrations(&[migration])
+                    .expect("valid create-table migration should render");
+                prop_assert!(!statements.is_empty());
+            }
+
+            #[test]
+            #[doc = "Statement rendering preserves authored SQL exactly."]
+            fn statement_rendering_preserves_authored_sql(value in any::<u16>()) {
+                let sql = format!("SELECT {value}");
+                let migration = migration(
+                    "0001_statement",
+                    &[],
+                    vec![Operation::Statement {
+                        up: sql.clone(),
+                        down: Some(format!("SELECT {}", value.saturating_add(1))),
+                    }],
+                );
+                let renderer = SqlPlanRenderer::new(Dialect::Postgres, vec![migration.clone()])
+                    .expect("renderer should build");
+                let statements = renderer
+                    .render_migrations(&[migration])
+                    .expect("statement migration should render");
+                prop_assert_eq!(statements, vec![sql]);
+            }
+
+            #[test]
+            #[doc = "Reversible generated migrations restore the original schema after rollback operations are applied."]
+            fn reversible_migration_round_trips_schema(table in arb_table()) {
+                let migration = create_table_migration(table);
+                let mut state = Schema::default();
+                apply_migration_to_state(&mut state, &migration)
+                    .expect("forward migration should apply");
+                let rollback = rollback_migrations(std::slice::from_ref(&migration))
+                    .expect("create table migration should be reversible");
+                for migration in &rollback {
+                    apply_migration_to_state(&mut state, migration)
+                        .expect("rollback migration should apply");
+                }
+                prop_assert_eq!(state, Schema::default());
+            }
+
+            #[test]
+            #[doc = "Rollback planning rejects non-reversible statement migrations before rendering SQL."]
+            fn non_reversible_statement_rollback_fails_before_output(value in any::<u16>()) {
+                let migration = migration(
+                    "0001_statement",
+                    &[],
+                    vec![Operation::Statement {
+                        up: format!("SELECT {value}"),
+                        down: None,
+                    }],
+                );
+                let renderer = SqlPlanRenderer::new(Dialect::Postgres, vec![migration.clone()])
+                    .expect("renderer should build");
+                let error = renderer
+                    .render_rollback_migrations(&[migration])
+                    .expect_err("rollback should fail");
+                prop_assert!(
+                    matches!(error, SqlPlanError::NonReversible { .. }),
+                    "expected NonReversible error, got {:?}",
+                    error
+                );
+            }
+
+            #[cfg(feature = "sqlite")]
+            #[test]
+            #[doc = "SQLite rebuild-only operations continue to require migration context from the planner."]
+            fn sqlite_rebuild_operations_require_context(column_name in "[a-z][a-z0-9_]{0,8}") {
+                let column = column(&column_name, "text");
+                let result = Dialect::Sqlite.operation_to_sql(&Operation::DropColumn {
+                    table_name: "users".to_string(),
+                    column,
+                    cascade: false,
+                });
+                prop_assert!(result.is_err());
+            }
+        }
     }
 }

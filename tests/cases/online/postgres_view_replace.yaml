@@ -1,0 +1,55 @@
+description: PostgreSQL view replacement updates the inspected view definition
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - views_opaque
+
+migrations:
+  - id: 0001_create_view
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: active
+              type: boolean
+              default: "true"
+      - type: create_view
+        view:
+          name: visible_users
+          definition: "SELECT id FROM users"
+  - id: 0002_replace_view
+    dependencies: [0001_create_view]
+    operations:
+      - type: replace_view
+        old:
+          name: visible_users
+          definition: "SELECT id FROM users"
+        new:
+          name: visible_users
+          definition: "SELECT id FROM users WHERE active"
+
+dialects:
+  postgres:
+    checks: [migrate, inspect]
+    expect_schema:
+      tables:
+        users:
+          name: users
+          primary_key:
+            name: users_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: active
+              type: boolean
+              default: "true"
+      views:
+        visible_users:
+          name: visible_users
+          definition: "SELECT users.id\n   FROM users\n  WHERE users.active;"

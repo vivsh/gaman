@@ -1,6 +1,8 @@
 use super::*;
 use crate::operations::Operation;
-use crate::states::{Column, EnumDef, ForeignKey, Index, PrimaryKey, Table};
+use crate::states::{
+    Column, Constraint, EnumDef, ExtensionDef, ForeignKey, Index, PrimaryKey, Table, ViewDef,
+};
 
 fn col(name: &str, t: &str) -> Column {
     Column {
@@ -67,6 +69,63 @@ fn quote_ident_spaces_and_hyphens() {
 fn quote_ident_embedded_double_quote() {
     let result = quote_ident("it\"s");
     assert_eq!(result, "\"it\"\"s\"");
+}
+
+mod property_identifiers {
+    use super::*;
+
+    use proptest::prelude::*;
+
+    fn arb_identifier() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "[a-z][a-z0-9_]{0,10}".prop_map(|value| value),
+            "[A-Z][A-Za-z0-9_]{0,10}".prop_map(|value| value),
+            "[a-z]{1,8}_[0-9]{1,3}".prop_map(|value| value),
+            (Just("quoted_"), "[a-z]{1,6}")
+                .prop_map(|(prefix, suffix)| format!("{prefix}\"{suffix}")),
+            Just("user".to_string()),
+            Just("order".to_string()),
+            Just("very_long_identifier_name_for_property_tests".to_string()),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        #[doc = "PostgreSQL identifier quoting wraps generated identifiers and doubles embedded quotes."]
+        fn quote_ident_escapes_generated_identifiers(identifier in arb_identifier()) {
+            let escaped = identifier.replace('"', "\"\"");
+            prop_assert_eq!(quote_ident(&identifier), format!("\"{escaped}\""));
+        }
+
+        #[test]
+        #[doc = "Schema-qualified PostgreSQL create-table rendering quotes schema and table separately."]
+        fn schema_qualified_create_table_quotes_parts_separately(
+            schema in arb_identifier(),
+            table_name in arb_identifier(),
+        ) {
+            let mut table = empty_table(&table_name);
+            table.schema = Some(schema.clone());
+            table.columns.push(col("id", "integer"));
+            let sql = operation_to_sql(&Operation::CreateTable { table })
+                .expect("create table should render")
+                .join("\n");
+            let qualified = format!(
+                "{}.{}",
+                quote_ident(&schema),
+                quote_ident(&table_name)
+            );
+            let incorrectly_joined = quote_ident(&format!("{}.{}", schema, table_name));
+            prop_assert!(
+                sql.contains(&qualified),
+                "SQL did not contain {}: {}",
+                qualified,
+                sql
+            );
+            prop_assert!(!sql.contains(&incorrectly_joined));
+        }
+    }
 }
 
 #[test]
@@ -382,6 +441,85 @@ fn add_unique_index_sql() {
     );
 }
 
+/// Renders partial and concurrent indexes as one exact PostgreSQL statement.
+#[test]
+fn add_partial_concurrent_index_sql() {
+    let index = Index {
+        name: "users_email_active_idx".to_string(),
+        columns: vec!["email".to_string()],
+        unique: false,
+        predicate: Some("deleted_at IS NULL".to_string()),
+    };
+
+    let sql = operation_to_sql(&Operation::AddIndex {
+        table_name: "app.users".to_string(),
+        index,
+        concurrent: true,
+    })
+    .unwrap();
+
+    assert_eq!(
+        sql,
+        vec![
+            "CREATE INDEX CONCURRENTLY \"users_email_active_idx\" ON \"app\".\"users\" (\"email\") WHERE deleted_at IS NULL"
+        ]
+    );
+}
+
+/// Renders table-level unique constraints exactly.
+#[test]
+fn add_unique_constraint_sql() {
+    let sql = operation_to_sql(&Operation::AddConstraint {
+        table_name: "users".to_string(),
+        constraint: Constraint::Unique {
+            name: "users_email_key".to_string(),
+            columns: vec!["email".to_string()],
+        },
+    })
+    .unwrap();
+
+    assert_eq!(
+        sql,
+        vec!["ALTER TABLE \"users\" ADD CONSTRAINT \"users_email_key\" UNIQUE (\"email\")"]
+    );
+}
+
+/// Renders table-level check constraints exactly.
+#[test]
+fn add_check_constraint_sql() {
+    let sql = operation_to_sql(&Operation::AddConstraint {
+        table_name: "users".to_string(),
+        constraint: Constraint::Check {
+            name: "users_age_check".to_string(),
+            expression: "age >= 0".to_string(),
+        },
+    })
+    .unwrap();
+
+    assert_eq!(
+        sql,
+        vec!["ALTER TABLE \"users\" ADD CONSTRAINT \"users_age_check\" CHECK (age >= 0)"]
+    );
+}
+
+/// Drops named constraints exactly.
+#[test]
+fn drop_constraint_sql() {
+    let sql = operation_to_sql(&Operation::DropConstraint {
+        table_name: "users".to_string(),
+        constraint: Constraint::Check {
+            name: "users_age_check".to_string(),
+            expression: "age >= 0".to_string(),
+        },
+    })
+    .unwrap();
+
+    assert_eq!(
+        sql,
+        vec!["ALTER TABLE \"users\" DROP CONSTRAINT \"users_age_check\""]
+    );
+}
+
 #[test]
 fn drop_index_sql() {
     let index = Index {
@@ -417,6 +555,76 @@ fn drop_index_sql_schema_qualifies_index_from_table_schema() {
         sql,
         vec!["DROP INDEX CONCURRENTLY \"app\".\"users_email_idx\""]
     );
+}
+
+/// Renders raw SQL statements exactly as authored.
+#[test]
+fn statement_sql_is_preserved() {
+    let sql = operation_to_sql(&Operation::Statement {
+        up: "UPDATE users SET active = true".to_string(),
+        down: Some("UPDATE users SET active = false".to_string()),
+    })
+    .unwrap();
+
+    assert_eq!(sql, vec!["UPDATE users SET active = true"]);
+}
+
+/// Renders extension creation with optional schema and version.
+#[test]
+fn create_extension_sql() {
+    let sql = operation_to_sql(&Operation::CreateExtension {
+        extension: ExtensionDef {
+            name: "pgcrypto".to_string(),
+            schema: Some("extensions".to_string()),
+            version: Some("1.3".to_string()),
+        },
+    })
+    .unwrap();
+
+    assert_eq!(
+        sql,
+        vec!["CREATE EXTENSION IF NOT EXISTS \"pgcrypto\" SCHEMA \"extensions\" VERSION '1.3'"]
+    );
+}
+
+/// Renders extension drops exactly.
+#[test]
+fn drop_extension_sql() {
+    let sql = operation_to_sql(&Operation::DropExtension {
+        extension: ExtensionDef {
+            name: "pgcrypto".to_string(),
+            schema: None,
+            version: None,
+        },
+    })
+    .unwrap();
+
+    assert_eq!(sql, vec!["DROP EXTENSION \"pgcrypto\""]);
+}
+
+/// Renders enum creation with schema qualification and quoted labels.
+#[test]
+fn create_enum_sql() {
+    let mut enum_def = enum_def(&["draft", "published"]);
+    enum_def.schema = Some("app".to_string());
+
+    let sql = operation_to_sql(&Operation::CreateEnum { enum_def }).unwrap();
+
+    assert_eq!(
+        sql,
+        vec!["CREATE TYPE \"app\".\"status\" AS ENUM ('draft', 'published')"]
+    );
+}
+
+/// Renders enum drops with schema qualification.
+#[test]
+fn drop_enum_sql() {
+    let mut enum_def = enum_def(&["draft", "published"]);
+    enum_def.schema = Some("app".to_string());
+
+    let sql = operation_to_sql(&Operation::DropEnum { enum_def }).unwrap();
+
+    assert_eq!(sql, vec!["DROP TYPE \"app\".\"status\""]);
 }
 
 #[test]
@@ -564,6 +772,27 @@ fn drop_function_includes_args() {
     assert_eq!(sql, vec!["DROP FUNCTION \"process\"(user_id integer)"]);
 }
 
+/// Renders function creation exactly for non-default volatility and security settings.
+#[test]
+fn create_function_exact_sql() {
+    let mut f = basic_function("get_config");
+    f.schema = Some("app".to_string());
+    f.arguments = "key text".to_string();
+    f.returns = "text".to_string();
+    f.body = "SELECT key".to_string();
+    f.volatility = crate::states::Volatility::Stable;
+    f.security_definer = true;
+
+    let sql = operation_to_sql(&Operation::CreateFunction { function: f }).unwrap();
+
+    assert_eq!(
+        sql,
+        vec![
+            "CREATE OR REPLACE FUNCTION \"app\".\"get_config\"(key text)\nRETURNS text\nLANGUAGE sql\nSTABLE\nSECURITY DEFINER\nAS $func$\nSELECT key\n$func$"
+        ]
+    );
+}
+
 #[test]
 fn custom_schema_function_sql_is_qualified() {
     let mut f = basic_function("process");
@@ -625,6 +854,25 @@ fn alter_function_different_args_preserves_schema() {
 
     assert_eq!(sql[0], "DROP FUNCTION \"app\".\"process\"()");
     assert!(sql[1].starts_with("CREATE OR REPLACE FUNCTION \"app\".\"process\"("));
+}
+
+/// Renders function alteration with changed signature as drop plus create.
+#[test]
+fn alter_function_different_args_exact_sql() {
+    let old = basic_function("process");
+    let mut new = basic_function("process");
+    new.arguments = "user_id integer".to_string();
+    new.body = "SELECT user_id".to_string();
+
+    let sql = operation_to_sql(&Operation::AlterFunction { old, new }).unwrap();
+
+    assert_eq!(
+        sql,
+        vec![
+            "DROP FUNCTION \"process\"()",
+            "CREATE OR REPLACE FUNCTION \"process\"(user_id integer)\nRETURNS void\nLANGUAGE sql\nAS $func$\nSELECT user_id\n$func$",
+        ]
+    );
 }
 
 /// CreateTrigger SQL has correct BEFORE/AFTER and FOR EACH ROW.
@@ -697,6 +945,28 @@ fn create_query_trigger_sql_generates_row_function() {
         sql[1].contains("EXECUTE FUNCTION \"audit_trg_fn\"()"),
         "got: {}",
         sql[1]
+    );
+}
+
+/// Renders query triggers as a generated function plus trigger SQL.
+#[test]
+fn create_query_trigger_exact_sql() {
+    let mut trigger = basic_trigger("audit_trg");
+    trigger.function_name = None;
+    trigger.query = Some("INSERT INTO audit_log(user_id) VALUES (NEW.id);".to_string());
+
+    let sql = operation_to_sql(&Operation::CreateTrigger {
+        table_name: "users".to_string(),
+        trigger,
+    })
+    .unwrap();
+
+    assert_eq!(
+        sql,
+        vec![
+            "CREATE OR REPLACE FUNCTION \"audit_trg_fn\"()\nRETURNS trigger\nLANGUAGE plpgsql\nAS $func$\nBEGIN\nINSERT INTO audit_log(user_id) VALUES (NEW.id);\nRETURN NEW;\nEND;\n$func$",
+            "CREATE OR REPLACE TRIGGER \"audit_trg\"\nAFTER INSERT\nON \"users\"\nFOR EACH ROW\nEXECUTE FUNCTION \"audit_trg_fn\"()",
+        ]
     );
 }
 
@@ -792,4 +1062,63 @@ fn drop_trigger_sql() {
     })
     .unwrap();
     assert_eq!(sql, vec!["DROP TRIGGER \"audit_trg\" ON \"users\""]);
+}
+
+/// Renders view creation exactly.
+#[test]
+fn create_view_sql() {
+    let sql = operation_to_sql(&Operation::CreateView {
+        view: ViewDef {
+            name: "active_users".to_string(),
+            schema: Some("app".to_string()),
+            definition: "SELECT id FROM app.users WHERE active".to_string(),
+        },
+    })
+    .unwrap();
+
+    assert_eq!(
+        sql,
+        vec![
+            "CREATE OR REPLACE VIEW \"app\".\"active_users\" AS SELECT id FROM app.users WHERE active"
+        ]
+    );
+}
+
+/// Renders view drops exactly.
+#[test]
+fn drop_view_sql() {
+    let sql = operation_to_sql(&Operation::DropView {
+        view: ViewDef {
+            name: "active_users".to_string(),
+            schema: Some("app".to_string()),
+            definition: String::new(),
+        },
+    })
+    .unwrap();
+
+    assert_eq!(sql, vec!["DROP VIEW \"app\".\"active_users\""]);
+}
+
+/// Renders view replacement as CREATE OR REPLACE of the target view.
+#[test]
+fn replace_view_sql() {
+    let old = ViewDef {
+        name: "active_users".to_string(),
+        schema: Some("app".to_string()),
+        definition: "SELECT id FROM app.users".to_string(),
+    };
+    let new = ViewDef {
+        name: "active_users".to_string(),
+        schema: Some("app".to_string()),
+        definition: "SELECT id FROM app.users WHERE active".to_string(),
+    };
+
+    let sql = operation_to_sql(&Operation::ReplaceView { old, new }).unwrap();
+
+    assert_eq!(
+        sql,
+        vec![
+            "CREATE OR REPLACE VIEW \"app\".\"active_users\" AS SELECT id FROM app.users WHERE active"
+        ]
+    );
 }

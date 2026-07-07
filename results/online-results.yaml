@@ -1,0 +1,2257 @@
+features:
+  check_constraints:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: drop_index_constraint_shared
+        description: dropped indexes and constraints stop enforcing their old rules
+        checks:
+        - migrate
+        - data
+      - case: indexes_constraints_shared
+        description: indexes unique constraints and check constraints enforce live data rules
+        checks:
+        - migrate
+        - data
+      - case: verify_detects_missing_index_constraint_fk
+        description: verify reports missing owned indexes constraints and foreign keys
+        checks:
+        - verify
+    sqlite:
+      status: success
+      evidence:
+      - case: drop_index_constraint_shared
+        description: dropped indexes and constraints stop enforcing their old rules
+        checks:
+        - migrate
+        - data
+      - case: indexes_constraints_shared
+        description: indexes unique constraints and check constraints enforce live data rules
+        checks:
+        - migrate
+        - data
+      - case: verify_sqlite_detects_missing_index_constraint_fk
+        description: SQLite verify reports missing owned indexes constraints and foreign keys
+        checks:
+        - verify
+  column_add_drop_rename:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: basic_migrate_inspect
+        description: migrate a simple users table and inspect the resulting schema
+        checks:
+        - migrate
+        - inspect
+      - case: default_nullability_add_column
+        description: add non-null columns with defaults in live migrations
+        checks:
+        - migrate
+        - inspect
+      - case: drop_column_shared
+        description: dropping a column preserves remaining rows and inspected schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: rename_table_column
+        description: live migrations rename tables and columns while preserving data
+        checks:
+        - migrate
+        - inspect
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: basic_migrate_inspect
+        description: migrate a simple users table and inspect the resulting schema
+        checks:
+        - migrate
+        - inspect
+      - case: default_nullability_add_column
+        description: add non-null columns with defaults in live migrations
+        checks:
+        - migrate
+        - inspect
+      - case: drop_column_shared
+        description: dropping a column preserves remaining rows and inspected schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: rename_table_column
+        description: live migrations rename tables and columns while preserving data
+        checks:
+        - migrate
+        - inspect
+        - data
+  composite_foreign_keys:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: composite_keys
+        description: migrate and inspect composite primary and foreign keys
+        checks:
+        - migrate
+        - inspect
+      - case: fk_cycle_add_constraints
+        description: cyclic foreign keys can be added after table creation
+        checks:
+        - migrate
+        - data
+      - case: linear_chain_order
+        description: linear migration chains apply in dependency order
+        checks:
+        - migrate
+        - data
+      - case: postgres_verify_schema_qualified_no_drift
+        description: PostgreSQL verify accepts explicitly schema-qualified owned objects
+        checks:
+        - verify
+      - case: self_referencing_fk
+        description: self-referencing foreign keys are enforced
+        checks:
+        - migrate
+        - data
+      - case: verify_composite_fk_order_drift
+        description: verify reports composite foreign key column order drift
+        checks:
+        - verify
+      - case: verify_ignores_untracked_index_constraint_fk
+        description: verify ignores live-only indexes constraints and foreign keys on owned tables
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
+    sqlite:
+      status: success
+      evidence:
+      - case: composite_keys
+        description: migrate and inspect composite primary and foreign keys
+        checks:
+        - migrate
+        - inspect
+      - case: linear_chain_order
+        description: linear migration chains apply in dependency order
+        checks:
+        - migrate
+        - data
+      - case: self_referencing_fk
+        description: self-referencing foreign keys are enforced
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_drop_fk_unique_check
+        description: SQLite rebuild drops foreign key unique and check constraints
+        checks:
+        - migrate
+        - data
+      - case: verify_composite_fk_order_drift
+        description: verify reports composite foreign key column order drift
+        checks:
+        - verify
+      - case: verify_ignores_untracked_index_constraint_fk
+        description: verify ignores live-only indexes constraints and foreign keys on owned tables
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
+      - case: verify_sqlite_detects_missing_index_constraint_fk
+        description: SQLite verify reports missing owned indexes constraints and foreign keys
+        checks:
+        - verify
+  composite_primary_keys:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: composite_keys
+        description: migrate and inspect composite primary and foreign keys
+        checks:
+        - migrate
+        - inspect
+      - case: verify_composite_pk_missing
+        description: verify reports missing owned composite primary keys as manual drift
+        checks:
+        - verify
+        - error
+      - case: verify_composite_pk_order_drift
+        description: verify reports composite primary key order drift as manual drift
+        checks:
+        - verify
+        - error
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
+    sqlite:
+      status: success
+      evidence:
+      - case: composite_keys
+        description: migrate and inspect composite primary and foreign keys
+        checks:
+        - migrate
+        - inspect
+      - case: verify_composite_pk_missing
+        description: verify reports missing owned composite primary keys as manual drift
+        checks:
+        - verify
+        - error
+      - case: verify_composite_pk_order_drift
+        description: verify reports composite primary key order drift as manual drift
+        checks:
+        - verify
+        - error
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
+  data_preservation:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: alter_type_with_cast
+        description: alter column type with an explicit cast preserves converted values
+        checks:
+        - migrate
+        - data
+      - case: default_change_and_nullable
+        description: default and nullability changes apply and preserve existing rows
+        checks:
+        - migrate
+        - data
+      - case: drop_column_shared
+        description: dropping a column preserves remaining rows and inspected schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: drop_index_constraint_shared
+        description: dropped indexes and constraints stop enforcing their old rules
+        checks:
+        - migrate
+        - data
+      - case: fk_cycle_add_constraints
+        description: cyclic foreign keys can be added after table creation
+        checks:
+        - migrate
+        - data
+      - case: generated_column_create_shared
+        description: generated columns compute values during live migration
+        checks:
+        - migrate
+        - data
+      - case: indexes_constraints_shared
+        description: indexes unique constraints and check constraints enforce live data rules
+        checks:
+        - migrate
+        - data
+      - case: lifecycle_idempotent_records
+        description: repeated migrate is idempotent and records applied migrations
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
+      - case: lifecycle_rollback_to_target
+        description: migrate target rollback removes later migration effects and records
+        checks:
+        - rollback
+        - migration_records
+        - inspect
+        - data
+      - case: linear_chain_order
+        description: linear migration chains apply in dependency order
+        checks:
+        - migrate
+        - data
+      - case: postgres_function_name_trigger
+        description: PostgreSQL function-name triggers execute and inspect stable wiring
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: raw_statement_data
+        description: raw SQL statements run during live migration and can seed deterministic data
+        checks:
+        - migrate
+        - data
+      - case: rename_table_column
+        description: live migrations rename tables and columns while preserving data
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: self_referencing_fk
+        description: self-referencing foreign keys are enforced
+        checks:
+        - migrate
+        - data
+      - case: single_fk_enforcement
+        description: single-column foreign keys are enforced by live databases
+        checks:
+        - migrate
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: alter_type_with_cast
+        description: alter column type with an explicit cast preserves converted values
+        checks:
+        - migrate
+        - data
+      - case: default_change_and_nullable
+        description: default and nullability changes apply and preserve existing rows
+        checks:
+        - migrate
+        - data
+      - case: drop_column_shared
+        description: dropping a column preserves remaining rows and inspected schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: drop_index_constraint_shared
+        description: dropped indexes and constraints stop enforcing their old rules
+        checks:
+        - migrate
+        - data
+      - case: generated_column_create_shared
+        description: generated columns compute values during live migration
+        checks:
+        - migrate
+        - data
+      - case: indexes_constraints_shared
+        description: indexes unique constraints and check constraints enforce live data rules
+        checks:
+        - migrate
+        - data
+      - case: lifecycle_idempotent_records
+        description: repeated migrate is idempotent and records applied migrations
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
+      - case: lifecycle_rollback_to_target
+        description: migrate target rollback removes later migration effects and records
+        checks:
+        - rollback
+        - migration_records
+        - inspect
+        - data
+      - case: linear_chain_order
+        description: linear migration chains apply in dependency order
+        checks:
+        - migrate
+        - data
+      - case: raw_statement_data
+        description: raw SQL statements run during live migration and can seed deterministic data
+        checks:
+        - migrate
+        - data
+      - case: rename_table_column
+        description: live migrations rename tables and columns while preserving data
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: self_referencing_fk
+        description: self-referencing foreign keys are enforced
+        checks:
+        - migrate
+        - data
+      - case: single_fk_enforcement
+        description: single-column foreign keys are enforced by live databases
+        checks:
+        - migrate
+        - data
+      - case: sqlite_generated_column
+        description: SQLite generated columns survive live migration and compute from preserved data
+        checks:
+        - migrate
+        - data
+      - case: sqlite_index_view_trigger
+        description: SQLite migrates indexes views and query triggers
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_alter_type_cast
+        description: SQLite rebuild alter type with cast preserves converted values
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_default_nullability
+        description: SQLite rebuild changes default and nullability while preserving rows
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_drop_column
+        description: SQLite rebuild drops a column while preserving data and remaining schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: sqlite_rebuild_drop_fk_unique_check
+        description: SQLite rebuild drops foreign key unique and check constraints
+        checks:
+        - migrate
+        - data
+  enums:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: postgres_enum_append_inspect
+        description: PostgreSQL enum append preserves ordered labels during inspect
+        checks:
+        - migrate
+        - inspect
+      - case: postgres_opaque_objects
+        description: PostgreSQL migrates and inspects enums functions views and query triggers
+        checks:
+        - migrate
+        - inspect
+      - case: postgres_verify_enum_drift
+        description: PostgreSQL verify reports owned enum label order drift
+        checks:
+        - verify
+      - case: postgres_verify_live_only_enum_ignored
+        description: PostgreSQL verify ignores live-only enums
+        checks:
+        - verify
+      - case: postgres_verify_missing_enum
+        description: PostgreSQL verify reports missing owned enums
+        checks:
+        - verify
+    sqlite:
+      status: unimplemented
+      reason: dialect section missing
+  extensions:
+    mysql:
+      status: unimplemented
+      reason: no online evidence recorded
+    postgres:
+      status: unimplemented
+      reason: no online evidence recorded
+    sqlite:
+      status: unimplemented
+      reason: no online evidence recorded
+  functions_opaque:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: postgres_function_name_trigger
+        description: PostgreSQL function-name triggers execute and inspect stable wiring
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: postgres_opaque_objects
+        description: PostgreSQL migrates and inspects enums functions views and query triggers
+        checks:
+        - migrate
+        - inspect
+      - case: postgres_verify_function_body_ignored
+        description: PostgreSQL verify ignores body-only function drift
+        checks:
+        - verify
+      - case: postgres_verify_function_signature_drift
+        description: PostgreSQL verify detects missing owned function signatures
+        checks:
+        - verify
+      - case: postgres_verify_ignores_untracked_trigger
+        description: PostgreSQL verify ignores a live-only trigger on an owned table
+        checks:
+        - verify
+      - case: postgres_verify_missing_owned_trigger
+        description: PostgreSQL verify reports a missing owned trigger
+        checks:
+        - verify
+      - case: postgres_verify_trigger_metadata_drift
+        description: PostgreSQL verify reports owned trigger wiring drift
+        checks:
+        - verify
+    sqlite:
+      status: unimplemented
+      reason: dialect section missing
+  generated_columns:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: generated_column_create_shared
+        description: generated columns compute values during live migration
+        checks:
+        - migrate
+        - data
+      - case: verify_generated_column_expression_drift
+        description: verify reports owned generated column expression drift
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
+    sqlite:
+      status: success
+      evidence:
+      - case: generated_column_create_shared
+        description: generated columns compute values during live migration
+        checks:
+        - migrate
+        - data
+      - case: sqlite_generated_column
+        description: SQLite generated columns survive live migration and compute from preserved data
+        checks:
+        - migrate
+        - data
+      - case: verify_generated_column_expression_drift
+        description: verify reports owned generated column expression drift
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
+  idempotent_migrations:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: lifecycle_idempotent_records
+        description: repeated migrate is idempotent and records applied migrations
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: lifecycle_idempotent_records
+        description: repeated migrate is idempotent and records applied migrations
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
+  indexes:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: drop_index_constraint_shared
+        description: dropped indexes and constraints stop enforcing their old rules
+        checks:
+        - migrate
+        - data
+      - case: indexes_constraints_shared
+        description: indexes unique constraints and check constraints enforce live data rules
+        checks:
+        - migrate
+        - data
+      - case: postgres_partial_index
+        description: PostgreSQL migrates and inspects partial indexes
+        checks:
+        - migrate
+        - inspect
+      - case: verify_detects_missing_index_constraint_fk
+        description: verify reports missing owned indexes constraints and foreign keys
+        checks:
+        - verify
+    sqlite:
+      status: success
+      evidence:
+      - case: drop_index_constraint_shared
+        description: dropped indexes and constraints stop enforcing their old rules
+        checks:
+        - migrate
+        - data
+      - case: indexes_constraints_shared
+        description: indexes unique constraints and check constraints enforce live data rules
+        checks:
+        - migrate
+        - data
+      - case: sqlite_index_view_trigger
+        description: SQLite migrates indexes views and query triggers
+        checks:
+        - migrate
+        - data
+      - case: verify_sqlite_detects_missing_index_constraint_fk
+        description: SQLite verify reports missing owned indexes constraints and foreign keys
+        checks:
+        - verify
+  indexes_constraints:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: drop_index_constraint_shared
+        description: dropped indexes and constraints stop enforcing their old rules
+        checks:
+        - migrate
+        - data
+      - case: indexes_constraints_shared
+        description: indexes unique constraints and check constraints enforce live data rules
+        checks:
+        - migrate
+        - data
+      - case: postgres_partial_index
+        description: PostgreSQL migrates and inspects partial indexes
+        checks:
+        - migrate
+        - inspect
+      - case: postgres_verify_schema_qualified_no_drift
+        description: PostgreSQL verify accepts explicitly schema-qualified owned objects
+        checks:
+        - verify
+      - case: verify_detects_missing_index_constraint_fk
+        description: verify reports missing owned indexes constraints and foreign keys
+        checks:
+        - verify
+      - case: verify_ignores_untracked_index_constraint_fk
+        description: verify ignores live-only indexes constraints and foreign keys on owned tables
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
+    sqlite:
+      status: success
+      evidence:
+      - case: drop_index_constraint_shared
+        description: dropped indexes and constraints stop enforcing their old rules
+        checks:
+        - migrate
+        - data
+      - case: indexes_constraints_shared
+        description: indexes unique constraints and check constraints enforce live data rules
+        checks:
+        - migrate
+        - data
+      - case: sqlite_index_view_trigger
+        description: SQLite migrates indexes views and query triggers
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_constraints
+        description: SQLite rebuild adds unique and check constraints that reject invalid data
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_drop_fk_unique_check
+        description: SQLite rebuild drops foreign key unique and check constraints
+        checks:
+        - migrate
+        - data
+      - case: verify_ignores_untracked_index_constraint_fk
+        description: verify ignores live-only indexes constraints and foreign keys on owned tables
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
+      - case: verify_sqlite_detects_missing_index_constraint_fk
+        description: SQLite verify reports missing owned indexes constraints and foreign keys
+        checks:
+        - verify
+  live_inspect_verify:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: basic_migrate_inspect
+        description: migrate a simple users table and inspect the resulting schema
+        checks:
+        - migrate
+        - inspect
+      - case: composite_keys
+        description: migrate and inspect composite primary and foreign keys
+        checks:
+        - migrate
+        - inspect
+      - case: drop_column_shared
+        description: dropping a column preserves remaining rows and inspected schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: empty_migration
+        description: empty migrations apply without changing inspected schema
+        checks:
+        - migrate
+        - inspect
+      - case: linear_chain_order
+        description: linear migration chains apply in dependency order
+        checks:
+        - migrate
+        - data
+      - case: postgres_enum_append_inspect
+        description: PostgreSQL enum append preserves ordered labels during inspect
+        checks:
+        - migrate
+        - inspect
+      - case: postgres_function_name_trigger
+        description: PostgreSQL function-name triggers execute and inspect stable wiring
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: postgres_opaque_objects
+        description: PostgreSQL migrates and inspects enums functions views and query triggers
+        checks:
+        - migrate
+        - inspect
+      - case: postgres_partial_index
+        description: PostgreSQL migrates and inspects partial indexes
+        checks:
+        - migrate
+        - inspect
+      - case: postgres_verify_enum_drift
+        description: PostgreSQL verify reports owned enum label order drift
+        checks:
+        - verify
+      - case: postgres_verify_function_body_ignored
+        description: PostgreSQL verify ignores body-only function drift
+        checks:
+        - verify
+      - case: postgres_verify_function_signature_drift
+        description: PostgreSQL verify detects missing owned function signatures
+        checks:
+        - verify
+      - case: postgres_verify_ignores_untracked_trigger
+        description: PostgreSQL verify ignores a live-only trigger on an owned table
+        checks:
+        - verify
+      - case: postgres_verify_live_only_enum_ignored
+        description: PostgreSQL verify ignores live-only enums
+        checks:
+        - verify
+      - case: postgres_verify_missing_enum
+        description: PostgreSQL verify reports missing owned enums
+        checks:
+        - verify
+      - case: postgres_verify_missing_owned_trigger
+        description: PostgreSQL verify reports a missing owned trigger
+        checks:
+        - verify
+      - case: postgres_verify_schema_qualified_no_drift
+        description: PostgreSQL verify accepts explicitly schema-qualified owned objects
+        checks:
+        - verify
+      - case: postgres_verify_trigger_metadata_drift
+        description: PostgreSQL verify reports owned trigger wiring drift
+        checks:
+        - verify
+      - case: postgres_view_replace
+        description: PostgreSQL view replacement updates the inspected view definition
+        checks:
+        - migrate
+        - inspect
+      - case: rename_table_column
+        description: live migrations rename tables and columns while preserving data
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: verify_composite_fk_order_drift
+        description: verify reports composite foreign key column order drift
+        checks:
+        - verify
+      - case: verify_composite_pk_missing
+        description: verify reports missing owned composite primary keys as manual drift
+        checks:
+        - verify
+        - error
+      - case: verify_composite_pk_order_drift
+        description: verify reports composite primary key order drift as manual drift
+        checks:
+        - verify
+        - error
+      - case: verify_detects_changed_column_metadata
+        description: verify reports changed metadata for owned columns
+        checks:
+        - verify
+      - case: verify_detects_missing_index_constraint_fk
+        description: verify reports missing owned indexes constraints and foreign keys
+        checks:
+        - verify
+      - case: verify_generated_column_expression_drift
+        description: verify reports owned generated column expression drift
+        checks:
+        - verify
+      - case: verify_ignores_untracked_column
+        description: verify ignores a live-only column on an owned table
+        checks:
+        - verify
+      - case: verify_ignores_untracked_index_constraint_fk
+        description: verify ignores live-only indexes constraints and foreign keys on owned tables
+        checks:
+        - verify
+      - case: verify_ignores_untracked_table
+        description: verify ignores a live-only table outside migration ownership
+        checks:
+        - verify
+      - case: verify_live_only_view_ignored
+        description: verify ignores live-only views
+        checks:
+        - verify
+      - case: verify_missing_owned_column
+        description: verify reports a missing owned column
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
+      - case: verify_view_body_only_ignored
+        description: verify ignores body-only view definition drift
+        checks:
+        - verify
+      - case: verify_view_missing_owned
+        description: verify reports missing owned views
+        checks:
+        - verify
+    sqlite:
+      status: success
+      evidence:
+      - case: basic_migrate_inspect
+        description: migrate a simple users table and inspect the resulting schema
+        checks:
+        - migrate
+        - inspect
+      - case: composite_keys
+        description: migrate and inspect composite primary and foreign keys
+        checks:
+        - migrate
+        - inspect
+      - case: drop_column_shared
+        description: dropping a column preserves remaining rows and inspected schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: empty_migration
+        description: empty migrations apply without changing inspected schema
+        checks:
+        - migrate
+        - inspect
+      - case: linear_chain_order
+        description: linear migration chains apply in dependency order
+        checks:
+        - migrate
+        - data
+      - case: rename_table_column
+        description: live migrations rename tables and columns while preserving data
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: sqlite_rebuild_drop_column
+        description: SQLite rebuild drops a column while preserving data and remaining schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: sqlite_verify_trigger_metadata_drift
+        description: SQLite verify reports owned trigger timing drift
+        checks:
+        - verify
+      - case: verify_composite_fk_order_drift
+        description: verify reports composite foreign key column order drift
+        checks:
+        - verify
+      - case: verify_composite_pk_missing
+        description: verify reports missing owned composite primary keys as manual drift
+        checks:
+        - verify
+        - error
+      - case: verify_composite_pk_order_drift
+        description: verify reports composite primary key order drift as manual drift
+        checks:
+        - verify
+        - error
+      - case: verify_generated_column_expression_drift
+        description: verify reports owned generated column expression drift
+        checks:
+        - verify
+      - case: verify_ignores_untracked_column
+        description: verify ignores a live-only column on an owned table
+        checks:
+        - verify
+      - case: verify_ignores_untracked_index_constraint_fk
+        description: verify ignores live-only indexes constraints and foreign keys on owned tables
+        checks:
+        - verify
+      - case: verify_ignores_untracked_table
+        description: verify ignores a live-only table outside migration ownership
+        checks:
+        - verify
+      - case: verify_live_only_view_ignored
+        description: verify ignores live-only views
+        checks:
+        - verify
+      - case: verify_missing_owned_column
+        description: verify reports a missing owned column
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
+      - case: verify_sqlite_detects_missing_index_constraint_fk
+        description: SQLite verify reports missing owned indexes constraints and foreign keys
+        checks:
+        - verify
+      - case: verify_view_body_only_ignored
+        description: verify ignores body-only view definition drift
+        checks:
+        - verify
+      - case: verify_view_missing_owned
+        description: verify reports missing owned views
+        checks:
+        - verify
+  live_migration_application:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: alter_type_with_cast
+        description: alter column type with an explicit cast preserves converted values
+        checks:
+        - migrate
+        - data
+      - case: basic_migrate_inspect
+        description: migrate a simple users table and inspect the resulting schema
+        checks:
+        - migrate
+        - inspect
+      - case: composite_keys
+        description: migrate and inspect composite primary and foreign keys
+        checks:
+        - migrate
+        - inspect
+      - case: default_change_and_nullable
+        description: default and nullability changes apply and preserve existing rows
+        checks:
+        - migrate
+        - data
+      - case: default_nullability_add_column
+        description: add non-null columns with defaults in live migrations
+        checks:
+        - migrate
+        - inspect
+      - case: drop_column_shared
+        description: dropping a column preserves remaining rows and inspected schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: drop_index_constraint_shared
+        description: dropped indexes and constraints stop enforcing their old rules
+        checks:
+        - migrate
+        - data
+      - case: empty_migration
+        description: empty migrations apply without changing inspected schema
+        checks:
+        - migrate
+        - inspect
+      - case: fk_cycle_add_constraints
+        description: cyclic foreign keys can be added after table creation
+        checks:
+        - migrate
+        - data
+      - case: generated_column_create_shared
+        description: generated columns compute values during live migration
+        checks:
+        - migrate
+        - data
+      - case: indexes_constraints_shared
+        description: indexes unique constraints and check constraints enforce live data rules
+        checks:
+        - migrate
+        - data
+      - case: lifecycle_atomic_failure_rolls_back
+        description: atomic migration failure rolls back SQL and does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_atomic_false_partial_failure
+        description: non-atomic migration failure preserves earlier statements but does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_idempotent_records
+        description: repeated migrate is idempotent and records applied migrations
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
+      - case: lifecycle_rollback_to_target
+        description: migrate target rollback removes later migration effects and records
+        checks:
+        - rollback
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_target_migrate
+        description: target migrate applies only migrations through the requested target
+        checks:
+        - migrate_to
+        - migration_records
+        - data
+      - case: linear_chain_order
+        description: linear migration chains apply in dependency order
+        checks:
+        - migrate
+        - data
+      - case: postgres_enum_append_inspect
+        description: PostgreSQL enum append preserves ordered labels during inspect
+        checks:
+        - migrate
+        - inspect
+      - case: postgres_function_name_trigger
+        description: PostgreSQL function-name triggers execute and inspect stable wiring
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: postgres_lock_cleanup_after_failure
+        description: PostgreSQL releases the advisory migration lock after a failed migration
+        checks:
+        - migrate
+        - error
+        - lock_behavior
+      - case: postgres_opaque_objects
+        description: PostgreSQL migrates and inspects enums functions views and query triggers
+        checks:
+        - migrate
+        - inspect
+      - case: postgres_partial_index
+        description: PostgreSQL migrates and inspects partial indexes
+        checks:
+        - migrate
+        - inspect
+      - case: postgres_view_replace
+        description: PostgreSQL view replacement updates the inspected view definition
+        checks:
+        - migrate
+        - inspect
+      - case: raw_statement_data
+        description: raw SQL statements run during live migration and can seed deterministic data
+        checks:
+        - migrate
+        - data
+      - case: rename_table_column
+        description: live migrations rename tables and columns while preserving data
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: self_referencing_fk
+        description: self-referencing foreign keys are enforced
+        checks:
+        - migrate
+        - data
+      - case: single_fk_enforcement
+        description: single-column foreign keys are enforced by live databases
+        checks:
+        - migrate
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: alter_type_with_cast
+        description: alter column type with an explicit cast preserves converted values
+        checks:
+        - migrate
+        - data
+      - case: basic_migrate_inspect
+        description: migrate a simple users table and inspect the resulting schema
+        checks:
+        - migrate
+        - inspect
+      - case: composite_keys
+        description: migrate and inspect composite primary and foreign keys
+        checks:
+        - migrate
+        - inspect
+      - case: default_change_and_nullable
+        description: default and nullability changes apply and preserve existing rows
+        checks:
+        - migrate
+        - data
+      - case: default_nullability_add_column
+        description: add non-null columns with defaults in live migrations
+        checks:
+        - migrate
+        - inspect
+      - case: drop_column_shared
+        description: dropping a column preserves remaining rows and inspected schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: drop_index_constraint_shared
+        description: dropped indexes and constraints stop enforcing their old rules
+        checks:
+        - migrate
+        - data
+      - case: empty_migration
+        description: empty migrations apply without changing inspected schema
+        checks:
+        - migrate
+        - inspect
+      - case: generated_column_create_shared
+        description: generated columns compute values during live migration
+        checks:
+        - migrate
+        - data
+      - case: indexes_constraints_shared
+        description: indexes unique constraints and check constraints enforce live data rules
+        checks:
+        - migrate
+        - data
+      - case: lifecycle_atomic_failure_rolls_back
+        description: atomic migration failure rolls back SQL and does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_atomic_false_partial_failure
+        description: non-atomic migration failure preserves earlier statements but does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_idempotent_records
+        description: repeated migrate is idempotent and records applied migrations
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
+      - case: lifecycle_rollback_to_target
+        description: migrate target rollback removes later migration effects and records
+        checks:
+        - rollback
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_target_migrate
+        description: target migrate applies only migrations through the requested target
+        checks:
+        - migrate_to
+        - migration_records
+        - data
+      - case: linear_chain_order
+        description: linear migration chains apply in dependency order
+        checks:
+        - migrate
+        - data
+      - case: raw_statement_data
+        description: raw SQL statements run during live migration and can seed deterministic data
+        checks:
+        - migrate
+        - data
+      - case: rename_table_column
+        description: live migrations rename tables and columns while preserving data
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: self_referencing_fk
+        description: self-referencing foreign keys are enforced
+        checks:
+        - migrate
+        - data
+      - case: single_fk_enforcement
+        description: single-column foreign keys are enforced by live databases
+        checks:
+        - migrate
+        - data
+      - case: sqlite_generated_column
+        description: SQLite generated columns survive live migration and compute from preserved data
+        checks:
+        - migrate
+        - data
+      - case: sqlite_index_view_trigger
+        description: SQLite migrates indexes views and query triggers
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_alter_type_cast
+        description: SQLite rebuild alter type with cast preserves converted values
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_constraints
+        description: SQLite rebuild adds unique and check constraints that reject invalid data
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_default_nullability
+        description: SQLite rebuild changes default and nullability while preserving rows
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_drop_column
+        description: SQLite rebuild drops a column while preserving data and remaining schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: sqlite_rebuild_drop_fk_unique_check
+        description: SQLite rebuild drops foreign key unique and check constraints
+        checks:
+        - migrate
+        - data
+  lock_cleanup:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: postgres_lock_cleanup_after_failure
+        description: PostgreSQL releases the advisory migration lock after a failed migration
+        checks:
+        - migrate
+        - error
+        - lock_behavior
+    sqlite:
+      status: unimplemented
+      reason: dialect section missing
+  migration_tracking:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: lifecycle_atomic_failure_rolls_back
+        description: atomic migration failure rolls back SQL and does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_atomic_false_partial_failure
+        description: non-atomic migration failure preserves earlier statements but does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_idempotent_records
+        description: repeated migrate is idempotent and records applied migrations
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
+      - case: lifecycle_rollback_to_target
+        description: migrate target rollback removes later migration effects and records
+        checks:
+        - rollback
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_target_migrate
+        description: target migrate applies only migrations through the requested target
+        checks:
+        - migrate_to
+        - migration_records
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: lifecycle_atomic_failure_rolls_back
+        description: atomic migration failure rolls back SQL and does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_atomic_false_partial_failure
+        description: non-atomic migration failure preserves earlier statements but does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_idempotent_records
+        description: repeated migrate is idempotent and records applied migrations
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
+      - case: lifecycle_rollback_to_target
+        description: migrate target rollback removes later migration effects and records
+        checks:
+        - rollback
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_target_migrate
+        description: target migrate applies only migrations through the requested target
+        checks:
+        - migrate_to
+        - migration_records
+        - data
+  ownership_scoped_verify:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: postgres_verify_enum_drift
+        description: PostgreSQL verify reports owned enum label order drift
+        checks:
+        - verify
+      - case: postgres_verify_function_body_ignored
+        description: PostgreSQL verify ignores body-only function drift
+        checks:
+        - verify
+      - case: postgres_verify_function_signature_drift
+        description: PostgreSQL verify detects missing owned function signatures
+        checks:
+        - verify
+      - case: postgres_verify_ignores_untracked_trigger
+        description: PostgreSQL verify ignores a live-only trigger on an owned table
+        checks:
+        - verify
+      - case: postgres_verify_live_only_enum_ignored
+        description: PostgreSQL verify ignores live-only enums
+        checks:
+        - verify
+      - case: postgres_verify_missing_enum
+        description: PostgreSQL verify reports missing owned enums
+        checks:
+        - verify
+      - case: postgres_verify_missing_owned_trigger
+        description: PostgreSQL verify reports a missing owned trigger
+        checks:
+        - verify
+      - case: postgres_verify_schema_qualified_no_drift
+        description: PostgreSQL verify accepts explicitly schema-qualified owned objects
+        checks:
+        - verify
+      - case: postgres_verify_trigger_metadata_drift
+        description: PostgreSQL verify reports owned trigger wiring drift
+        checks:
+        - verify
+      - case: verify_composite_fk_order_drift
+        description: verify reports composite foreign key column order drift
+        checks:
+        - verify
+      - case: verify_composite_pk_missing
+        description: verify reports missing owned composite primary keys as manual drift
+        checks:
+        - verify
+        - error
+      - case: verify_composite_pk_order_drift
+        description: verify reports composite primary key order drift as manual drift
+        checks:
+        - verify
+        - error
+      - case: verify_detects_changed_column_metadata
+        description: verify reports changed metadata for owned columns
+        checks:
+        - verify
+      - case: verify_detects_missing_index_constraint_fk
+        description: verify reports missing owned indexes constraints and foreign keys
+        checks:
+        - verify
+      - case: verify_generated_column_expression_drift
+        description: verify reports owned generated column expression drift
+        checks:
+        - verify
+      - case: verify_ignores_untracked_column
+        description: verify ignores a live-only column on an owned table
+        checks:
+        - verify
+      - case: verify_ignores_untracked_index_constraint_fk
+        description: verify ignores live-only indexes constraints and foreign keys on owned tables
+        checks:
+        - verify
+      - case: verify_ignores_untracked_table
+        description: verify ignores a live-only table outside migration ownership
+        checks:
+        - verify
+      - case: verify_live_only_view_ignored
+        description: verify ignores live-only views
+        checks:
+        - verify
+      - case: verify_missing_owned_column
+        description: verify reports a missing owned column
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
+      - case: verify_view_body_only_ignored
+        description: verify ignores body-only view definition drift
+        checks:
+        - verify
+      - case: verify_view_missing_owned
+        description: verify reports missing owned views
+        checks:
+        - verify
+    sqlite:
+      status: success
+      evidence:
+      - case: sqlite_verify_trigger_metadata_drift
+        description: SQLite verify reports owned trigger timing drift
+        checks:
+        - verify
+      - case: verify_composite_fk_order_drift
+        description: verify reports composite foreign key column order drift
+        checks:
+        - verify
+      - case: verify_composite_pk_missing
+        description: verify reports missing owned composite primary keys as manual drift
+        checks:
+        - verify
+        - error
+      - case: verify_composite_pk_order_drift
+        description: verify reports composite primary key order drift as manual drift
+        checks:
+        - verify
+        - error
+      - case: verify_generated_column_expression_drift
+        description: verify reports owned generated column expression drift
+        checks:
+        - verify
+      - case: verify_ignores_untracked_column
+        description: verify ignores a live-only column on an owned table
+        checks:
+        - verify
+      - case: verify_ignores_untracked_index_constraint_fk
+        description: verify ignores live-only indexes constraints and foreign keys on owned tables
+        checks:
+        - verify
+      - case: verify_ignores_untracked_table
+        description: verify ignores a live-only table outside migration ownership
+        checks:
+        - verify
+      - case: verify_live_only_view_ignored
+        description: verify ignores live-only views
+        checks:
+        - verify
+      - case: verify_missing_owned_column
+        description: verify reports a missing owned column
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
+      - case: verify_sqlite_detects_missing_index_constraint_fk
+        description: SQLite verify reports missing owned indexes constraints and foreign keys
+        checks:
+        - verify
+      - case: verify_view_body_only_ignored
+        description: verify ignores body-only view definition drift
+        checks:
+        - verify
+      - case: verify_view_missing_owned
+        description: verify reports missing owned views
+        checks:
+        - verify
+  partial_indexes:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: postgres_partial_index
+        description: PostgreSQL migrates and inspects partial indexes
+        checks:
+        - migrate
+        - inspect
+    sqlite:
+      status: unimplemented
+      reason: dialect section missing
+  raw_sql_statements:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: raw_statement_data
+        description: raw SQL statements run during live migration and can seed deterministic data
+        checks:
+        - migrate
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: raw_statement_data
+        description: raw SQL statements run during live migration and can seed deterministic data
+        checks:
+        - migrate
+        - data
+  rollback_migrations:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: lifecycle_rollback_to_target
+        description: migrate target rollback removes later migration effects and records
+        checks:
+        - rollback
+        - migration_records
+        - inspect
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: lifecycle_rollback_to_target
+        description: migrate target rollback removes later migration effects and records
+        checks:
+        - rollback
+        - migration_records
+        - inspect
+        - data
+  schemas_namespaces:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: postgres_verify_schema_qualified_no_drift
+        description: PostgreSQL verify accepts explicitly schema-qualified owned objects
+        checks:
+        - verify
+    sqlite:
+      status: unimplemented
+      reason: dialect section missing
+  single_foreign_keys:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: single_fk_enforcement
+        description: single-column foreign keys are enforced by live databases
+        checks:
+        - migrate
+        - data
+      - case: verify_detects_missing_index_constraint_fk
+        description: verify reports missing owned indexes constraints and foreign keys
+        checks:
+        - verify
+    sqlite:
+      status: success
+      evidence:
+      - case: single_fk_enforcement
+        description: single-column foreign keys are enforced by live databases
+        checks:
+        - migrate
+        - data
+  single_primary_keys:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: basic_migrate_inspect
+        description: migrate a simple users table and inspect the resulting schema
+        checks:
+        - migrate
+        - inspect
+      - case: default_nullability_add_column
+        description: add non-null columns with defaults in live migrations
+        checks:
+        - migrate
+        - inspect
+      - case: drop_column_shared
+        description: dropping a column preserves remaining rows and inspected schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: rename_table_column
+        description: live migrations rename tables and columns while preserving data
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: single_fk_enforcement
+        description: single-column foreign keys are enforced by live databases
+        checks:
+        - migrate
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: basic_migrate_inspect
+        description: migrate a simple users table and inspect the resulting schema
+        checks:
+        - migrate
+        - inspect
+      - case: default_nullability_add_column
+        description: add non-null columns with defaults in live migrations
+        checks:
+        - migrate
+        - inspect
+      - case: drop_column_shared
+        description: dropping a column preserves remaining rows and inspected schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: rename_table_column
+        description: live migrations rename tables and columns while preserving data
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: single_fk_enforcement
+        description: single-column foreign keys are enforced by live databases
+        checks:
+        - migrate
+        - data
+  sqlite_rebuild_planner:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: unimplemented
+      reason: dialect section missing
+    sqlite:
+      status: success
+      evidence:
+      - case: sqlite_generated_column
+        description: SQLite generated columns survive live migration and compute from preserved data
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_alter_type_cast
+        description: SQLite rebuild alter type with cast preserves converted values
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_atomic_false_error
+        description: SQLite rebuild migrations fail clearly when atomic is false
+        checks:
+        - migrate
+        - error
+      - case: sqlite_rebuild_constraints
+        description: SQLite rebuild adds unique and check constraints that reject invalid data
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_default_nullability
+        description: SQLite rebuild changes default and nullability while preserving rows
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_drop_column
+        description: SQLite rebuild drops a column while preserving data and remaining schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: sqlite_rebuild_drop_fk_unique_check
+        description: SQLite rebuild drops foreign key unique and check constraints
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_parent_with_child_fk
+        description: SQLite rebuild fails clearly when a referenced parent table has inbound foreign keys
+        checks:
+        - migrate
+        - error
+      - case: verify_sqlite_detects_missing_index_constraint_fk
+        description: SQLite verify reports missing owned indexes constraints and foreign keys
+        checks:
+        - verify
+  table_create_drop_rename:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: basic_migrate_inspect
+        description: migrate a simple users table and inspect the resulting schema
+        checks:
+        - migrate
+        - inspect
+      - case: composite_keys
+        description: migrate and inspect composite primary and foreign keys
+        checks:
+        - migrate
+        - inspect
+      - case: rename_table_column
+        description: live migrations rename tables and columns while preserving data
+        checks:
+        - migrate
+        - inspect
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: basic_migrate_inspect
+        description: migrate a simple users table and inspect the resulting schema
+        checks:
+        - migrate
+        - inspect
+      - case: composite_keys
+        description: migrate and inspect composite primary and foreign keys
+        checks:
+        - migrate
+        - inspect
+      - case: rename_table_column
+        description: live migrations rename tables and columns while preserving data
+        checks:
+        - migrate
+        - inspect
+        - data
+  tables_columns:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: basic_migrate_inspect
+        description: migrate a simple users table and inspect the resulting schema
+        checks:
+        - migrate
+        - inspect
+      - case: default_nullability_add_column
+        description: add non-null columns with defaults in live migrations
+        checks:
+        - migrate
+        - inspect
+      - case: drop_column_shared
+        description: dropping a column preserves remaining rows and inspected schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: lifecycle_atomic_failure_rolls_back
+        description: atomic migration failure rolls back SQL and does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_atomic_false_partial_failure
+        description: non-atomic migration failure preserves earlier statements but does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_idempotent_records
+        description: repeated migrate is idempotent and records applied migrations
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
+      - case: lifecycle_rollback_to_target
+        description: migrate target rollback removes later migration effects and records
+        checks:
+        - rollback
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_target_migrate
+        description: target migrate applies only migrations through the requested target
+        checks:
+        - migrate_to
+        - migration_records
+        - data
+      - case: linear_chain_order
+        description: linear migration chains apply in dependency order
+        checks:
+        - migrate
+        - data
+      - case: rename_table_column
+        description: live migrations rename tables and columns while preserving data
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: verify_detects_changed_column_metadata
+        description: verify reports changed metadata for owned columns
+        checks:
+        - verify
+      - case: verify_ignores_untracked_column
+        description: verify ignores a live-only column on an owned table
+        checks:
+        - verify
+      - case: verify_missing_owned_column
+        description: verify reports a missing owned column
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
+    sqlite:
+      status: success
+      evidence:
+      - case: basic_migrate_inspect
+        description: migrate a simple users table and inspect the resulting schema
+        checks:
+        - migrate
+        - inspect
+      - case: default_nullability_add_column
+        description: add non-null columns with defaults in live migrations
+        checks:
+        - migrate
+        - inspect
+      - case: drop_column_shared
+        description: dropping a column preserves remaining rows and inspected schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: lifecycle_atomic_failure_rolls_back
+        description: atomic migration failure rolls back SQL and does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_atomic_false_partial_failure
+        description: non-atomic migration failure preserves earlier statements but does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_idempotent_records
+        description: repeated migrate is idempotent and records applied migrations
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
+      - case: lifecycle_rollback_to_target
+        description: migrate target rollback removes later migration effects and records
+        checks:
+        - rollback
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_target_migrate
+        description: target migrate applies only migrations through the requested target
+        checks:
+        - migrate_to
+        - migration_records
+        - data
+      - case: linear_chain_order
+        description: linear migration chains apply in dependency order
+        checks:
+        - migrate
+        - data
+      - case: rename_table_column
+        description: live migrations rename tables and columns while preserving data
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: verify_ignores_untracked_column
+        description: verify ignores a live-only column on an owned table
+        checks:
+        - verify
+      - case: verify_missing_owned_column
+        description: verify reports a missing owned column
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
+  target_migrations:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: lifecycle_target_migrate
+        description: target migrate applies only migrations through the requested target
+        checks:
+        - migrate_to
+        - migration_records
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: lifecycle_target_migrate
+        description: target migrate applies only migrations through the requested target
+        checks:
+        - migrate_to
+        - migration_records
+        - data
+  transaction_rollback:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: lifecycle_atomic_failure_rolls_back
+        description: atomic migration failure rolls back SQL and does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_atomic_false_partial_failure
+        description: non-atomic migration failure preserves earlier statements but does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: lifecycle_atomic_failure_rolls_back
+        description: atomic migration failure rolls back SQL and does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+      - case: lifecycle_atomic_false_partial_failure
+        description: non-atomic migration failure preserves earlier statements but does not record the failed migration
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - inspect
+        - data
+  trigger_query_objects:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: postgres_function_name_trigger
+        description: PostgreSQL function-name triggers execute and inspect stable wiring
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: postgres_opaque_objects
+        description: PostgreSQL migrates and inspects enums functions views and query triggers
+        checks:
+        - migrate
+        - inspect
+      - case: postgres_verify_ignores_untracked_trigger
+        description: PostgreSQL verify ignores a live-only trigger on an owned table
+        checks:
+        - verify
+      - case: postgres_verify_missing_owned_trigger
+        description: PostgreSQL verify reports a missing owned trigger
+        checks:
+        - verify
+      - case: postgres_verify_trigger_metadata_drift
+        description: PostgreSQL verify reports owned trigger wiring drift
+        checks:
+        - verify
+    sqlite:
+      status: success
+      evidence:
+      - case: sqlite_index_view_trigger
+        description: SQLite migrates indexes views and query triggers
+        checks:
+        - migrate
+        - data
+      - case: sqlite_verify_trigger_metadata_drift
+        description: SQLite verify reports owned trigger timing drift
+        checks:
+        - verify
+  type_null_default_changes:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: alter_type_with_cast
+        description: alter column type with an explicit cast preserves converted values
+        checks:
+        - migrate
+        - data
+      - case: default_change_and_nullable
+        description: default and nullability changes apply and preserve existing rows
+        checks:
+        - migrate
+        - data
+      - case: default_nullability_add_column
+        description: add non-null columns with defaults in live migrations
+        checks:
+        - migrate
+        - inspect
+      - case: drop_column_shared
+        description: dropping a column preserves remaining rows and inspected schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: verify_detects_changed_column_metadata
+        description: verify reports changed metadata for owned columns
+        checks:
+        - verify
+    sqlite:
+      status: success
+      evidence:
+      - case: alter_type_with_cast
+        description: alter column type with an explicit cast preserves converted values
+        checks:
+        - migrate
+        - data
+      - case: default_change_and_nullable
+        description: default and nullability changes apply and preserve existing rows
+        checks:
+        - migrate
+        - data
+      - case: default_nullability_add_column
+        description: add non-null columns with defaults in live migrations
+        checks:
+        - migrate
+        - inspect
+      - case: drop_column_shared
+        description: dropping a column preserves remaining rows and inspected schema
+        checks:
+        - migrate
+        - inspect
+        - data
+      - case: sqlite_rebuild_alter_type_cast
+        description: SQLite rebuild alter type with cast preserves converted values
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_default_nullability
+        description: SQLite rebuild changes default and nullability while preserving rows
+        checks:
+        - migrate
+        - data
+      - case: sqlite_rebuild_drop_column
+        description: SQLite rebuild drops a column while preserving data and remaining schema
+        checks:
+        - migrate
+        - inspect
+        - data
+  unique_constraints:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: drop_index_constraint_shared
+        description: dropped indexes and constraints stop enforcing their old rules
+        checks:
+        - migrate
+        - data
+      - case: indexes_constraints_shared
+        description: indexes unique constraints and check constraints enforce live data rules
+        checks:
+        - migrate
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: drop_index_constraint_shared
+        description: dropped indexes and constraints stop enforcing their old rules
+        checks:
+        - migrate
+        - data
+      - case: indexes_constraints_shared
+        description: indexes unique constraints and check constraints enforce live data rules
+        checks:
+        - migrate
+        - data
+  unsupported_feature_errors:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: postgres_expression_index_error
+        description: PostgreSQL inspect fails clearly for expression indexes until they are modeled
+        checks:
+        - inspect
+        - error
+      - case: verify_composite_pk_missing
+        description: verify reports missing owned composite primary keys as manual drift
+        checks:
+        - verify
+        - error
+      - case: verify_composite_pk_order_drift
+        description: verify reports composite primary key order drift as manual drift
+        checks:
+        - verify
+        - error
+    sqlite:
+      status: success
+      evidence:
+      - case: sqlite_rebuild_atomic_false_error
+        description: SQLite rebuild migrations fail clearly when atomic is false
+        checks:
+        - migrate
+        - error
+      - case: sqlite_rebuild_parent_with_child_fk
+        description: SQLite rebuild fails clearly when a referenced parent table has inbound foreign keys
+        checks:
+        - migrate
+        - error
+      - case: sqlite_unsupported_enum
+        description: SQLite fails clearly for enum migrations
+        checks:
+        - migrate
+        - error
+      - case: sqlite_unsupported_extension
+        description: SQLite fails clearly for extension migrations
+        checks:
+        - migrate
+        - error
+      - case: sqlite_unsupported_function
+        description: SQLite fails clearly for stored function migrations
+        checks:
+        - migrate
+        - error
+      - case: sqlite_unsupported_function_trigger
+        description: SQLite fails clearly for function-name trigger migrations
+        checks:
+        - migrate
+        - error
+      - case: sqlite_unsupported_schema_table
+        description: SQLite fails clearly for schema-qualified tables
+        checks:
+        - migrate
+        - error
+      - case: verify_composite_pk_missing
+        description: verify reports missing owned composite primary keys as manual drift
+        checks:
+        - verify
+        - error
+      - case: verify_composite_pk_order_drift
+        description: verify reports composite primary key order drift as manual drift
+        checks:
+        - verify
+        - error
+  views_opaque:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: postgres_opaque_objects
+        description: PostgreSQL migrates and inspects enums functions views and query triggers
+        checks:
+        - migrate
+        - inspect
+      - case: postgres_view_replace
+        description: PostgreSQL view replacement updates the inspected view definition
+        checks:
+        - migrate
+        - inspect
+      - case: verify_live_only_view_ignored
+        description: verify ignores live-only views
+        checks:
+        - verify
+      - case: verify_view_body_only_ignored
+        description: verify ignores body-only view definition drift
+        checks:
+        - verify
+      - case: verify_view_missing_owned
+        description: verify reports missing owned views
+        checks:
+        - verify
+    sqlite:
+      status: success
+      evidence:
+      - case: sqlite_index_view_trigger
+        description: SQLite migrates indexes views and query triggers
+        checks:
+        - migrate
+        - data
+      - case: verify_live_only_view_ignored
+        description: verify ignores live-only views
+        checks:
+        - verify
+      - case: verify_view_body_only_ignored
+        description: verify ignores body-only view definition drift
+        checks:
+        - verify
+      - case: verify_view_missing_owned
+        description: verify reports missing owned views
+        checks:
+        - verify

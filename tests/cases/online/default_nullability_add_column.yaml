@@ -1,0 +1,62 @@
+description: add non-null columns with defaults in live migrations
+features:
+  - live_migration_application
+  - type_null_default_changes
+  - tables_columns
+  - column_add_drop_rename
+  - single_primary_keys
+
+migrations:
+  - id: 0001_create_tasks
+    operations:
+      - type: create_table
+        table:
+          name: tasks
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+  - id: 0002_add_status
+    dependencies: [0001_create_tasks]
+    operations:
+      - type: add_column
+        table_name: tasks
+        column:
+          name: status
+          type: text
+          nullable: false
+          default: "'todo'"
+
+dialects:
+  postgres:
+    checks: [migrate, inspect]
+    expect_schema:
+      tables:
+        tasks:
+          name: tasks
+          primary_key:
+            name: tasks_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: status
+              type: text
+              default: "'todo'"
+  sqlite:
+    checks: [migrate, inspect]
+    expect_schema:
+      tables:
+        tasks:
+          name: tasks
+          primary_key:
+            name: tasks_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: status
+              type: text
+              default: "'todo'"

@@ -1,0 +1,40 @@
+---
+description: PostgreSQL schema-qualifies DROP INDEX for indexes attached to schema-qualified
+  tables.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- renderer.postgres.create_table
+- renderer.postgres.drop_index
+- sql_rendering.sql_postgres_schema_qualified_drop_index
+kind: migration_to_sql
+dialect: postgres
+migrations:
+- id: 0001_create_index
+  operations:
+  - type: create_table
+    table:
+      name: users
+      schema: app
+      columns:
+      - name: email
+        type: text
+      indexes:
+      - name: users_email_idx
+        columns:
+        - email
+- id: 0002_drop_index
+  dependencies:
+  - 0001_create_index
+  operations:
+  - type: drop_index
+    table_name: app.users
+    index:
+      name: users_email_idx
+      columns:
+      - email
+expect_sql: |
+  CREATE TABLE "app"."users" ("email" text NOT NULL)
+  CREATE INDEX "users_email_idx" ON "app"."users" ("email")
+  DROP INDEX "app"."users_email_idx"

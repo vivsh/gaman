@@ -1,0 +1,15 @@
+description: PostgreSQL releases the advisory migration lock after a failed migration
+features:
+  - live_migration_application
+  - lock_cleanup
+
+migrations:
+  - id: 0001_fail_after_lock
+    operations:
+      - type: statement
+        up: "INSERT INTO missing_table (id) VALUES (1)"
+
+dialects:
+  postgres:
+    checks: [migrate, error, lock_behavior]
+    expect_error: "missing_table"

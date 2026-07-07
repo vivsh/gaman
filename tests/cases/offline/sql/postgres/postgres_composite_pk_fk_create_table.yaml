@@ -1,0 +1,55 @@
+---
+description: PostgreSQL renders composite primary keys and composite foreign keys
+  in CREATE TABLE.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- renderer.postgres.create_table
+- renderer.postgres.summary
+- sql_rendering.sql_postgres_composite_pk_fk_create_table
+kind: migration_to_sql
+dialect: postgres
+migrations:
+- id: 0001_create_accounts
+  operations:
+  - type: create_table
+    table:
+      name: tenants
+      primary_key:
+        name: tenants_region_id_pkey
+        columns:
+        - region_id
+        - tenant_id
+      columns:
+      - name: region_id
+        type: integer
+      - name: tenant_id
+        type: integer
+  - type: create_table
+    table:
+      name: accounts
+      primary_key:
+        name: accounts_region_id_pkey
+        columns:
+        - region_id
+        - account_id
+      columns:
+      - name: region_id
+        type: integer
+      - name: account_id
+        type: integer
+      - name: tenant_id
+        type: integer
+      foreign_keys:
+      - name: accounts_region_tenant_fkey
+        columns:
+        - region_id
+        - tenant_id
+        to_table: tenants
+        to_columns:
+        - region_id
+        - tenant_id
+expect_sql: |
+  CREATE TABLE "tenants" ("region_id" integer NOT NULL, "tenant_id" integer NOT NULL, CONSTRAINT "tenants_region_id_pkey" PRIMARY KEY ("region_id", "tenant_id"))
+  CREATE TABLE "accounts" ("region_id" integer NOT NULL, "account_id" integer NOT NULL, "tenant_id" integer NOT NULL, CONSTRAINT "accounts_region_id_pkey" PRIMARY KEY ("region_id", "account_id"), CONSTRAINT "accounts_region_tenant_fkey" FOREIGN KEY ("region_id", "tenant_id") REFERENCES "tenants" ("region_id", "tenant_id"))

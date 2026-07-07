@@ -1,0 +1,16 @@
+description: SQLite fails clearly for enum migrations
+features:
+  - unsupported_feature_errors
+
+migrations:
+  - id: 0001_create_enum
+    operations:
+      - type: create_enum
+        enum_def:
+          name: user_status
+          values: [active, disabled]
+
+dialects:
+  sqlite:
+    checks: [migrate, error]
+    expect_error: "operation is not supported by the SQLite dialect"

@@ -1,0 +1,15 @@
+---
+description: PostgreSQL parser accepts COMMENT but Gaman does not model it.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.postgres.parser_postgres_comment_unsupported
+kind: sql_parse
+parser_dialect: postgres
+sql: 'COMMENT ON TABLE users IS ''application users'';
+
+'
+expect_parse: ok
+expect_lowering: unsupported
+expect_error: unsupported

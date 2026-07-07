@@ -1,0 +1,79 @@
+---
+description: SQLite rebuild adds unique, check, and foreign-key constraints in one
+  table rebuild.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- renderer.sqlite.add_constraint
+- renderer.sqlite.add_foreign_key
+- renderer.sqlite.create_table
+- renderer.sqlite.summary
+- sql_rendering.sql_sqlite_rebuild_constraints_and_fk
+kind: migration_to_sql
+dialect: sqlite
+migrations:
+- id: 0001_create_tables
+  operations:
+  - type: create_table
+    table:
+      name: orgs
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: org_id
+        type: integer
+        nullable: true
+      - name: email
+        type: text
+        nullable: true
+      - name: age
+        type: integer
+        nullable: true
+- id: 0002_add_constraints
+  dependencies:
+  - 0001_create_tables
+  operations:
+  - type: add_constraint
+    table_name: users
+    constraint:
+      kind: unique
+      name: users_email_key
+      columns:
+      - email
+  - type: add_constraint
+    table_name: users
+    constraint:
+      kind: check
+      name: users_age_check
+      expression: age > 0
+  - type: add_foreign_key
+    table_name: users
+    foreign_key:
+      name: users_org_id_fkey
+      columns:
+      - org_id
+      to_table: orgs
+      to_columns:
+      - id
+expect_sql: |
+  CREATE TABLE "orgs" ("id" integer PRIMARY KEY)
+  CREATE TABLE "users" ("id" integer PRIMARY KEY, "org_id" integer, "email" text, "age" integer)
+  PRAGMA defer_foreign_keys = ON
+  CREATE TABLE "__gaman_rebuild_users" ("id" integer PRIMARY KEY, "org_id" integer, "email" text, "age" integer, CONSTRAINT "users_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "orgs" ("id"), CONSTRAINT "users_email_key" UNIQUE ("email"), CONSTRAINT "users_age_check" CHECK (age > 0))
+  INSERT INTO "__gaman_rebuild_users" ("id", "org_id", "email", "age") SELECT "id", "org_id", "email", "age" FROM "users"
+  DROP TABLE "users"
+  ALTER TABLE "__gaman_rebuild_users" RENAME TO "users"
+  DROP TABLE IF EXISTS temp."__gaman_fk_check_users"
+  CREATE TEMP TABLE "__gaman_fk_check_users" ("violation" integer CHECK ("violation" = 0))
+  INSERT INTO temp."__gaman_fk_check_users" ("violation") SELECT 1 FROM pragma_foreign_key_check
+  DROP TABLE temp."__gaman_fk_check_users"
+  PRAGMA foreign_key_check

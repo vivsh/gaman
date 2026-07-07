@@ -1,0 +1,30 @@
+---
+description: Primary-key shape changes are not generated automatically.
+group: diff
+features:
+- diff.diff_primary_key_mutation_error
+- group.diff
+- kind.schema_to_migration
+- unsupported.primary_key_mutation
+kind: schema_to_migration
+dialect: postgres
+name: change_primary_key
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: uid
+        type: integer
+        primary_key: true
+expect_error: primary key changes

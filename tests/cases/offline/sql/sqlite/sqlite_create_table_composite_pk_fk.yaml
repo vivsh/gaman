@@ -1,0 +1,48 @@
+---
+description: SQLite renders composite primary keys and foreign keys during CREATE
+  TABLE.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- renderer.sqlite.create_table
+- renderer.sqlite.summary
+- sql_rendering.sql_sqlite_create_table_composite_pk_fk
+kind: migration_to_sql
+dialect: sqlite
+migrations:
+- id: 0001_create_accounts
+  operations:
+  - type: create_table
+    table:
+      name: tenants
+      primary_key:
+        name: tenants_region_id_pkey
+        columns:
+        - region_id
+        - tenant_id
+      columns:
+      - name: region_id
+        type: integer
+      - name: tenant_id
+        type: integer
+  - type: create_table
+    table:
+      name: accounts
+      columns:
+      - name: region_id
+        type: integer
+      - name: tenant_id
+        type: integer
+      foreign_keys:
+      - name: accounts_region_tenant_fkey
+        columns:
+        - region_id
+        - tenant_id
+        to_table: tenants
+        to_columns:
+        - region_id
+        - tenant_id
+expect_sql: |
+  CREATE TABLE "tenants" ("region_id" integer NOT NULL, "tenant_id" integer NOT NULL, CONSTRAINT "tenants_region_id_pkey" PRIMARY KEY ("region_id", "tenant_id"))
+  CREATE TABLE "accounts" ("region_id" integer NOT NULL, "tenant_id" integer NOT NULL, CONSTRAINT "accounts_region_tenant_fkey" FOREIGN KEY ("region_id", "tenant_id") REFERENCES "tenants" ("region_id", "tenant_id"))

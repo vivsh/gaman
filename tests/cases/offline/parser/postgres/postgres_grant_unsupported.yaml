@@ -1,0 +1,15 @@
+---
+description: PostgreSQL parser accepts GRANT but Gaman does not model grants.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.postgres.parser_postgres_grant_unsupported
+kind: sql_parse
+parser_dialect: postgres
+sql: 'GRANT SELECT ON TABLE users TO app_reader;
+
+'
+expect_parse: ok
+expect_lowering: unsupported
+expect_error: unsupported

@@ -1,0 +1,104 @@
+description: PostgreSQL migrates and inspects enums functions views and query triggers
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - enums
+  - functions_opaque
+  - trigger_query_objects
+  - views_opaque
+
+migrations:
+  - id: 0001_create_opaque_objects
+    operations:
+      - type: create_enum
+        enum_def:
+          name: user_status
+          values: [active, disabled]
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: status
+              type: user_status
+              default: "'active'::user_status"
+      - type: create_table
+        table:
+          name: audit_log
+          columns:
+            - name: user_id
+              type: integer
+            - name: action
+              type: text
+      - type: create_function
+        function:
+          name: user_status_label
+          arguments: "status user_status"
+          returns: text
+          language: sql
+          body: "SELECT $1::text"
+      - type: create_view
+        view:
+          name: active_users
+          definition: "SELECT id, status FROM users WHERE status = 'active'"
+      - type: create_trigger
+        table_name: users
+        trigger:
+          timing: after
+          events: [insert]
+          scope: row
+          query: "INSERT INTO audit_log(user_id, action) VALUES (NEW.id, 'insert');"
+
+dialects:
+  postgres:
+    checks: [migrate, inspect]
+    expect_schema:
+      tables:
+        audit_log:
+          name: audit_log
+          columns:
+            - name: user_id
+              type: integer
+            - name: action
+              type: text
+        users:
+          name: users
+          primary_key:
+            name: users_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: status
+              type: user_status
+              default: "'active'::user_status"
+          triggers:
+            - name: users_insert_after_trg
+              timing: after
+              events: [insert]
+              scope: row
+              function_name: users_insert_after_trg_fn
+      enums:
+        user_status:
+          name: user_status
+          values: [active, disabled]
+      functions:
+        user_status_label:
+          name: user_status_label
+          arguments: "status user_status"
+          returns: text
+          language: sql
+          body: "SELECT $1::text"
+        users_insert_after_trg_fn:
+          name: users_insert_after_trg_fn
+          arguments: ""
+          returns: trigger
+          language: plpgsql
+          body: "BEGIN\nINSERT INTO audit_log(user_id, action) VALUES (NEW.id, 'insert');\nRETURN NEW;\nEND;"
+      views:
+        active_users:
+          name: active_users
+          definition: "SELECT users.id,\n    users.status\n   FROM users\n  WHERE (users.status = 'active'::user_status);"

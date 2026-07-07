@@ -1,0 +1,80 @@
+description: PostgreSQL function-name triggers execute and inspect stable wiring
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - functions_opaque
+  - trigger_query_objects
+  - data_preservation
+
+migrations:
+  - id: 0001_create_trigger
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+      - type: create_table
+        table:
+          name: audit_log
+          columns:
+            - name: user_id
+              type: integer
+            - name: action
+              type: text
+      - type: create_function
+        function:
+          name: audit_users_fn
+          arguments: ""
+          returns: trigger
+          language: plpgsql
+          body: "BEGIN\nINSERT INTO audit_log(user_id, action) VALUES (NEW.id, 'insert');\nRETURN NEW;\nEND;"
+      - type: create_trigger
+        table_name: users
+        trigger:
+          name: users_audit_trg
+          timing: after
+          events: [insert]
+          scope: row
+          function_name: audit_users_fn
+
+dialects:
+  postgres:
+    checks: [migrate, inspect, data]
+    expect_schema:
+      tables:
+        audit_log:
+          name: audit_log
+          columns:
+            - name: user_id
+              type: integer
+            - name: action
+              type: text
+        users:
+          name: users
+          primary_key:
+            name: users_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+          triggers:
+            - name: users_audit_trg
+              timing: after
+              events: [insert]
+              scope: row
+              function_name: audit_users_fn
+      functions:
+        audit_users_fn:
+          name: audit_users_fn
+          arguments: ""
+          returns: trigger
+          language: plpgsql
+          body: "BEGIN\nINSERT INTO audit_log(user_id, action) VALUES (NEW.id, 'insert');\nRETURN NEW;\nEND;"
+    data:
+      - sql: "INSERT INTO users (id) VALUES (1)"
+      - sql: "SELECT action FROM audit_log ORDER BY user_id"
+        expect: ["insert"]

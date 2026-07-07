@@ -1,0 +1,30 @@
+---
+description: A KeepType decision preserves an approved custom type in generated migrations.
+group: validation
+features:
+- group.validation
+- kind.schema_to_migration
+- validation.validation_unknown_type_keep_type_decision
+kind: schema_to_migration
+dialect: postgres
+name: add_items
+decisions:
+- clarification_id: unknown_type:items:value
+  answer:
+    type: keep_type
+current:
+  tables:
+    items:
+      name: items
+      columns:
+      - name: value
+        type: custom_domain
+        nullable: true
+expect_operations:
+- type: create_table
+  table:
+    name: items
+    columns:
+    - name: value
+      type: custom_domain
+      nullable: true

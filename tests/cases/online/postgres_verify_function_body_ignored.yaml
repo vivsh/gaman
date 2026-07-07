@@ -1,0 +1,24 @@
+description: PostgreSQL verify ignores body-only function drift
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - functions_opaque
+
+migrations:
+  - id: 0001_create_function
+    operations:
+      - type: create_function
+        function:
+          name: add_one
+          arguments: "value integer"
+          returns: integer
+          language: sql
+          body: "SELECT $1 + 1"
+
+mutate_sql: |
+  CREATE OR REPLACE FUNCTION add_one(value integer) RETURNS integer LANGUAGE sql AS $$ SELECT $1 + 2 $$;
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify: []

@@ -1,0 +1,15 @@
+---
+description: MySQL parser accepts prefix indexes as parser-only coverage.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.mysql.parser_mysql_create_prefix_index
+kind: sql_parse
+parser_dialect: mysql
+sql: |
+  CREATE TABLE users (email varchar(255));
+  CREATE INDEX users_email_prefix_idx ON users (email(32));
+expect_parse: ok
+expect_lowering: unsupported
+expect_error: unsupported

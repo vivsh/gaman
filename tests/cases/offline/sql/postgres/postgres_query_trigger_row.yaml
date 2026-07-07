@@ -1,0 +1,47 @@
+---
+description: PostgreSQL wraps a row-level query trigger and appends RETURN NEW.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- operation.create_trigger
+- renderer.postgres.create_table
+- renderer.postgres.create_trigger
+- sql_rendering.sql_postgres_query_trigger_row
+kind: migration_to_sql
+dialect: postgres
+migrations:
+- id: 0001_create_trigger
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+  - type: create_trigger
+    table_name: users
+    trigger:
+      name: users_audit_trg
+      timing: after
+      events:
+      - insert
+      scope: row
+      query: INSERT INTO audit_log(user_id) VALUES (NEW.id);
+expect_sql: |
+  CREATE TABLE "users" ("id" integer NOT NULL, CONSTRAINT "users_pkey" PRIMARY KEY ("id"))
+  CREATE OR REPLACE FUNCTION "users_audit_trg_fn"()
+  RETURNS trigger
+  LANGUAGE plpgsql
+  AS $func$
+  BEGIN
+  INSERT INTO audit_log(user_id) VALUES (NEW.id);
+  RETURN NEW;
+  END;
+  $func$
+  CREATE OR REPLACE TRIGGER "users_audit_trg"
+  AFTER INSERT
+  ON "users"
+  FOR EACH ROW
+  EXECUTE FUNCTION "users_audit_trg_fn"()

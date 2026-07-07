@@ -1,0 +1,15 @@
+---
+description: Replay rejects duplicate migration ids.
+group: replay
+features:
+- group.replay
+- kind.migration_to_replay
+- replay.replay_duplicate_migration_id
+kind: migration_to_replay
+dialect: postgres
+migrations:
+- id: 0001_create_users
+  operations: []
+- id: 0001_create_users
+  operations: []
+expect_error: duplicate migration id

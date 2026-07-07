@@ -1,0 +1,44 @@
+description: alter column type with an explicit cast preserves converted values
+features:
+  - live_migration_application
+  - type_null_default_changes
+  - data_preservation
+
+migrations:
+  - id: 0001_create_metrics
+    operations:
+      - type: create_table
+        table:
+          name: metrics
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: value
+              type: text
+      - type: statement
+        up: "INSERT INTO metrics (id, value) VALUES (1, '42')"
+  - id: 0002_value_integer
+    dependencies: [0001_create_metrics]
+    operations:
+      - type: alter_column
+        table_name: metrics
+        old:
+          name: value
+          type: text
+        new:
+          name: value
+          type: integer
+        cast_expr: "CAST(value AS integer)"
+
+dialects:
+  postgres:
+    checks: [migrate, data]
+    data:
+      - sql: "SELECT CAST(value AS text) FROM metrics ORDER BY id"
+        expect: ["42"]
+  sqlite:
+    checks: [migrate, data]
+    data:
+      - sql: "SELECT CAST(value AS text) FROM metrics ORDER BY id"
+        expect: ["42"]

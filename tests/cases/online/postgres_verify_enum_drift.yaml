@@ -1,0 +1,30 @@
+description: PostgreSQL verify reports owned enum label order drift
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - enums
+
+migrations:
+  - id: 0001_create_status
+    operations:
+      - type: create_enum
+        enum_def:
+          name: ticket_status
+          values: [open, pending, closed]
+
+mutate_sql: |
+  DROP TYPE ticket_status;
+  CREATE TYPE ticket_status AS ENUM ('open', 'closed', 'pending');
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify:
+      - type: create_enum
+        enum_def:
+          name: ticket_status
+          values: [open, pending, closed]
+      - type: drop_enum
+        enum_def:
+          name: ticket_status
+          values: [open, closed, pending]

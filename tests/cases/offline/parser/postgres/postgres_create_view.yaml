@@ -1,0 +1,30 @@
+---
+description: PostgreSQL parser and lowering preserve simple views.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- operation.create_view
+- parser.postgres.parser_postgres_create_view
+kind: sql_parse
+parser_dialect: postgres
+sql: |
+  CREATE TABLE users (id integer, active boolean);
+  CREATE VIEW active_users AS SELECT id FROM users WHERE active = true;
+expect_parse: ok
+expect_lowering: ok
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        nullable: true
+      - name: active
+        type: boolean
+        nullable: true
+  views:
+    active_users:
+      name: active_users
+      definition: SELECT id FROM users WHERE active = true

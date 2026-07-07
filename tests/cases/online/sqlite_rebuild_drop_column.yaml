@@ -1,0 +1,54 @@
+description: SQLite rebuild drops a column while preserving data and remaining schema
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - sqlite_rebuild_planner
+  - type_null_default_changes
+  - data_preservation
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email
+              type: text
+            - name: legacy
+              type: text
+              nullable: true
+      - type: statement
+        up: "INSERT INTO users (id, email, legacy) VALUES (1, 'one@example.com', 'old')"
+  - id: 0002_drop_legacy
+    dependencies: [0001_create_users]
+    operations:
+      - type: drop_column
+        table_name: users
+        column:
+          name: legacy
+          type: text
+          nullable: true
+
+dialects:
+  sqlite:
+    checks: [migrate, inspect, data]
+    expect_schema:
+      tables:
+        users:
+          name: users
+          primary_key:
+            name: users_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email
+              type: text
+    data:
+      - sql: "SELECT email FROM users ORDER BY id"
+        expect: ["one@example.com"]

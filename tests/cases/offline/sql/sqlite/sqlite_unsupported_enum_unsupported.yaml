@@ -1,0 +1,23 @@
+---
+description: SQLite rejects enum operations instead of emitting no-op SQL.
+group: unsupported
+features:
+- group.unsupported
+- kind.migration_to_sql
+- renderer.sqlite.alter_enum
+- renderer.sqlite.create_enum
+- renderer.sqlite.drop_enum
+- renderer.sqlite.rename_enum_value
+- unsupported.sqlite_enum
+kind: migration_to_sql
+dialect: sqlite
+migrations:
+- id: 0001_create_status
+  operations:
+  - type: create_enum
+    enum_def:
+      name: status
+      values:
+      - active
+      - archived
+expect_error: SQLite does not support enums

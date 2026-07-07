@@ -730,6 +730,35 @@ atomic: true
         MigrationEngine::from_cli_config(config, Some(Dialect::Postgres), Some(schema))
     }
 
+    struct HandWrittenUser;
+
+    impl crate::schema::IntoTable for HandWrittenUser {
+        fn into_table(dialect: &Dialect) -> crate::schema::Table {
+            crate::schema::TableBuilder::new("users")
+                .column_from_type::<i64>(dialect, "id", |c| c.primary_key())
+                .column_from_type::<String>(dialect, "email", |c| c.not_null())
+                .unique_columns(&["email"])
+                .build()
+        }
+    }
+
+    /// Verifies public `IntoTable` trait implementations still feed `MigrationEngine`.
+    #[test]
+    fn hand_written_into_table_builds_engine_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let schema = crate::schema::Schema::builder(Dialect::Postgres)
+            .table::<HandWrittenUser>()
+            .build();
+
+        let migration = directory_engine(&dir, schema)
+            .make_migration_dry_run(Some("add_users"))
+            .unwrap()
+            .expect("migration");
+
+        assert_eq!(migration.id, "0001_add_users");
+        assert_eq!(migration.operations.len(), 1);
+    }
+
     /// Renders SQL from caller-provided migration storage.
     #[test]
     fn from_source_renders_sql_from_custom_storage() {

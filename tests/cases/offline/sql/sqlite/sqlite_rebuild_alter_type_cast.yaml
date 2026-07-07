@@ -1,0 +1,51 @@
+---
+description: SQLite rebuild uses explicit cast expressions for type changes.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- renderer.sqlite.alter_column
+- renderer.sqlite.create_table
+- sql_rendering.sql_sqlite_rebuild_alter_type_cast
+kind: migration_to_sql
+dialect: sqlite
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: age
+        type: text
+        nullable: true
+- id: 0002_alter_age
+  dependencies:
+  - 0001_create_users
+  operations:
+  - type: alter_column
+    table_name: users
+    old:
+      name: age
+      type: text
+      nullable: true
+    new:
+      name: age
+      type: integer
+      nullable: true
+    cast_expr: CAST("age" AS integer)
+expect_sql: |
+  CREATE TABLE "users" ("id" integer PRIMARY KEY, "age" text)
+  PRAGMA defer_foreign_keys = ON
+  CREATE TABLE "__gaman_rebuild_users" ("id" integer PRIMARY KEY, "age" integer)
+  INSERT INTO "__gaman_rebuild_users" ("id", "age") SELECT "id", CAST("age" AS integer) FROM "users"
+  DROP TABLE "users"
+  ALTER TABLE "__gaman_rebuild_users" RENAME TO "users"
+  DROP TABLE IF EXISTS temp."__gaman_fk_check_users"
+  CREATE TEMP TABLE "__gaman_fk_check_users" ("violation" integer CHECK ("violation" = 0))
+  INSERT INTO temp."__gaman_fk_check_users" ("violation") SELECT 1 FROM pragma_foreign_key_check
+  DROP TABLE temp."__gaman_fk_check_users"
+  PRAGMA foreign_key_check

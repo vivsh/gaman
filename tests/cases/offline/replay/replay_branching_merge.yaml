@@ -1,0 +1,70 @@
+---
+description: Replay independent branches joined by an explicit merge migration.
+group: replay
+features:
+- group.replay
+- kind.migration_to_replay
+- replay.replay_branching_merge
+kind: migration_to_replay
+dialect: postgres
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+- id: 0002_add_profiles
+  dependencies:
+  - 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: profiles
+      columns:
+      - name: user_id
+        type: integer
+        primary_key: true
+- id: 0003_add_posts
+  dependencies:
+  - 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: posts
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: user_id
+        type: integer
+- id: 0004_merge_profiles_posts
+  dependencies:
+  - 0002_add_profiles
+  - 0003_add_posts
+  operations: []
+expect_schema:
+  tables:
+    posts:
+      name: posts
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: user_id
+        type: integer
+    profiles:
+      name: profiles
+      columns:
+      - name: user_id
+        type: integer
+        primary_key: true
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true

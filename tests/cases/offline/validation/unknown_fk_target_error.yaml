@@ -1,0 +1,25 @@
+---
+description: Schema preparation rejects foreign keys that reference unknown tables.
+group: validation
+features:
+- group.validation
+- kind.schema_to_migration
+- validation.validation_unknown_fk_target_error
+kind: schema_to_migration
+dialect: postgres
+name: bad_fk
+current:
+  tables:
+    posts:
+      name: posts
+      columns:
+      - name: user_id
+        type: integer
+      foreign_keys:
+      - name: posts_user_id_fkey
+        columns:
+        - user_id
+        to_table: users
+        to_columns:
+        - id
+expect_error: referenced table users not found

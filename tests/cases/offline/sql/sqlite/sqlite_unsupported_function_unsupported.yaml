@@ -1,0 +1,22 @@
+---
+description: SQLite rejects stored function operations instead of emitting no-op SQL.
+group: unsupported
+features:
+- group.unsupported
+- kind.migration_to_sql
+- renderer.sqlite.create_function
+- renderer.sqlite.drop_function
+- unsupported.sqlite_function
+kind: migration_to_sql
+dialect: sqlite
+migrations:
+- id: 0001_create_function
+  operations:
+  - type: create_function
+    function:
+      name: add_one
+      arguments: integer
+      returns: integer
+      language: sql
+      body: SELECT $1 + 1
+expect_error: SQLite does not support stored functions

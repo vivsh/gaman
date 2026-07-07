@@ -1,0 +1,27 @@
+---
+description: PostgreSQL renders schema-qualified CREATE TABLE targets.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- renderer.postgres.create_table
+- sql_rendering.sql_postgres_schema_qualified_create_table
+kind: migration_to_sql
+dialect: postgres
+migrations:
+- id: 0001_create_app_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      schema: app
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: email
+        type: text
+expect_sql: 'CREATE TABLE "app"."users" ("id" integer NOT NULL, "email" text NOT
+  NULL, CONSTRAINT "users_pkey" PRIMARY KEY ("id"))
+
+'

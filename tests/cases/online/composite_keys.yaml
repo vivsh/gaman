@@ -1,0 +1,114 @@
+description: migrate and inspect composite primary and foreign keys
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - composite_primary_keys
+  - composite_foreign_keys
+  - table_create_drop_rename
+
+migrations:
+  - id: 0001_create_tenants
+    operations:
+      - type: create_table
+        table:
+          name: tenants
+          primary_key:
+            columns: [tenant_id, region_id]
+          columns:
+            - name: tenant_id
+              type: integer
+            - name: region_id
+              type: integer
+  - id: 0002_create_accounts
+    dependencies: [0001_create_tenants]
+    operations:
+      - type: create_table
+        table:
+          name: accounts
+          primary_key:
+            columns: [tenant_id, region_id, account_id]
+          columns:
+            - name: tenant_id
+              type: integer
+            - name: region_id
+              type: integer
+            - name: account_id
+              type: integer
+          foreign_keys:
+            - columns: [tenant_id, region_id]
+              to_table: tenants
+              to_columns: [tenant_id, region_id]
+
+dialects:
+  postgres:
+    checks: [migrate, inspect]
+    expect_schema:
+      tables:
+        accounts:
+          name: accounts
+          primary_key:
+            name: accounts_pkey
+            columns: [tenant_id, region_id, account_id]
+          columns:
+            - name: tenant_id
+              type: integer
+              primary_key: true
+            - name: region_id
+              type: integer
+              primary_key: true
+            - name: account_id
+              type: integer
+              primary_key: true
+          foreign_keys:
+            - name: accounts_tenant_id_region_id_fkey
+              columns: [tenant_id, region_id]
+              to_table: tenants
+              to_columns: [tenant_id, region_id]
+        tenants:
+          name: tenants
+          primary_key:
+            name: tenants_pkey
+            columns: [tenant_id, region_id]
+          columns:
+            - name: tenant_id
+              type: integer
+              primary_key: true
+            - name: region_id
+              type: integer
+              primary_key: true
+  sqlite:
+    checks: [migrate, inspect]
+    expect_schema:
+      tables:
+        accounts:
+          name: accounts
+          primary_key:
+            name: accounts_pkey
+            columns: [tenant_id, region_id, account_id]
+          columns:
+            - name: tenant_id
+              type: integer
+              primary_key: true
+            - name: region_id
+              type: integer
+              primary_key: true
+            - name: account_id
+              type: integer
+              primary_key: true
+          foreign_keys:
+            - name: accounts_tenant_id_region_id_fkey
+              columns: [tenant_id, region_id]
+              to_table: tenants
+              to_columns: [tenant_id, region_id]
+        tenants:
+          name: tenants
+          primary_key:
+            name: tenants_pkey
+            columns: [tenant_id, region_id]
+          columns:
+            - name: tenant_id
+              type: integer
+              primary_key: true
+            - name: region_id
+              type: integer
+              primary_key: true

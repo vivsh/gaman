@@ -1,0 +1,26 @@
+description: verify ignores a live-only table outside migration ownership
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+
+mutate_sql: |
+  CREATE TABLE external_notes (id integer PRIMARY KEY, body text);
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify: []
+  sqlite:
+    checks: [verify]
+    expect_verify: []

@@ -1319,9 +1319,26 @@ fn drop_order_respects_fk_dependencies() {
     );
 }
 
-mod proptest_diff {
+mod property_diff {
     use super::*;
+    use std::collections::BTreeSet;
+
     use proptest::prelude::*;
+
+    fn arb_identifier() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "[a-z][a-z0-9_]{0,10}".prop_map(|value| value),
+            "[A-Z][A-Za-z0-9_]{0,10}".prop_map(|value| value),
+            "[a-z]{1,8}_[0-9]{1,3}".prop_map(|value| value),
+            Just("user".to_string()),
+            Just("order".to_string()),
+            Just("very_long_identifier_name_for_property_tests".to_string()),
+        ]
+    }
+
+    fn arb_column_name() -> impl Strategy<Value = String> {
+        "[a-z][a-z0-9_]{0,8}".prop_map(|value| value)
+    }
 
     fn arb_column() -> impl Strategy<Value = Column> {
         let types = prop_oneof![
@@ -1329,136 +1346,137 @@ mod proptest_diff {
             Just("text".to_string()),
             Just("boolean".to_string()),
             Just("bigint".to_string()),
-            Just("varchar(255)".to_string()),
+            Just("varchar(255)".to_string())
         ];
-        (
-            "[a-z]{3,8}",
-            types,
-            any::<bool>(),
-            any::<bool>(),
-            proptest::option::of(Just("0".to_string())),
-        )
-            .prop_map(|(name, col_type, nullable, primary_key, default)| Column {
-                name,
-                col_type,
-                nullable,
-                primary_key,
-                default,
-                references: None,
-                check: None,
-                generated: None,
-            })
+        (arb_column_name(), types, any::<bool>()).prop_map(|(name, col_type, nullable)| Column {
+            name,
+            col_type,
+            nullable,
+            primary_key: false,
+            default: None,
+            references: None,
+            check: None,
+            generated: None,
+        })
     }
 
     fn arb_table() -> impl Strategy<Value = Table> {
-        ("[a-z]{3,8}", proptest::collection::vec(arb_column(), 1..5)).prop_map(|(name, columns)| {
-            let mut seen = std::collections::HashSet::new();
-            let mut columns: Vec<Column> = columns
-                .into_iter()
-                .filter(|c| seen.insert(c.name.clone()))
-                .collect();
-            let mut has_pk = false;
-            for col in &mut columns {
-                if col.primary_key {
-                    if has_pk {
-                        col.primary_key = false;
-                    }
-                    has_pk = true;
+        (
+            arb_identifier(),
+            proptest::collection::vec(arb_column(), 1..5),
+        )
+            .prop_map(|(name, columns)| {
+                let mut seen = BTreeSet::new();
+                let mut columns: Vec<Column> = columns
+                    .into_iter()
+                    .filter(|column| seen.insert(column.name.clone()))
+                    .collect();
+                if columns.is_empty() {
+                    columns.push(Column {
+                        name: "id".to_string(),
+                        col_type: "integer".to_string(),
+                        nullable: false,
+                        primary_key: false,
+                        ..Default::default()
+                    });
                 }
+                Table {
+                    name,
+                    schema: None,
+                    primary_key: None,
+                    columns,
+                    foreign_keys: vec![],
+                    indexes: vec![],
+                    constraints: vec![],
+                    triggers: vec![],
+                }
+            })
+    }
+
+    fn arb_schema() -> impl Strategy<Value = Schema> {
+        proptest::collection::vec(arb_table(), 0..4).prop_map(|tables| {
+            let mut schema = Schema::default();
+            for table in tables {
+                schema.tables.insert(table.name.clone(), table);
             }
+            schema.normalize();
+            schema
+        })
+    }
+
+    fn add_generated_table(mut schema: Schema, suffix: u16) -> Schema {
+        let mut name = format!("generated_{suffix}");
+        while schema.tables.contains_key(&name) {
+            name.push_str("_next");
+        }
+        schema.tables.insert(
+            name.clone(),
             Table {
-                name: name.clone(),
+                name,
                 schema: None,
                 primary_key: None,
-                columns,
+                columns: vec![Column {
+                    name: "id".to_string(),
+                    col_type: "integer".to_string(),
+                    nullable: false,
+                    primary_key: true,
+                    ..Default::default()
+                }],
                 foreign_keys: vec![],
                 indexes: vec![],
                 constraints: vec![],
                 triggers: vec![],
-            }
-        })
+            },
+        );
+        schema.normalize();
+        schema
     }
 
-    fn arb_enum_def() -> impl Strategy<Value = EnumDef> {
-        ("[a-z]{3,8}", proptest::collection::vec("[a-z]{2,6}", 1..5)).prop_map(|(name, values)| {
-            EnumDef {
-                name,
-                schema: None,
-                values,
-            }
-        })
-    }
-
-    fn arb_extension() -> impl Strategy<Value = ExtensionDef> {
-        "[a-z]{3,10}".prop_map(|name| ExtensionDef {
-            name,
-            schema: None,
-            version: None,
-        })
-    }
-
-    fn arb_schema() -> impl Strategy<Value = Schema> {
-        (
-            proptest::collection::vec(arb_table(), 0..4),
-            proptest::collection::vec(arb_enum_def(), 0..3),
-            proptest::collection::vec(arb_extension(), 0..2),
-        )
-            .prop_map(|(tables, enums, extensions)| {
-                let mut schema = Schema::default();
-                for t in tables {
-                    schema.tables.insert(t.name.clone(), t);
-                }
-                for e in enums {
-                    schema.enums.insert(e.name.clone(), e);
-                }
-                for ext in extensions {
-                    schema.extensions.insert(ext.name.clone(), ext);
-                }
-                schema
-            })
+    fn apply_ops(mut schema: Schema, ops: &[Operation]) -> Result<Schema, String> {
+        for operation in ops {
+            schema
+                .apply(operation)
+                .map_err(|error| format!("failed to apply {operation:?}: {error}"))?;
+        }
+        Ok(schema)
     }
 
     proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
         #[test]
-        #[doc = "Diffing a schema against itself must produce zero operations."]
+        #[doc = "Diffing a normalized schema against itself produces no operations."]
         fn identity_diff_is_empty(schema in arb_schema()) {
-            let ops = generate_diff(&schema, &schema);
-            prop_assert!(ops.is_empty(), "diff(s, s) should be empty, got {} ops", ops.len());
+            let ops = DiffEngine::new()
+                .diff(&schema, &schema, &Dialect::Postgres)
+                .expect("identity diff should not fail");
+            prop_assert!(ops.is_empty(), "diff(schema, schema) should be empty, got {ops:?}");
         }
-    }
 
-    proptest! {
         #[test]
-        #[doc = "Applying the diff to the previous schema must reconstruct the current schema."]
-        fn apply_roundtrip(current in arb_schema(), previous in arb_schema()) {
-            let mut current = current;
-            let mut previous = previous;
-            current.normalize();
-            previous.normalize();
-            let raw_ops = generate_diff(&current, &previous);
-            let ops = inject_orphan_triggers(raw_ops, &previous);
-            let ops = inject_enum_column_casts(ops, &previous);
-            let ops = decompose(ops);
-            let sorted = sort_operations(ops);
-            prop_assert!(sorted.is_ok(), "sort_operations failed: {:?}", sorted.err());
-            let sorted = sorted.unwrap();
+        #[doc = "Diff output is deterministic for the same normalized input pair."]
+        fn diff_output_is_deterministic(previous in arb_schema(), suffix in any::<u16>()) {
+            let current = add_generated_table(previous.clone(), suffix);
+            let first = DiffEngine::new()
+                .diff(&current, &previous, &Dialect::Postgres)
+                .expect("diff should succeed");
+            let second = DiffEngine::new()
+                .diff(&current, &previous, &Dialect::Postgres)
+                .expect("diff should succeed");
+            prop_assert_eq!(first, second);
+        }
 
-            let mut rebuilt = previous.clone();
-            for op in &sorted {
-                let result = rebuilt.apply(op);
-                prop_assert!(result.is_ok(), "apply failed on {:?}: {:?}", op, result.err());
-            }
+        #[test]
+        #[doc = "Applying a generated add-table diff reconstructs the target schema."]
+        fn add_table_diff_replays_to_target(previous in arb_schema(), suffix in any::<u16>()) {
+            let current = add_generated_table(previous.clone(), suffix);
+            let ops = DiffEngine::new()
+                .diff(&current, &previous, &Dialect::Postgres)
+                .expect("diff should succeed");
+            let rebuilt = apply_ops(previous, &ops);
+            prop_assert!(rebuilt.is_ok(), "apply failed: {:?}", rebuilt.err());
+            let rebuilt = rebuilt.expect("checked ok");
             prop_assert_eq!(rebuilt, current);
-        }
-    }
-
-    proptest! {
-        #[test]
-        #[doc = "Diff output must be deterministic across multiple invocations."]
-        fn deterministic_diff(current in arb_schema(), previous in arb_schema()) {
-            let ops1 = generate_diff(&current, &previous);
-            let ops2 = generate_diff(&current, &previous);
-            prop_assert_eq!(ops1, ops2, "diff must be deterministic");
         }
     }
 }

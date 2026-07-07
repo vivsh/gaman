@@ -1,0 +1,62 @@
+description: PostgreSQL verify reports owned trigger wiring drift
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - functions_opaque
+  - trigger_query_objects
+
+migrations:
+  - id: 0001_create_trigger
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+      - type: create_table
+        table:
+          name: audit_log
+          columns:
+            - name: user_id
+              type: integer
+      - type: create_function
+        function:
+          name: audit_users_fn
+          arguments: ""
+          returns: trigger
+          language: plpgsql
+          body: "BEGIN\nINSERT INTO audit_log(user_id) VALUES (NEW.id);\nRETURN NEW;\nEND;"
+      - type: create_trigger
+        table_name: users
+        trigger:
+          name: users_audit_trg
+          timing: after
+          events: [insert]
+          scope: row
+          function_name: audit_users_fn
+
+mutate_sql: |
+  DROP TRIGGER users_audit_trg ON users;
+  CREATE TRIGGER users_audit_trg BEFORE INSERT ON users
+    FOR EACH ROW EXECUTE FUNCTION audit_users_fn();
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify:
+      - type: alter_trigger
+        table_name: users
+        old:
+          name: users_audit_trg
+          timing: before
+          events: [insert]
+          scope: row
+          function_name: audit_users_fn
+        new:
+          name: users_audit_trg
+          timing: after
+          events: [insert]
+          scope: row
+          function_name: audit_users_fn

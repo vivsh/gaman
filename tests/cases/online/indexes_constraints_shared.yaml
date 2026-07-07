@@ -1,0 +1,50 @@
+description: indexes unique constraints and check constraints enforce live data rules
+features:
+  - live_migration_application
+  - indexes_constraints
+  - indexes
+  - unique_constraints
+  - check_constraints
+  - data_preservation
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email
+              type: text
+            - name: age
+              type: integer
+          indexes:
+            - columns: [age]
+          constraints:
+            - kind: unique
+              name: users_email_key
+              columns: [email]
+            - kind: check
+              name: users_age_check
+              expression: age >= 0
+
+dialects:
+  postgres:
+    checks: [migrate, data]
+    data:
+      - sql: "INSERT INTO users (id, email, age) VALUES (1, 'one@example.com', 10)"
+      - sql: "INSERT INTO users (id, email, age) VALUES (2, 'one@example.com', 11)"
+        expect_error: duplicate key
+      - sql: "INSERT INTO users (id, email, age) VALUES (3, 'three@example.com', -1)"
+        expect_error: check constraint
+  sqlite:
+    checks: [migrate, data]
+    data:
+      - sql: "INSERT INTO users (id, email, age) VALUES (1, 'one@example.com', 10)"
+      - sql: "INSERT INTO users (id, email, age) VALUES (2, 'one@example.com', 11)"
+        expect_error: UNIQUE constraint failed
+      - sql: "INSERT INTO users (id, email, age) VALUES (3, 'three@example.com', -1)"
+        expect_error: CHECK constraint failed

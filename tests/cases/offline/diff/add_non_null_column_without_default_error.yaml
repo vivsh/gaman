@@ -1,0 +1,31 @@
+---
+description: Diff asks before adding a non-null column without a default.
+group: diff
+features:
+- diff.diff_add_non_null_column_without_default_error
+- group.diff
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: add_required_status
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: status
+        type: text
+expect_error: clarification needed

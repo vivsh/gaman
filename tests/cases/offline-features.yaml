@@ -1,0 +1,729 @@
+---
+features:
+- id: answer.keep_type
+  label: answer / keep type
+  category: answer
+- id: answer.not_null_default
+  label: answer / not null default
+  category: answer
+- id: answer.not_null_manual
+  label: answer / not null manual
+  category: answer
+- id: answer.not_null_nullable
+  label: answer / not null nullable
+  category: answer
+- id: answer.rename_no
+  label: answer / rename no
+  category: answer
+- id: answer.rename_to
+  label: answer / rename to
+  category: answer
+- id: answer.type_cast
+  label: answer / type cast
+  category: answer
+- id: answer.type_cast_implicit
+  label: answer / type cast implicit
+  category: answer
+- id: answer.use_type
+  label: answer / use type
+  category: answer
+- id: clarification.not_null_add
+  label: clarification / not null add
+  category: clarification
+- id: clarification.not_null_change
+  label: clarification / not null change
+  category: clarification
+- id: clarification.rename_column
+  label: clarification / rename column
+  category: clarification
+- id: clarification.rename_enum_value
+  label: clarification / rename enum value
+  category: clarification
+- id: clarification.rename_table
+  label: clarification / rename table
+  category: clarification
+- id: clarification.type_cast
+  label: clarification / type cast
+  category: clarification
+- id: clarification.unknown_type
+  label: clarification / unknown type
+  category: clarification
+- id: diff.diff_add_non_null_column_with_default
+  label: diff / diff add non null column with default
+  category: diff
+- id: diff.diff_add_non_null_column_without_default_error
+  label: diff / diff add non null column without default error
+  category: diff
+- id: diff.diff_alter_default_added
+  label: diff / diff alter default added
+  category: diff
+- id: diff.diff_alter_type_with_cast_decision
+  label: diff / diff alter type with cast decision
+  category: diff
+- id: diff.diff_check_constraint_added
+  label: diff / diff check constraint added
+  category: diff
+- id: diff.diff_composite_fk_change
+  label: diff / diff composite fk change
+  category: diff
+- id: diff.diff_create_table
+  label: diff / diff create table
+  category: diff
+- id: diff.diff_drop_table
+  label: diff / diff drop table
+  category: diff
+- id: diff.diff_enum_append
+  label: diff / diff enum append
+  category: diff
+- id: diff.diff_function_body_changed
+  label: diff / diff function body changed
+  category: diff
+- id: diff.diff_function_formatting_noop
+  label: diff / diff function formatting noop
+  category: diff
+- id: diff.diff_function_signature_changed
+  label: diff / diff function signature changed
+  category: diff
+- id: diff.diff_generated_column_added
+  label: diff / diff generated column added
+  category: diff
+- id: diff.diff_index_added
+  label: diff / diff index added
+  category: diff
+- id: diff.diff_index_dropped
+  label: diff / diff index dropped
+  category: diff
+- id: diff.diff_primary_key_mutation_error
+  label: diff / diff primary key mutation error
+  category: diff
+- id: diff.diff_rename_column_with_decision
+  label: diff / diff rename column with decision
+  category: diff
+- id: diff.diff_rename_table_with_decision
+  label: diff / diff rename table with decision
+  category: diff
+- id: diff.diff_trigger_query_changed
+  label: diff / diff trigger query changed
+  category: diff
+- id: diff.diff_trigger_query_formatting_noop
+  label: diff / diff trigger query formatting noop
+  category: diff
+- id: diff.diff_unique_constraint_added
+  label: diff / diff unique constraint added
+  category: diff
+- id: diff.diff_view_definition_changed
+  label: diff / diff view definition changed
+  category: diff
+- id: diff.diff_view_formatting_noop
+  label: diff / diff view formatting noop
+  category: diff
+- id: diff.schema_to_migration_add_nullable_email
+  label: diff / schema to migration add nullable email
+  category: diff
+- id: diff.schema_to_migration_no_changes
+  label: diff / schema to migration no changes
+  category: diff
+- id: end_to_end.end_to_end_add_email
+  label: end to end / end to end add email
+  category: end_to_end
+- id: group.diff
+  label: group / diff
+  category: group
+- id: group.disambiguator
+  label: group / disambiguator
+  category: group
+- id: group.end_to_end
+  label: group / end to end
+  category: group
+- id: group.parser
+  label: group / parser
+  category: group
+- id: group.replay
+  label: group / replay
+  category: group
+- id: group.rollback
+  label: group / rollback
+  category: group
+- id: group.sql_rendering
+  label: group / sql rendering
+  category: group
+- id: group.sql_to_schema
+  label: group / sql to schema
+  category: group
+- id: group.unsupported
+  label: group / unsupported
+  category: group
+- id: group.validation
+  label: group / validation
+  category: group
+- id: kind.end_to_end
+  label: kind / end to end
+  category: kind
+- id: kind.migration_to_replay
+  label: kind / migration to replay
+  category: kind
+- id: kind.migration_to_sql
+  label: kind / migration to sql
+  category: kind
+- id: kind.schema_to_migration
+  label: kind / schema to migration
+  category: kind
+- id: kind.sql_parse
+  label: kind / sql parse
+  category: kind
+- id: kind.sql_to_schema
+  label: kind / sql to schema
+  category: kind
+- id: operation.add_column
+  label: operation / add column
+  category: operation
+- id: operation.add_constraint
+  label: operation / add constraint
+  category: operation
+- id: operation.add_foreign_key
+  label: operation / add foreign key
+  category: operation
+- id: operation.add_index
+  label: operation / add index
+  category: operation
+- id: operation.alter_column
+  label: operation / alter column
+  category: operation
+- id: operation.alter_enum
+  label: operation / alter enum
+  category: operation
+- id: operation.alter_function
+  label: operation / alter function
+  category: operation
+- id: operation.alter_trigger
+  label: operation / alter trigger
+  category: operation
+- id: operation.create_enum
+  label: operation / create enum
+  category: operation
+- id: operation.create_extension
+  label: operation / create extension
+  category: operation
+- id: operation.create_function
+  label: operation / create function
+  category: operation
+- id: operation.create_table
+  label: operation / create table
+  category: operation
+- id: operation.create_trigger
+  label: operation / create trigger
+  category: operation
+- id: operation.create_view
+  label: operation / create view
+  category: operation
+- id: operation.drop_column
+  label: operation / drop column
+  category: operation
+- id: operation.drop_constraint
+  label: operation / drop constraint
+  category: operation
+- id: operation.drop_enum
+  label: operation / drop enum
+  category: operation
+- id: operation.drop_extension
+  label: operation / drop extension
+  category: operation
+- id: operation.drop_foreign_key
+  label: operation / drop foreign key
+  category: operation
+- id: operation.drop_function
+  label: operation / drop function
+  category: operation
+- id: operation.drop_index
+  label: operation / drop index
+  category: operation
+- id: operation.drop_table
+  label: operation / drop table
+  category: operation
+- id: operation.drop_trigger
+  label: operation / drop trigger
+  category: operation
+- id: operation.drop_view
+  label: operation / drop view
+  category: operation
+- id: operation.rename_column
+  label: operation / rename column
+  category: operation
+- id: operation.rename_enum_value
+  label: operation / rename enum value
+  category: operation
+- id: operation.rename_table
+  label: operation / rename table
+  category: operation
+- id: operation.replace_view
+  label: operation / replace view
+  category: operation
+- id: operation.statement
+  label: operation / statement
+  category: operation
+- id: parser.mysql.parser_mysql_create_fulltext_index_parse_error
+  label: parser / mysql / parser mysql create fulltext index parse error
+  category: parser
+  dialect: mysql
+- id: parser.mysql.parser_mysql_create_function_parse_error
+  label: parser / mysql / parser mysql create function parse error
+  category: parser
+  dialect: mysql
+- id: parser.mysql.parser_mysql_create_prefix_index
+  label: parser / mysql / parser mysql create prefix index
+  category: parser
+  dialect: mysql
+- id: parser.mysql.parser_mysql_create_table_basic
+  label: parser / mysql / parser mysql create table basic
+  category: parser
+  dialect: mysql
+- id: parser.mysql.parser_mysql_create_table_composite_fk
+  label: parser / mysql / parser mysql create table composite fk
+  category: parser
+  dialect: mysql
+- id: parser.mysql.parser_mysql_create_trigger
+  label: parser / mysql / parser mysql create trigger
+  category: parser
+  dialect: mysql
+- id: parser.postgres.parser_postgres_comment_unsupported
+  label: parser / postgres / parser postgres comment unsupported
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_create_collation_unsupported
+  label: parser / postgres / parser postgres create collation unsupported
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_create_event_trigger_parse_error
+  label: parser / postgres / parser postgres create event trigger parse error
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_create_function
+  label: parser / postgres / parser postgres create function
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_create_materialized_view_tail_parse_error
+  label: parser / postgres / parser postgres create materialized view tail parse error
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_create_partial_index
+  label: parser / postgres / parser postgres create partial index
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_create_policy_unsupported
+  label: parser / postgres / parser postgres create policy unsupported
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_create_publication_parse_error
+  label: parser / postgres / parser postgres create publication parse error
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_create_table_basic
+  label: parser / postgres / parser postgres create table basic
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_create_table_composite_fk
+  label: parser / postgres / parser postgres create table composite fk
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_create_table_exclude_parse_error
+  label: parser / postgres / parser postgres create table exclude parse error
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_create_table_generated_column
+  label: parser / postgres / parser postgres create table generated column
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_create_table_identity
+  label: parser / postgres / parser postgres create table identity
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_create_trigger
+  label: parser / postgres / parser postgres create trigger
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_create_view
+  label: parser / postgres / parser postgres create view
+  category: parser
+  dialect: postgres
+- id: parser.postgres.parser_postgres_grant_unsupported
+  label: parser / postgres / parser postgres grant unsupported
+  category: parser
+  dialect: postgres
+- id: parser.sqlite.parser_sqlite_alter_table_drop_column
+  label: parser / sqlite / parser sqlite alter table drop column
+  category: parser
+  dialect: sqlite
+- id: parser.sqlite.parser_sqlite_alter_table_rename
+  label: parser / sqlite / parser sqlite alter table rename
+  category: parser
+  dialect: sqlite
+- id: parser.sqlite.parser_sqlite_create_expression_index
+  label: parser / sqlite / parser sqlite create expression index
+  category: parser
+  dialect: sqlite
+- id: parser.sqlite.parser_sqlite_create_generated_column
+  label: parser / sqlite / parser sqlite create generated column
+  category: parser
+  dialect: sqlite
+- id: parser.sqlite.parser_sqlite_create_partial_index
+  label: parser / sqlite / parser sqlite create partial index
+  category: parser
+  dialect: sqlite
+- id: parser.sqlite.parser_sqlite_create_strict_table
+  label: parser / sqlite / parser sqlite create strict table
+  category: parser
+  dialect: sqlite
+- id: parser.sqlite.parser_sqlite_create_table_composite_fk
+  label: parser / sqlite / parser sqlite create table composite fk
+  category: parser
+  dialect: sqlite
+- id: parser.sqlite.parser_sqlite_create_trigger
+  label: parser / sqlite / parser sqlite create trigger
+  category: parser
+  dialect: sqlite
+- id: parser.sqlite.parser_sqlite_create_without_rowid
+  label: parser / sqlite / parser sqlite create without rowid
+  category: parser
+  dialect: sqlite
+- id: renderer.postgres.add_column
+  label: renderer / postgres / add column
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.add_constraint
+  label: renderer / postgres / add constraint
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.add_foreign_key
+  label: renderer / postgres / add foreign key
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.add_index
+  label: renderer / postgres / add index
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.alter_column
+  label: renderer / postgres / alter column
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.alter_enum
+  label: renderer / postgres / alter enum
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.alter_function
+  label: renderer / postgres / alter function
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.alter_trigger
+  label: renderer / postgres / alter trigger
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.create_enum
+  label: renderer / postgres / create enum
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.create_extension
+  label: renderer / postgres / create extension
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.create_function
+  label: renderer / postgres / create function
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.create_table
+  label: renderer / postgres / create table
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.create_trigger
+  label: renderer / postgres / create trigger
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.create_view
+  label: renderer / postgres / create view
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.drop_enum
+  label: renderer / postgres / drop enum
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.drop_extension
+  label: renderer / postgres / drop extension
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.drop_function
+  label: renderer / postgres / drop function
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.drop_index
+  label: renderer / postgres / drop index
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.drop_table
+  label: renderer / postgres / drop table
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.drop_trigger
+  label: renderer / postgres / drop trigger
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.drop_view
+  label: renderer / postgres / drop view
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.rename_column
+  label: renderer / postgres / rename column
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.rename_enum_value
+  label: renderer / postgres / rename enum value
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.rename_table
+  label: renderer / postgres / rename table
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.replace_view
+  label: renderer / postgres / replace view
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.statement
+  label: renderer / postgres / statement
+  category: renderer
+  dialect: postgres
+- id: renderer.postgres.summary
+  label: renderer / postgres / summary
+  category: renderer
+  dialect: postgres
+- id: renderer.sqlite.add_column
+  label: renderer / sqlite / add column
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.add_constraint
+  label: renderer / sqlite / add constraint
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.add_foreign_key
+  label: renderer / sqlite / add foreign key
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.add_index
+  label: renderer / sqlite / add index
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.alter_column
+  label: renderer / sqlite / alter column
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.alter_enum
+  label: renderer / sqlite / alter enum
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.create_enum
+  label: renderer / sqlite / create enum
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.create_extension
+  label: renderer / sqlite / create extension
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.create_function
+  label: renderer / sqlite / create function
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.create_table
+  label: renderer / sqlite / create table
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.drop_column
+  label: renderer / sqlite / drop column
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.drop_constraint
+  label: renderer / sqlite / drop constraint
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.drop_enum
+  label: renderer / sqlite / drop enum
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.drop_foreign_key
+  label: renderer / sqlite / drop foreign key
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.drop_function
+  label: renderer / sqlite / drop function
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.rename_enum_value
+  label: renderer / sqlite / rename enum value
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.statement
+  label: renderer / sqlite / statement
+  category: renderer
+  dialect: sqlite
+- id: renderer.sqlite.summary
+  label: renderer / sqlite / summary
+  category: renderer
+  dialect: sqlite
+- id: replay.migration_to_replay_chain
+  label: replay / migration to replay chain
+  category: replay
+- id: replay.migration_to_replay_cycle
+  label: replay / migration to replay cycle
+  category: replay
+- id: replay.replay_branching_merge
+  label: replay / replay branching merge
+  category: replay
+- id: replay.replay_composite_keys
+  label: replay / replay composite keys
+  category: replay
+- id: replay.replay_duplicate_migration_id
+  label: replay / replay duplicate migration id
+  category: replay
+- id: replay.replay_invalid_migration_id
+  label: replay / replay invalid migration id
+  category: replay
+- id: replay.replay_missing_dependency
+  label: replay / replay missing dependency
+  category: replay
+- id: replay.replay_statement_is_noop
+  label: replay / replay statement is noop
+  category: replay
+- id: rollback.non_reversible
+  label: rollback / non reversible
+  category: rollback
+- id: rollback.reversible
+  label: rollback / reversible
+  category: rollback
+- id: rollback.unknown_selected_id
+  label: rollback / unknown selected id
+  category: rollback
+- id: rollback.unknown_selection
+  label: rollback / unknown selection
+  category: rollback
+- id: sql_rendering.migration_to_sql_basic
+  label: sql rendering / migration to sql basic
+  category: sql_rendering
+- id: sql_rendering.migration_to_sql_postgres_features
+  label: sql rendering / migration to sql postgres features
+  category: sql_rendering
+- id: sql_rendering.migration_to_sql_raw_statement
+  label: sql rendering / migration to sql raw statement
+  category: sql_rendering
+- id: sql_rendering.migration_to_sql_sqlite_rebuild_drop_column
+  label: sql rendering / migration to sql sqlite rebuild drop column
+  category: sql_rendering
+- id: sql_rendering.migration_to_sql_sqlite_unsupported_extension
+  label: sql rendering / migration to sql sqlite unsupported extension
+  category: sql_rendering
+- id: sql_rendering.sql_postgres_add_foreign_key
+  label: sql rendering / sql postgres add foreign key
+  category: sql_rendering
+- id: sql_rendering.sql_postgres_composite_pk_fk_create_table
+  label: sql rendering / sql postgres composite pk fk create table
+  category: sql_rendering
+- id: sql_rendering.sql_postgres_concurrent_index
+  label: sql rendering / sql postgres concurrent index
+  category: sql_rendering
+- id: sql_rendering.sql_postgres_drop_opaque_objects
+  label: sql rendering / sql postgres drop opaque objects
+  category: sql_rendering
+- id: sql_rendering.sql_postgres_enum_insert_before
+  label: sql rendering / sql postgres enum insert before
+  category: sql_rendering
+- id: sql_rendering.sql_postgres_query_trigger_row
+  label: sql rendering / sql postgres query trigger row
+  category: sql_rendering
+- id: sql_rendering.sql_postgres_schema_qualified_create_table
+  label: sql rendering / sql postgres schema qualified create table
+  category: sql_rendering
+- id: sql_rendering.sql_postgres_schema_qualified_drop_index
+  label: sql rendering / sql postgres schema qualified drop index
+  category: sql_rendering
+- id: sql_rendering.sql_postgres_schema_qualified_function_trigger
+  label: sql rendering / sql postgres schema qualified function trigger
+  category: sql_rendering
+- id: sql_rendering.sql_sqlite_add_nullable_column
+  label: sql rendering / sql sqlite add nullable column
+  category: sql_rendering
+- id: sql_rendering.sql_sqlite_create_table_composite_pk_fk
+  label: sql rendering / sql sqlite create table composite pk fk
+  category: sql_rendering
+- id: sql_rendering.sql_sqlite_function_trigger_unsupported
+  label: sql rendering / sql sqlite function trigger unsupported
+  category: sql_rendering
+- id: sql_rendering.sql_sqlite_partial_index
+  label: sql rendering / sql sqlite partial index
+  category: sql_rendering
+- id: sql_rendering.sql_sqlite_raw_statement
+  label: sql rendering / sql sqlite raw statement
+  category: sql_rendering
+- id: sql_rendering.sql_sqlite_rebuild_alter_type_cast
+  label: sql rendering / sql sqlite rebuild alter type cast
+  category: sql_rendering
+- id: sql_rendering.sql_sqlite_rebuild_constraints_and_fk
+  label: sql rendering / sql sqlite rebuild constraints and fk
+  category: sql_rendering
+- id: sql_rendering.sql_sqlite_rebuild_default_only
+  label: sql rendering / sql sqlite rebuild default only
+  category: sql_rendering
+- id: sql_rendering.sql_sqlite_rebuild_drop_constraints_and_fk
+  label: sql rendering / sql sqlite rebuild drop constraints and fk
+  category: sql_rendering
+- id: sql_rendering.sql_sqlite_rebuild_generated_column
+  label: sql rendering / sql sqlite rebuild generated column
+  category: sql_rendering
+- id: sql_rendering.sql_sqlite_rebuild_not_null_default
+  label: sql rendering / sql sqlite rebuild not null default
+  category: sql_rendering
+- id: sql_rendering.sql_sqlite_rebuild_recreates_indexes
+  label: sql rendering / sql sqlite rebuild recreates indexes
+  category: sql_rendering
+- id: sql_rendering.sql_sqlite_schema_qualified_table_unsupported
+  label: sql rendering / sql sqlite schema qualified table unsupported
+  category: sql_rendering
+- id: unsupported.primary_key_mutation
+  label: unsupported / primary key mutation
+  category: unsupported
+- id: unsupported.sqlite_enum
+  label: unsupported / sqlite enum
+  category: unsupported
+- id: unsupported.sqlite_extension
+  label: unsupported / sqlite extension
+  category: unsupported
+- id: unsupported.sqlite_function
+  label: unsupported / sqlite function
+  category: unsupported
+- id: unsupported.sqlite_function_trigger
+  label: unsupported / sqlite function trigger
+  category: unsupported
+- id: unsupported.sqlite_schema_qualified_table
+  label: unsupported / sqlite schema qualified table
+  category: unsupported
+- id: validation.validation_duplicate_column_error
+  label: validation / validation duplicate column error
+  category: validation
+- id: validation.validation_generated_name_collision_error
+  label: validation / validation generated name collision error
+  category: validation
+- id: validation.validation_postgres_type_alias_noop
+  label: validation / validation postgres type alias noop
+  category: validation
+- id: validation.validation_sqlite_type_alias_noop
+  label: validation / validation sqlite type alias noop
+  category: validation
+- id: validation.validation_unknown_fk_target_error
+  label: validation / validation unknown fk target error
+  category: validation
+- id: validation.validation_unknown_index_column_error
+  label: validation / validation unknown index column error
+  category: validation
+- id: validation.validation_unknown_type_keep_type_decision
+  label: validation / validation unknown type keep type decision
+  category: validation
+- id: validation.validation_unknown_type_needs_decision
+  label: validation / validation unknown type needs decision
+  category: validation
+- id: validation.validation_unknown_type_use_type_decision
+  label: validation / validation unknown type use type decision
+  category: validation

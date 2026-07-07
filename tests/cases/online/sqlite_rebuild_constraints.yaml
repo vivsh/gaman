@@ -1,0 +1,45 @@
+description: SQLite rebuild adds unique and check constraints that reject invalid data
+features:
+  - live_migration_application
+  - sqlite_rebuild_planner
+  - indexes_constraints
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email
+              type: text
+            - name: age
+              type: integer
+  - id: 0002_add_constraints
+    dependencies: [0001_create_users]
+    operations:
+      - type: add_constraint
+        table_name: users
+        constraint:
+          kind: unique
+          name: users_email_key
+          columns: [email]
+      - type: add_constraint
+        table_name: users
+        constraint:
+          kind: check
+          name: users_age_check
+          expression: age >= 0
+
+dialects:
+  sqlite:
+    checks: [migrate, data]
+    data:
+      - sql: "INSERT INTO users (id, email, age) VALUES (1, 'one@example.com', 10)"
+      - sql: "INSERT INTO users (id, email, age) VALUES (2, 'one@example.com', 11)"
+        expect_error: UNIQUE constraint failed
+      - sql: "INSERT INTO users (id, email, age) VALUES (3, 'three@example.com', -1)"
+        expect_error: CHECK constraint failed

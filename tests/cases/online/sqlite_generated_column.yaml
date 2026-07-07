@@ -1,0 +1,39 @@
+description: SQLite generated columns survive live migration and compute from preserved data
+features:
+  - live_migration_application
+  - generated_columns
+  - sqlite_rebuild_planner
+  - data_preservation
+
+migrations:
+  - id: 0001_create_items
+    operations:
+      - type: create_table
+        table:
+          name: items
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: price
+              type: integer
+            - name: qty
+              type: integer
+      - type: statement
+        up: "INSERT INTO items (id, price, qty) VALUES (1, 7, 3)"
+  - id: 0002_add_total
+    dependencies: [0001_create_items]
+    operations:
+      - type: add_column
+        table_name: items
+        column:
+          name: total
+          type: integer
+          generated: "price * qty"
+
+dialects:
+  sqlite:
+    checks: [migrate, data]
+    data:
+      - sql: "SELECT CAST(total AS TEXT) FROM items ORDER BY id"
+        expect: ["21"]

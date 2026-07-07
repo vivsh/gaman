@@ -1,0 +1,37 @@
+---
+description: Postgres type aliases canonicalize before diffing.
+group: validation
+features:
+- group.validation
+- kind.schema_to_migration
+- validation.validation_postgres_type_alias_noop
+kind: schema_to_migration
+dialect: postgres
+name: canonical_type_noop
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: active
+        type: boolean
+      - name: created_at
+        type: timestamp with time zone
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: int4
+        primary_key: true
+      - name: active
+        type: bool
+      - name: created_at
+        type: timestamptz
+expect_no_changes: true

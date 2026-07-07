@@ -1,0 +1,40 @@
+---
+description: Diff creates a table from an empty replay state.
+group: diff
+features:
+- diff.diff_create_table
+- group.diff
+- kind.schema_to_migration
+- operation.create_table
+- renderer.postgres.create_table
+kind: schema_to_migration
+dialect: postgres
+name: create_users
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: email
+        type: text
+expect_operations:
+- type: create_table
+  table:
+    name: users
+    primary_key:
+      name: users_pkey
+      columns:
+      - id
+    columns:
+    - name: id
+      type: integer
+      primary_key: true
+    - name: email
+      type: text
+expect_sql: 'CREATE TABLE "users" ("id" integer NOT NULL, "email" text NOT NULL, CONSTRAINT
+  "users_pkey" PRIMARY KEY ("id"))
+
+'

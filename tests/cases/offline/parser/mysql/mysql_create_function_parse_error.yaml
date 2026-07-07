@@ -1,0 +1,15 @@
+---
+description: sqlparser does not parse MySQL routine function syntax.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.mysql.parser_mysql_create_function_parse_error
+kind: sql_parse
+parser_dialect: mysql
+sql: 'CREATE FUNCTION f(x INT) RETURNS INT DETERMINISTIC RETURN x + 1;
+
+'
+expect_parse: error
+expect_lowering: error
+expect_error: FUNCTION

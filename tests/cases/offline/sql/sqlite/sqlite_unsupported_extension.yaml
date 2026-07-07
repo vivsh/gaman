@@ -1,0 +1,18 @@
+---
+description: SQLite migration SQL fails clearly for PostgreSQL extension operations.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- renderer.sqlite.create_extension
+- sql_rendering.migration_to_sql_sqlite_unsupported_extension
+- unsupported.sqlite_extension
+kind: migration_to_sql
+dialect: sqlite
+migrations:
+- id: 0001_create_extension
+  operations:
+  - type: create_extension
+    extension:
+      name: pgcrypto
+expect_error: SQLite does not support extensions

@@ -1,0 +1,19 @@
+description: SQLite fails clearly for stored function migrations
+features:
+  - unsupported_feature_errors
+
+migrations:
+  - id: 0001_create_function
+    operations:
+      - type: create_function
+        function:
+          name: add_one
+          arguments: "value integer"
+          returns: integer
+          language: sql
+          body: "SELECT $1 + 1"
+
+dialects:
+  sqlite:
+    checks: [migrate, error]
+    expect_error: "operation is not supported by the SQLite dialect"

@@ -1,0 +1,43 @@
+---
+description: Diff adds a non-null column safely when a default is provided.
+group: diff
+features:
+- diff.diff_add_non_null_column_with_default
+- group.diff
+- kind.schema_to_migration
+- renderer.postgres.add_column
+- renderer.postgres.create_table
+kind: schema_to_migration
+dialect: postgres
+name: add_status
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: status
+        type: text
+        default: "'active'"
+expect_operations:
+- type: add_column
+  table_name: users
+  column:
+    name: status
+    type: text
+    default: "'active'"
+expect_sql: 'ALTER TABLE "users" ADD COLUMN "status" text NOT NULL DEFAULT ''active''
+
+'

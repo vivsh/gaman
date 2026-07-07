@@ -1,0 +1,18 @@
+description: empty migrations apply without changing inspected schema
+features:
+  - live_migration_application
+  - live_inspect_verify
+
+migrations:
+  - id: 0001_empty
+    operations: []
+
+dialects:
+  postgres:
+    checks: [migrate, inspect]
+    expect_schema:
+      tables: {}
+  sqlite:
+    checks: [migrate, inspect]
+    expect_schema:
+      tables: {}

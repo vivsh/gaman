@@ -1,0 +1,28 @@
+---
+description: PostgreSQL parser and Gaman lowering handle a simple SQL function.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- operation.create_function
+- parser.postgres.parser_postgres_create_function
+kind: sql_parse
+parser_dialect: postgres
+sql: |
+  CREATE FUNCTION add_one(integer)
+  RETURNS integer
+  LANGUAGE sql
+  IMMUTABLE
+  AS $$ SELECT $1 + 1 $$;
+expect_parse: ok
+expect_lowering: ok
+expect_schema:
+  tables: {}
+  functions:
+    add_one:
+      name: add_one
+      arguments: integer
+      returns: integer
+      language: sql
+      body: " SELECT $1 + 1 "
+      volatility: immutable

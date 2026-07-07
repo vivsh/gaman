@@ -6,3 +6,8 @@
 output.txt
 .DS_Store
 *.log
+results/*-support-results.yaml
+results/*.html
+results/*.md
+results/coverage/
+results/benchmarks/

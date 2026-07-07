@@ -1,0 +1,16 @@
+---
+description: MySQL parser accepts simple triggers.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.mysql.parser_mysql_create_trigger
+kind: sql_parse
+parser_dialect: mysql
+sql: |
+  CREATE TRIGGER users_bi
+  BEFORE INSERT ON users
+  FOR EACH ROW SET NEW.created_at = NOW();
+expect_parse: ok
+expect_lowering: unsupported
+expect_error: unsupported

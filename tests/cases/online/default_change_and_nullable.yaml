@@ -1,0 +1,55 @@
+description: default and nullability changes apply and preserve existing rows
+features:
+  - live_migration_application
+  - type_null_default_changes
+  - data_preservation
+
+migrations:
+  - id: 0001_create_tasks
+    operations:
+      - type: create_table
+        table:
+          name: tasks
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: status
+              type: text
+              nullable: true
+              default: "'draft'"
+      - type: statement
+        up: "INSERT INTO tasks (id, status) VALUES (1, 'done')"
+  - id: 0002_change_status
+    dependencies: [0001_create_tasks]
+    operations:
+      - type: alter_column
+        table_name: tasks
+        old:
+          name: status
+          type: text
+          nullable: true
+          default: "'draft'"
+        new:
+          name: status
+          type: text
+          nullable: false
+          default: "'todo'"
+
+dialects:
+  postgres:
+    checks: [migrate, data]
+    data:
+      - sql: "INSERT INTO tasks (id) VALUES (2)"
+      - sql: "SELECT status FROM tasks ORDER BY id"
+        expect: ["done", "todo"]
+      - sql: "INSERT INTO tasks (id, status) VALUES (3, NULL)"
+        expect_error: null value
+  sqlite:
+    checks: [migrate, data]
+    data:
+      - sql: "INSERT INTO tasks (id) VALUES (2)"
+      - sql: "SELECT status FROM tasks ORDER BY id"
+        expect: ["done", "todo"]
+      - sql: "INSERT INTO tasks (id, status) VALUES (3, NULL)"
+        expect_error: NOT NULL constraint failed

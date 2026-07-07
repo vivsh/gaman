@@ -1,0 +1,38 @@
+---
+description: Real view definition changes produce ReplaceView.
+group: diff
+features:
+- diff.diff_view_definition_changed
+- group.diff
+- kind.schema_to_migration
+- operation.replace_view
+- renderer.postgres.create_view
+- renderer.postgres.replace_view
+kind: schema_to_migration
+dialect: postgres
+name: replace_active_users
+migrations:
+- id: 0001_create_view
+  operations:
+  - type: create_view
+    view:
+      name: active_users
+      definition: SELECT id FROM users WHERE active = true
+current:
+  tables: {}
+  views:
+    active_users:
+      name: active_users
+      definition: SELECT id FROM users WHERE active IS TRUE
+expect_operations:
+- type: replace_view
+  old:
+    name: active_users
+    definition: SELECT id FROM users WHERE active = true
+  new:
+    name: active_users
+    definition: SELECT id FROM users WHERE active IS TRUE
+expect_sql: 'CREATE OR REPLACE VIEW "active_users" AS SELECT id FROM users WHERE active
+  IS TRUE
+
+'

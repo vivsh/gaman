@@ -1,0 +1,72 @@
+description: live migrations rename tables and columns while preserving data
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - tables_columns
+  - table_create_drop_rename
+  - column_add_drop_rename
+  - single_primary_keys
+  - data_preservation
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email
+              type: text
+      - type: statement
+        up: "INSERT INTO users (id, email) VALUES (1, 'one@example.com')"
+  - id: 0002_rename_users
+    dependencies: [0001_create_users]
+    operations:
+      - type: rename_table
+        old_name: users
+        new_name: accounts
+      - type: rename_column
+        table_name: accounts
+        old_name: email
+        new_name: email_address
+
+dialects:
+  postgres:
+    checks: [migrate, inspect, data]
+    expect_schema:
+      tables:
+        accounts:
+          name: accounts
+          primary_key:
+            name: users_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email_address
+              type: text
+    data:
+      - sql: "SELECT email_address FROM accounts ORDER BY id"
+        expect: ["one@example.com"]
+  sqlite:
+    checks: [migrate, inspect, data]
+    expect_schema:
+      tables:
+        accounts:
+          name: accounts
+          primary_key:
+            name: accounts_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email_address
+              type: text
+    data:
+      - sql: "SELECT email_address FROM accounts ORDER BY id"
+        expect: ["one@example.com"]

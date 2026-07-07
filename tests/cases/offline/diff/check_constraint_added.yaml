@@ -1,0 +1,44 @@
+---
+description: Diff adds a table-level check constraint.
+group: diff
+features:
+- diff.diff_check_constraint_added
+- group.diff
+- kind.schema_to_migration
+- operation.add_constraint
+- renderer.postgres.add_constraint
+- renderer.postgres.create_table
+kind: schema_to_migration
+dialect: postgres
+name: add_check_email
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: email
+        type: text
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: email
+        type: text
+      constraints:
+      - kind: check
+        name: users_email_check
+        expression: email <> ''
+expect_operations:
+- type: add_constraint
+  table_name: users
+  constraint:
+    kind: check
+    name: users_email_check
+    expression: email <> ''
+expect_sql: 'ALTER TABLE "users" ADD CONSTRAINT "users_email_check" CHECK (email <>
+  '''')
+
+'

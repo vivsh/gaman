@@ -236,16 +236,17 @@ fn severity_tag(s: &Severity) -> &'static str {
 mod tests {
     use super::*;
 
-    fn option_labels(message: &ClarificationMessage) -> Vec<&str> {
-        message
-            .options
-            .iter()
-            .map(|option| option.label.as_str())
-            .collect()
+    fn assert_nonempty_message(message: &ClarificationMessage) {
+        assert!(!message.description.is_empty());
+        assert!(!message.options.is_empty());
+        for option in &message.options {
+            assert!(!option.label.is_empty());
+        }
     }
 
+    /// Verifies rename-column messages expose stable answer semantics without locking prompt copy.
     #[test]
-    fn rename_column_message_spec_is_stable() {
+    fn rename_column_message_maps_options_to_answers() {
         let message = clarification_message(&Clarification {
             id: "rename_col:users:email".to_string(),
             severity: Severity::Suggestion,
@@ -256,18 +257,20 @@ mod tests {
             },
         });
 
-        assert_eq!(
-            message.description,
-            "[suggest] Column 'email' was removed from 'users'. Was it renamed?"
-        );
-        assert_eq!(
-            option_labels(&message),
-            ["email_address", "No, it was dropped"]
-        );
+        assert_nonempty_message(&message);
+        assert!(matches!(
+            &message.options[0].action,
+            OptionAction::Fixed(Answer::RenameTo(name)) if name == "email_address"
+        ));
+        assert!(matches!(
+            &message.options[1].action,
+            OptionAction::Fixed(Answer::RenameNo)
+        ));
     }
 
+    /// Verifies not-null-add messages expose all required action shapes without locking prompt copy.
     #[test]
-    fn not_null_add_message_spec_is_stable() {
+    fn not_null_add_message_maps_options_to_answers() {
         let message = clarification_message(&Clarification {
             id: "notnull_add:orders:reference_id".to_string(),
             severity: Severity::Fatal,
@@ -278,17 +281,23 @@ mod tests {
             },
         });
 
-        assert_eq!(
-            message.description,
-            "[FATAL] Column 'reference_id' (integer) on 'orders' is NOT NULL with no default."
-        );
+        assert_nonempty_message(&message);
         assert_eq!(message.options.len(), 3);
         assert!(matches!(
             message.options[0].action,
             OptionAction::RequiresInput { .. }
         ));
+        assert!(matches!(
+            message.options[1].action,
+            OptionAction::Fixed(Answer::NotNullNullable)
+        ));
+        assert!(matches!(
+            message.options[2].action,
+            OptionAction::Fixed(Answer::NotNullManual)
+        ));
     }
 
+    /// Verifies every clarification kind can be rendered as a non-empty message.
     #[test]
     fn every_clarification_kind_has_message_spec() {
         let clarifications = vec![
@@ -341,13 +350,13 @@ mod tests {
 
         for clarification in clarifications {
             let message = clarification_message(&clarification);
-            assert!(!message.description.is_empty());
-            assert!(!message.options.is_empty());
+            assert_nonempty_message(&message);
         }
     }
 
+    /// Verifies unknown-type messages expose suggested and custom-type answers without locking copy.
     #[test]
-    fn unknown_type_message_spec_is_stable() {
+    fn unknown_type_message_maps_options_to_answers() {
         let message = clarification_message(&Clarification {
             id: "unknown_type:users:age".to_string(),
             severity: Severity::Warning,
@@ -359,16 +368,14 @@ mod tests {
             },
         });
 
-        assert_eq!(
-            message.description,
-            "[WARNING] Column 'age' on 'users' uses unknown type 'intger'."
-        );
-        assert_eq!(
-            option_labels(&message),
-            [
-                "Use integer",
-                "Keep intger as a custom/domain/extension type"
-            ]
-        );
+        assert_nonempty_message(&message);
+        assert!(matches!(
+            &message.options[0].action,
+            OptionAction::Fixed(Answer::UseType(type_name)) if type_name == "integer"
+        ));
+        assert!(matches!(
+            &message.options[1].action,
+            OptionAction::Fixed(Answer::KeepType)
+        ));
     }
 }

@@ -1,0 +1,37 @@
+description: verify ignores live-only indexes constraints and foreign keys on owned tables
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - indexes_constraints
+  - composite_foreign_keys
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email
+              type: text
+            - name: ref_id
+              type: integer
+              nullable: true
+
+mutate_sql: |
+  CREATE INDEX users_email_external_idx ON users (email);
+  ALTER TABLE users ADD CONSTRAINT users_email_external_key UNIQUE (email);
+  ALTER TABLE users ADD CONSTRAINT users_ref_external_fkey FOREIGN KEY (ref_id) REFERENCES users(id);
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify: []
+  sqlite:
+    checks: [verify]
+    mutate_sql: |
+      CREATE INDEX users_email_external_idx ON users (email);
+    expect_verify: []

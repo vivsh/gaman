@@ -1,0 +1,27 @@
+description: verify ignores live-only views
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - views_opaque
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+
+mutate_sql: |
+  CREATE VIEW live_only_users AS SELECT id FROM users;
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify: []
+  sqlite:
+    checks: [verify]
+    expect_verify: []

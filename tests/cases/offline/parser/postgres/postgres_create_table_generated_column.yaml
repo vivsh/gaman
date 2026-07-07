@@ -1,0 +1,31 @@
+---
+description: PostgreSQL generated columns parse; current SQL lowering records the
+  base column shape only.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.postgres.parser_postgres_create_table_generated_column
+kind: sql_parse
+parser_dialect: postgres
+sql: |
+  CREATE TABLE users (
+      id integer PRIMARY KEY,
+      email text NOT NULL,
+      email_norm text GENERATED ALWAYS AS (lower(email)) STORED
+  );
+expect_parse: ok
+expect_lowering: ok
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: email
+        type: text
+      - name: email_norm
+        type: text
+        nullable: true

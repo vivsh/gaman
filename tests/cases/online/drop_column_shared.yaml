@@ -1,0 +1,74 @@
+description: dropping a column preserves remaining rows and inspected schema
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - tables_columns
+  - column_add_drop_rename
+  - single_primary_keys
+  - type_null_default_changes
+  - data_preservation
+
+migrations:
+  - id: 0001_create_profiles
+    operations:
+      - type: create_table
+        table:
+          name: profiles
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: display_name
+              type: text
+            - name: legacy_code
+              type: text
+              nullable: true
+      - type: statement
+        up: "INSERT INTO profiles (id, display_name, legacy_code) VALUES (1, 'Ada', 'old')"
+  - id: 0002_drop_legacy_code
+    dependencies: [0001_create_profiles]
+    operations:
+      - type: drop_column
+        table_name: profiles
+        column:
+          name: legacy_code
+          type: text
+          nullable: true
+
+dialects:
+  postgres:
+    checks: [migrate, inspect, data]
+    expect_schema:
+      tables:
+        profiles:
+          name: profiles
+          primary_key:
+            name: profiles_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: display_name
+              type: text
+    data:
+      - sql: "SELECT display_name FROM profiles ORDER BY id"
+        expect: ["Ada"]
+  sqlite:
+    checks: [migrate, inspect, data]
+    expect_schema:
+      tables:
+        profiles:
+          name: profiles
+          primary_key:
+            name: profiles_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: display_name
+              type: text
+    data:
+      - sql: "SELECT display_name FROM profiles ORDER BY id"
+        expect: ["Ada"]

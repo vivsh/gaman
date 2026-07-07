@@ -1,0 +1,54 @@
+description: cyclic foreign keys can be added after table creation
+features:
+  - live_migration_application
+  - composite_foreign_keys
+  - data_preservation
+
+migrations:
+  - id: 0001_create_nodes
+    operations:
+      - type: create_table
+        table:
+          name: left_nodes
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: right_id
+              type: integer
+              nullable: true
+      - type: create_table
+        table:
+          name: right_nodes
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: left_id
+              type: integer
+              nullable: true
+  - id: 0002_add_cycle
+    dependencies: [0001_create_nodes]
+    operations:
+      - type: add_foreign_key
+        table_name: left_nodes
+        foreign_key:
+          columns: [right_id]
+          to_table: right_nodes
+          to_columns: [id]
+      - type: add_foreign_key
+        table_name: right_nodes
+        foreign_key:
+          columns: [left_id]
+          to_table: left_nodes
+          to_columns: [id]
+
+dialects:
+  postgres:
+    checks: [migrate, data]
+    data:
+      - sql: "INSERT INTO left_nodes (id, right_id) VALUES (1, NULL)"
+      - sql: "INSERT INTO right_nodes (id, left_id) VALUES (1, 1)"
+      - sql: "UPDATE left_nodes SET right_id = 1 WHERE id = 1"
+      - sql: "SELECT CAST(COUNT(*) AS text) FROM left_nodes JOIN right_nodes ON right_nodes.id = left_nodes.right_id"
+        expect: ["1"]

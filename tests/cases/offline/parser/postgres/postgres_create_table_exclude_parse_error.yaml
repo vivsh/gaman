@@ -1,0 +1,18 @@
+---
+description: sqlparser still cannot parse PostgreSQL exclusion constraints.
+group: parser
+features:
+- group.parser
+- kind.sql_parse
+- parser.postgres.parser_postgres_create_table_exclude_parse_error
+kind: sql_parse
+parser_dialect: postgres
+sql: |
+  CREATE TABLE room_reservations (
+      room text,
+      during tsrange,
+      EXCLUDE USING gist (room WITH =, during WITH &&)
+  );
+expect_parse: error
+expect_lowering: error
+expect_error: Expected

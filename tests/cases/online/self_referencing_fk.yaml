@@ -1,0 +1,43 @@
+description: self-referencing foreign keys are enforced
+features:
+  - live_migration_application
+  - composite_foreign_keys
+  - data_preservation
+
+migrations:
+  - id: 0001_create_categories
+    operations:
+      - type: create_table
+        table:
+          name: categories
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: parent_id
+              type: integer
+              nullable: true
+          foreign_keys:
+            - columns: [parent_id]
+              to_table: categories
+              to_columns: [id]
+
+dialects:
+  postgres:
+    checks: [migrate, data]
+    data:
+      - sql: "INSERT INTO categories (id, parent_id) VALUES (1, NULL)"
+      - sql: "INSERT INTO categories (id, parent_id) VALUES (2, 1)"
+      - sql: "SELECT CAST(COUNT(*) AS text) FROM categories"
+        expect: ["2"]
+      - sql: "INSERT INTO categories (id, parent_id) VALUES (3, 99)"
+        expect_error: foreign key
+  sqlite:
+    checks: [migrate, data]
+    data:
+      - sql: "INSERT INTO categories (id, parent_id) VALUES (1, NULL)"
+      - sql: "INSERT INTO categories (id, parent_id) VALUES (2, 1)"
+      - sql: "SELECT CAST(COUNT(*) AS text) FROM categories"
+        expect: ["2"]
+      - sql: "INSERT INTO categories (id, parent_id) VALUES (3, 99)"
+        expect_error: FOREIGN KEY constraint failed

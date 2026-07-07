@@ -1,0 +1,15 @@
+description: SQLite fails clearly for extension migrations
+features:
+  - unsupported_feature_errors
+
+migrations:
+  - id: 0001_create_extension
+    operations:
+      - type: create_extension
+        extension:
+          name: pgcrypto
+
+dialects:
+  sqlite:
+    checks: [migrate, error]
+    expect_error: "operation is not supported by the SQLite dialect"

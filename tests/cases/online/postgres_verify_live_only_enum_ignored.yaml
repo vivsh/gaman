@@ -1,0 +1,24 @@
+description: PostgreSQL verify ignores live-only enums
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - enums
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+
+mutate_sql: |
+  CREATE TYPE live_only_status AS ENUM ('active', 'disabled');
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify: []

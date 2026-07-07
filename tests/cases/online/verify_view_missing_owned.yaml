@@ -1,0 +1,39 @@
+description: verify reports missing owned views
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - views_opaque
+
+migrations:
+  - id: 0001_create_view
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+      - type: create_view
+        view:
+          name: user_ids
+          definition: "SELECT id FROM users"
+
+mutate_sql: |
+  DROP VIEW user_ids;
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify:
+      - type: create_view
+        view:
+          name: user_ids
+          definition: ""
+  sqlite:
+    checks: [verify]
+    expect_verify:
+      - type: create_view
+        view:
+          name: user_ids
+          definition: ""

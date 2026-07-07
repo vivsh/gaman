@@ -1,0 +1,18 @@
+---
+description: Rollback SQL fails before output when a raw statement has no down SQL.
+group: rollback
+features:
+- group.rollback
+- kind.migration_to_sql
+- renderer.postgres.statement
+- rollback.non_reversible
+kind: migration_to_sql
+direction: rollback
+dialect: postgres
+migrations:
+- id: 0001_raw
+  operations:
+  - type: statement
+    up: UPDATE users SET active = true
+    down:
+expect_error: not reversible

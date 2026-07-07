@@ -1,0 +1,49 @@
+---
+description: NotNullDefault for a nullability change emits a backfill statement before
+  altering the column.
+group: disambiguator
+features:
+- answer.not_null_default
+- group.disambiguator
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: require_nickname
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: nickname
+        type: text
+        nullable: true
+decisions:
+- clarification_id: notnull_change:users:nickname
+  answer:
+    type: not_null_default
+    value: "'anonymous'"
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: nickname
+        type: text
+        nullable: false
+expect_operations:
+- type: statement
+  up: UPDATE "users" SET "nickname" = 'anonymous' WHERE "nickname" IS NULL
+  down:
+- type: alter_column
+  table_name: users
+  old:
+    name: nickname
+    type: text
+    nullable: true
+  new:
+    name: nickname
+    type: text
+    nullable: false
+  cast_expr:

@@ -1,0 +1,52 @@
+---
+description: PostgreSQL renders schema-qualified functions and trigger function references.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- renderer.postgres.create_function
+- renderer.postgres.create_table
+- renderer.postgres.create_trigger
+- sql_rendering.sql_postgres_schema_qualified_function_trigger
+kind: migration_to_sql
+dialect: postgres
+migrations:
+- id: 0001_create_audit
+  operations:
+  - type: create_function
+    function:
+      name: audit_users
+      schema: audit
+      arguments: ''
+      returns: trigger
+      language: plpgsql
+      body: BEGIN RETURN NEW; END
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+  - type: create_trigger
+    table_name: users
+    trigger:
+      name: users_audit_trg
+      timing: after
+      events:
+      - insert
+      scope: row
+      function_name: audit.audit_users
+expect_sql: |
+  CREATE OR REPLACE FUNCTION "audit"."audit_users"()
+  RETURNS trigger
+  LANGUAGE plpgsql
+  AS $func$
+  BEGIN RETURN NEW; END
+  $func$
+  CREATE TABLE "users" ("id" integer NOT NULL, CONSTRAINT "users_pkey" PRIMARY KEY ("id"))
+  CREATE OR REPLACE TRIGGER "users_audit_trg"
+  AFTER INSERT
+  ON "users"
+  FOR EACH ROW
+  EXECUTE FUNCTION "audit"."audit_users"()

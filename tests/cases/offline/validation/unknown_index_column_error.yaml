@@ -1,0 +1,22 @@
+---
+description: Schema preparation rejects indexes that reference unknown columns.
+group: validation
+features:
+- group.validation
+- kind.schema_to_migration
+- validation.validation_unknown_index_column_error
+kind: schema_to_migration
+dialect: postgres
+name: bad_index
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+      indexes:
+      - name: users_email_idx
+        columns:
+        - email
+expect_error: unknown column

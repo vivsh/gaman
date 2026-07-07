@@ -1,0 +1,51 @@
+description: SQLite rebuild fails clearly when a referenced parent table has inbound foreign keys
+features:
+  - unsupported_feature_errors
+  - sqlite_rebuild_planner
+
+migrations:
+  - id: 0001_create_parent_child
+    operations:
+      - type: create_table
+        table:
+          name: parents
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: name
+              type: text
+            - name: legacy
+              type: text
+              nullable: true
+      - type: create_table
+        table:
+          name: children
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: parent_id
+              type: integer
+          foreign_keys:
+            - columns: [parent_id]
+              to_table: parents
+              to_columns: [id]
+      - type: statement
+        up: "INSERT INTO parents (id, name, legacy) VALUES (1, 'parent', 'old')"
+      - type: statement
+        up: "INSERT INTO children (id, parent_id) VALUES (1, 1)"
+  - id: 0002_rebuild_parent
+    dependencies: [0001_create_parent_child]
+    operations:
+      - type: drop_column
+        table_name: parents
+        column:
+          name: legacy
+          type: text
+          nullable: true
+
+dialects:
+  sqlite:
+    checks: [migrate, error]
+    expect_error: "blocked by inbound foreign key"

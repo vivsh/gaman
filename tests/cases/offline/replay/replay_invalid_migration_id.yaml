@@ -1,0 +1,18 @@
+---
+description: Migration generation rejects invalid generated migration ids.
+group: replay
+features:
+- group.replay
+- kind.schema_to_migration
+- replay.replay_invalid_migration_id
+kind: schema_to_migration
+dialect: postgres
+name: Bad Name
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+expect_error: invalid migration id

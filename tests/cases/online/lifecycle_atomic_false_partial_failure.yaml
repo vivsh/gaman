@@ -1,0 +1,49 @@
+description: non-atomic migration failure preserves earlier statements but does not record the failed migration
+features:
+  - live_migration_application
+  - transaction_rollback
+  - migration_tracking
+  - tables_columns
+
+migrations:
+  - id: 0001_partial_non_atomic
+    atomic: false
+    operations:
+      - type: create_table
+        table:
+          name: partial_rows
+          columns:
+            - name: id
+              type: integer
+      - type: statement
+        up: "INSERT INTO missing_table (id) VALUES (1)"
+
+dialects:
+  postgres:
+    checks: [migrate, error, migration_records, inspect, data]
+    expect_error: "missing_table"
+    expect_records: []
+    expect_schema:
+      tables:
+        partial_rows:
+          name: partial_rows
+          columns:
+            - name: id
+              type: integer
+    data:
+      - sql: "SELECT CAST(COUNT(*) AS TEXT) FROM partial_rows"
+        expect: ["0"]
+  sqlite:
+    checks: [migrate, error, migration_records, inspect, data]
+    expect_error: "missing_table"
+    expect_records: []
+    expect_schema:
+      tables:
+        partial_rows:
+          name: partial_rows
+          columns:
+            - name: id
+              type: integer
+    data:
+      - sql: "SELECT CAST(COUNT(*) AS TEXT) FROM partial_rows"
+        expect: ["0"]

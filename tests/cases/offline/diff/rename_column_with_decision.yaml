@@ -1,0 +1,51 @@
+---
+description: A rename-column decision rewrites drop/add into a rename operation.
+group: diff
+features:
+- answer.rename_to
+- diff.diff_rename_column_with_decision
+- group.diff
+- kind.schema_to_migration
+- operation.rename_column
+- renderer.postgres.create_table
+- renderer.postgres.rename_column
+kind: schema_to_migration
+dialect: postgres
+name: rename_username
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: username
+        type: text
+        nullable: true
+decisions:
+- clarification_id: rename_col:users:username
+  answer:
+    type: rename_to
+    value: handle
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: handle
+        type: text
+        nullable: true
+expect_operations:
+- type: rename_column
+  table_name: users
+  old_name: username
+  new_name: handle
+expect_sql: 'ALTER TABLE "users" RENAME COLUMN "username" TO "handle"
+
+'

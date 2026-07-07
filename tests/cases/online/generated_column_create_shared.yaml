@@ -1,0 +1,37 @@
+description: generated columns compute values during live migration
+features:
+  - live_migration_application
+  - generated_columns
+  - data_preservation
+
+migrations:
+  - id: 0001_create_items
+    operations:
+      - type: create_table
+        table:
+          name: items
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: price
+              type: integer
+            - name: qty
+              type: integer
+            - name: total
+              type: integer
+              generated: "price * qty"
+      - type: statement
+        up: "INSERT INTO items (id, price, qty) VALUES (1, 8, 5)"
+
+dialects:
+  postgres:
+    checks: [migrate, data]
+    data:
+      - sql: "SELECT CAST(total AS text) FROM items ORDER BY id"
+        expect: ["40"]
+  sqlite:
+    checks: [migrate, data]
+    data:
+      - sql: "SELECT CAST(total AS text) FROM items ORDER BY id"
+        expect: ["40"]

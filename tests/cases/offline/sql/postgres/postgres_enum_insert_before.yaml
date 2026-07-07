@@ -1,0 +1,40 @@
+---
+description: PostgreSQL renders enum value insertion with BEFORE when order requires
+  it.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- renderer.postgres.alter_enum
+- renderer.postgres.create_enum
+- sql_rendering.sql_postgres_enum_insert_before
+kind: migration_to_sql
+dialect: postgres
+migrations:
+- id: 0001_create_status
+  operations:
+  - type: create_enum
+    enum_def:
+      name: status
+      values:
+      - active
+      - archived
+- id: 0002_insert_pending
+  dependencies:
+  - 0001_create_status
+  operations:
+  - type: alter_enum
+    old:
+      name: status
+      values:
+      - active
+      - archived
+    new:
+      name: status
+      values:
+      - active
+      - pending
+      - archived
+expect_sql: |
+  CREATE TYPE "status" AS ENUM ('active', 'archived')
+  ALTER TYPE "status" ADD VALUE 'pending' AFTER 'active'

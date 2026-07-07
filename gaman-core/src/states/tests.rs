@@ -2756,3 +2756,223 @@ fn apply_create_table_qualified_key() {
     assert!(s.tables.contains_key("analytics.events"));
     assert!(!s.tables.contains_key("events"));
 }
+
+mod property_states {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    use proptest::prelude::*;
+
+    fn arb_identifier() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "[a-z][a-z0-9_]{0,10}".prop_map(|value| value),
+            "[A-Z][A-Za-z0-9_]{0,10}".prop_map(|value| value),
+            "[a-z]{1,8}_[0-9]{1,3}".prop_map(|value| value),
+            Just("user".to_string()),
+            Just("order".to_string()),
+            Just("very_long_identifier_name_for_property_tests".to_string()),
+        ]
+    }
+
+    fn arb_column_name() -> impl Strategy<Value = String> {
+        "[a-z][a-z0-9_]{0,8}".prop_map(|value| value)
+    }
+
+    fn arb_column() -> impl Strategy<Value = Column> {
+        let types = prop_oneof![
+            Just("integer".to_string()),
+            Just("text".to_string()),
+            Just("boolean".to_string()),
+            Just("bigint".to_string()),
+        ];
+        (arb_column_name(), types, any::<bool>(), any::<bool>()).prop_map(
+            |(name, col_type, nullable, primary_key)| Column {
+                name,
+                col_type,
+                nullable,
+                primary_key,
+                default: None,
+                references: None,
+                check: None,
+                generated: None,
+            },
+        )
+    }
+
+    fn arb_table() -> impl Strategy<Value = Table> {
+        (
+            arb_identifier(),
+            proptest::collection::vec(arb_column(), 1..6),
+        )
+            .prop_map(|(name, columns)| {
+                let mut seen = BTreeSet::new();
+                let columns = columns
+                    .into_iter()
+                    .filter(|column| seen.insert(column.name.clone()))
+                    .collect::<Vec<_>>();
+                Table {
+                    name,
+                    schema: None,
+                    primary_key: None,
+                    columns,
+                    foreign_keys: vec![],
+                    indexes: vec![],
+                    constraints: vec![],
+                    triggers: vec![],
+                }
+            })
+            .prop_filter("table must retain at least one unique column", |table| {
+                !table.columns.is_empty()
+            })
+    }
+
+    fn arb_schema() -> impl Strategy<Value = Schema> {
+        proptest::collection::vec(arb_table(), 0..5).prop_map(|tables| {
+            let mut schema = Schema::default();
+            for table in tables {
+                schema.tables.insert(table.name.clone(), table);
+            }
+            schema
+        })
+    }
+
+    fn no_duplicate_table_children(schema: &Schema) -> bool {
+        schema.tables.values().all(|table| {
+            unique(table.columns.iter().map(|column| column.name.as_str()))
+                && unique(table.foreign_keys.iter().map(|fk| fk.name.as_str()))
+                && unique(table.indexes.iter().map(|index| index.name.as_str()))
+                && unique(table.constraints.iter().map(Constraint::name))
+        })
+    }
+
+    fn unique<'a>(values: impl IntoIterator<Item = &'a str>) -> bool {
+        let mut seen = BTreeSet::new();
+        values.into_iter().all(|value| seen.insert(value))
+    }
+
+    fn create_table_operation(table: Table) -> Operation {
+        Operation::CreateTable { table }
+    }
+
+    fn apply_all(operations: &[Operation]) -> Result<Schema, String> {
+        let mut schema = Schema::default();
+        for operation in operations {
+            schema
+                .apply(operation)
+                .map_err(|error| format!("failed to apply {operation:?}: {error}"))?;
+        }
+        Ok(schema)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        #[doc = "Schema normalization is idempotent for generated valid schemas."]
+        fn normalize_is_idempotent_for_generated_schemas(mut schema in arb_schema()) {
+            schema.normalize();
+            let once = schema.clone();
+            schema.normalize();
+            prop_assert_eq!(schema, once);
+        }
+
+        #[test]
+        #[doc = "Schema preparation remains idempotent and does not create duplicate child names."]
+        fn prepare_is_idempotent_and_keeps_child_names_unique(schema in arb_schema()) {
+            let mut prepared = schema.clone();
+            prepared
+                .prepare_mut(&Dialect::Postgres)
+                .expect("generated schema should prepare");
+            let once = prepared.clone();
+            prepared
+                .prepare_mut(&Dialect::Postgres)
+                .expect("prepared schema should prepare again");
+            prop_assert_eq!(&prepared, &once);
+            prop_assert!(no_duplicate_table_children(&prepared));
+        }
+
+        #[test]
+        #[doc = "Column primary-key shorthand normalizes to deterministic table-level primary-key metadata."]
+        fn primary_key_flags_normalize_to_ordered_table_primary_key(
+            table_name in arb_identifier(),
+            column_names in proptest::collection::vec(arb_column_name(), 1..6),
+        ) {
+            let mut seen = BTreeSet::new();
+            let column_names = column_names
+                .into_iter()
+                .filter(|name| seen.insert(name.clone()))
+                .collect::<Vec<_>>();
+            prop_assume!(!column_names.is_empty());
+            let table = Table {
+                name: table_name.clone(),
+                schema: None,
+                primary_key: None,
+                columns: column_names
+                    .iter()
+                    .map(|name| Column {
+                        name: name.clone(),
+                        col_type: "integer".to_string(),
+                        nullable: true,
+                        primary_key: true,
+                        ..Default::default()
+                    })
+                    .collect(),
+                foreign_keys: vec![],
+                indexes: vec![],
+                constraints: vec![],
+                triggers: vec![],
+            };
+
+            let mut schema = Schema::default();
+            schema.tables.insert(table_name.clone(), table);
+            schema.normalize();
+            let table = schema
+                .tables
+                .remove(&table_name)
+                .expect("normalized table should remain present");
+
+            let pk = table.primary_key.expect("primary key should be derived");
+            prop_assert_eq!(pk.name, Table::pk_constraint_name_for(&table_name));
+            prop_assert_eq!(pk.columns, column_names);
+            prop_assert!(table.columns.iter().all(|column| column.primary_key && !column.nullable));
+        }
+
+        #[test]
+        #[doc = "Replaying the same generated create-table chain twice produces identical schemas."]
+        fn replay_create_table_chain_is_deterministic(tables in proptest::collection::vec(arb_table(), 0..5)) {
+            let mut seen = BTreeSet::new();
+            let operations = tables
+                .into_iter()
+                .filter(|table| seen.insert(table.name.clone()))
+                .map(create_table_operation)
+                .collect::<Vec<_>>();
+
+            let first = apply_all(&operations);
+            prop_assert!(first.is_ok(), "first replay failed: {:?}", first.err());
+            let second = apply_all(&operations);
+            prop_assert!(second.is_ok(), "second replay failed: {:?}", second.err());
+            let first = first.expect("checked ok");
+            let second = second.expect("checked ok");
+            prop_assert_eq!(first, second);
+        }
+
+        #[test]
+        #[doc = "Independent create-table replay order produces the same final schema."]
+        fn independent_create_table_branches_commute(left in arb_table(), right in arb_table()) {
+            prop_assume!(left.name != right.name);
+            let left_first = apply_all(&[
+                create_table_operation(left.clone()),
+                create_table_operation(right.clone()),
+            ]);
+            prop_assert!(left_first.is_ok(), "left-first replay failed: {:?}", left_first.err());
+            let right_first = apply_all(&[
+                create_table_operation(right),
+                create_table_operation(left),
+            ]);
+            prop_assert!(right_first.is_ok(), "right-first replay failed: {:?}", right_first.err());
+            let left_first = left_first.expect("checked ok");
+            let right_first = right_first.expect("checked ok");
+            prop_assert_eq!(left_first, right_first);
+        }
+    }
+}

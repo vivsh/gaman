@@ -1,0 +1,22 @@
+---
+description: SQLite rejects schema-qualified tables before rendering SQL.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- renderer.sqlite.create_table
+- sql_rendering.sql_sqlite_schema_qualified_table_unsupported
+- unsupported.sqlite_schema_qualified_table
+kind: migration_to_sql
+dialect: sqlite
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      schema: app
+      columns:
+      - name: id
+        type: integer
+expect_error: schema-qualified tables

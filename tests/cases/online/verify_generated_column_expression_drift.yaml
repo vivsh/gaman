@@ -1,0 +1,69 @@
+description: verify reports owned generated column expression drift
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - generated_columns
+
+migrations:
+  - id: 0001_create_items
+    operations:
+      - type: create_table
+        table:
+          name: items
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: price
+              type: integer
+            - name: qty
+              type: integer
+            - name: total
+              type: integer
+              nullable: true
+              generated: "price * qty"
+
+dialects:
+  postgres:
+    checks: [verify]
+    mutate_sql: |
+      ALTER TABLE items DROP COLUMN total;
+      ALTER TABLE items ADD COLUMN total integer GENERATED ALWAYS AS (price + qty) STORED;
+    expect_verify:
+      - type: alter_column
+        table_name: items
+        old:
+          name: total
+          type: integer
+          nullable: true
+          generated: (price + qty)
+        new:
+          name: total
+          type: integer
+          nullable: true
+          generated: price * qty
+  sqlite:
+    checks: [verify]
+    mutate_sql: |
+      CREATE TABLE items_rebuild (
+        id integer PRIMARY KEY,
+        price integer NOT NULL,
+        qty integer NOT NULL,
+        total integer GENERATED ALWAYS AS (price + qty) STORED
+      );
+      INSERT INTO items_rebuild (id, price, qty) SELECT id, price, qty FROM items;
+      DROP TABLE items;
+      ALTER TABLE items_rebuild RENAME TO items;
+    expect_verify:
+      - type: alter_column
+        table_name: items
+        old:
+          name: total
+          type: integer
+          nullable: true
+          generated: price + qty
+        new:
+          name: total
+          type: integer
+          nullable: true
+          generated: price * qty

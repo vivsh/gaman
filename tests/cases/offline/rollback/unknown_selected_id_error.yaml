@@ -1,0 +1,26 @@
+---
+description: Rollback SQL fails clearly when a selected migration id is not in the
+  graph.
+group: rollback
+features:
+- group.rollback
+- kind.migration_to_sql
+- renderer.postgres.create_table
+- rollback.unknown_selected_id
+- rollback.unknown_selection
+kind: migration_to_sql
+direction: rollback
+dialect: postgres
+ids:
+- 0002_missing
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+expect_error: graph is missing migration '0002_missing'

@@ -1,0 +1,56 @@
+description: SQLite migrates indexes views and query triggers
+features:
+  - live_migration_application
+  - indexes_constraints
+  - indexes
+  - trigger_query_objects
+  - views_opaque
+  - data_preservation
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email
+              type: text
+      - type: create_table
+        table:
+          name: audit_log
+          columns:
+            - name: user_id
+              type: integer
+            - name: action
+              type: text
+      - type: add_index
+        table_name: users
+        index:
+          name: users_email_idx
+          columns: [email]
+      - type: create_view
+        view:
+          name: user_emails
+          definition: "SELECT email FROM users"
+      - type: create_trigger
+        table_name: users
+        trigger:
+          timing: after
+          events: [insert]
+          scope: row
+          query: "INSERT INTO audit_log(user_id, action) VALUES (NEW.id, 'insert');"
+      - type: statement
+        up: "INSERT INTO users (id, email) VALUES (1, 'one@example.com')"
+
+dialects:
+  sqlite:
+    checks: [migrate, data]
+    data:
+      - sql: "SELECT email FROM user_emails"
+        expect: ["one@example.com"]
+      - sql: "SELECT action FROM audit_log ORDER BY user_id"
+        expect: ["insert"]

@@ -1,0 +1,38 @@
+description: verify reports changed metadata for owned columns
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - tables_columns
+  - type_null_default_changes
+
+migrations:
+  - id: 0001_create_tasks
+    operations:
+      - type: create_table
+        table:
+          name: tasks
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: status
+              type: text
+              default: "'todo'"
+
+mutate_sql: |
+  ALTER TABLE tasks ALTER COLUMN status SET DEFAULT 'done';
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify:
+      - type: alter_column
+        table_name: tasks
+        old:
+          name: status
+          type: text
+          default: "'done'"
+        new:
+          name: status
+          type: text
+          default: "'todo'"

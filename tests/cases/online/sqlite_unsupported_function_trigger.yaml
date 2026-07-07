@@ -1,0 +1,26 @@
+description: SQLite fails clearly for function-name trigger migrations
+features:
+  - unsupported_feature_errors
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+      - type: create_trigger
+        table_name: users
+        trigger:
+          timing: after
+          events: [insert]
+          scope: row
+          function_name: audit_users
+
+dialects:
+  sqlite:
+    checks: [migrate, error]
+    expect_error: "function_name` is PostgreSQL-only"

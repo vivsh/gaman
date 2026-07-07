@@ -1,0 +1,42 @@
+description: verify reports missing owned composite primary keys as manual drift
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - composite_primary_keys
+  - unsupported_feature_errors
+
+migrations:
+  - id: 0001_create_memberships
+    operations:
+      - type: create_table
+        table:
+          name: memberships
+          primary_key:
+            columns: [tenant_id, user_id]
+          columns:
+            - name: tenant_id
+              type: integer
+            - name: user_id
+              type: integer
+            - name: role
+              type: text
+
+dialects:
+  postgres:
+    checks: [verify, error]
+    mutate_sql: |
+      ALTER TABLE memberships DROP CONSTRAINT memberships_pkey;
+    expect_error: primary key changes on existing table 'memberships' are not generated automatically
+  sqlite:
+    checks: [verify, error]
+    mutate_sql: |
+      CREATE TABLE memberships_rebuild (
+        tenant_id integer NOT NULL,
+        user_id integer NOT NULL,
+        role text NOT NULL
+      );
+      INSERT INTO memberships_rebuild (tenant_id, user_id, role)
+        SELECT tenant_id, user_id, role FROM memberships;
+      DROP TABLE memberships;
+      ALTER TABLE memberships_rebuild RENAME TO memberships;
+    expect_error: primary key changes on existing table 'memberships' are not generated automatically
