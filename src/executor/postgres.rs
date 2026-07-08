@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use sqlx::PgConnection;
 use sqlx::Row;
 
@@ -112,65 +114,675 @@ impl Executor for PostgresExecutor {
     }
 }
 
-// Extracts column list, UNIQUE flag, and optional partial-index predicate from a
-// pg_indexes.indexdef string.
-// e.g. "CREATE UNIQUE INDEX idx ON t USING btree (a, b DESC) WHERE (deleted IS NULL)"
-fn parse_index_def(def: &str) -> Result<(Vec<String>, bool, Option<String>), ExecutorError> {
-    let unique = def.contains("CREATE UNIQUE INDEX");
+impl Introspectable for PostgresExecutor {
+    fn inspect_db<'a>(
+        &'a mut self,
+        schemas: &'a [&'a str],
+    ) -> BoxFuture<'a, Result<Schema, ExecutorError>> {
+        Box::pin(async move { inspect_postgres_schema(&mut self.conn, schemas).await })
+    }
+}
 
-    let (col_part, predicate) = if let Some(where_pos) = def.find(" WHERE ") {
-        let pred = normalize_index_predicate(&def[where_pos + " WHERE ".len()..]);
-        (&def[..where_pos], Some(pred))
-    } else {
-        (def, None)
-    };
+#[derive(sqlx::FromRow)]
+struct PgTableRow {
+    oid: i64,
+    schema_name: String,
+    table_name: String,
+}
 
-    let cols: Vec<String> = if let Some(start) = col_part.find('(') {
-        let inner = &col_part[start + 1..];
-        let end = inner.rfind(')').unwrap_or(inner.len());
-        let inner = inner[..end].trim();
-        if inner.is_empty() {
-            return Err(ExecutorError::Fetch(format!(
-                "unsupported PostgreSQL index definition with empty column list: {def}"
-            )));
+#[derive(sqlx::FromRow)]
+struct PgColumnRow {
+    table_oid: i64,
+    name: String,
+    type_display: String,
+    nullable: bool,
+    default_expr: Option<String>,
+    identity_kind: String,
+    generated_kind: String,
+    generated_expr: Option<String>,
+    has_owned_sequence: bool,
+}
+
+#[derive(sqlx::FromRow)]
+struct PgKeyColumnRow {
+    table_oid: i64,
+    constraint_name: String,
+    column_name: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct PgForeignKeyRow {
+    table_oid: i64,
+    constraint_name: String,
+    from_column: String,
+    ref_schema: String,
+    ref_table: String,
+    ref_column: String,
+    on_delete: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct PgCheckRow {
+    table_oid: i64,
+    constraint_name: String,
+    definition: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct PgIndexRow {
+    table_oid: i64,
+    index_name: String,
+    unique: bool,
+    predicate: Option<String>,
+    columns: Option<Vec<String>>,
+    element_defs: Vec<String>,
+    has_expression: bool,
+}
+
+#[derive(sqlx::FromRow)]
+struct PgTriggerRow {
+    table_oid: i64,
+    trigger_name: String,
+    tgtype: i16,
+    function_name: String,
+    function_schema: String,
+    language: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct PgViewRow {
+    name: String,
+    schema_name: String,
+    definition: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct PgFunctionRow {
+    name: String,
+    schema_name: String,
+    arguments: String,
+    body: String,
+    language: String,
+    volatility: i8,
+    security_definer: bool,
+    returns: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct PgExtensionRow {
+    name: String,
+    schema_name: String,
+    version: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct PgEnumRow {
+    name: String,
+    schema_name: String,
+    label: String,
+}
+
+async fn inspect_postgres_schema(
+    conn: &mut PgConnection,
+    schemas: &[&str],
+) -> Result<Schema, ExecutorError> {
+    let schema_list: Vec<String> = schemas.iter().map(|schema| schema.to_string()).collect();
+    let mut tables = fetch_tables(conn, &schema_list).await?;
+    attach_columns(conn, &schema_list, &mut tables).await?;
+    attach_primary_keys(conn, &schema_list, &mut tables).await?;
+    attach_foreign_keys(conn, &schema_list, &mut tables).await?;
+    attach_unique_constraints(conn, &schema_list, &mut tables).await?;
+    attach_check_constraints(conn, &schema_list, &mut tables).await?;
+    attach_indexes(conn, &schema_list, &mut tables).await?;
+    attach_triggers(conn, &schema_list, &mut tables).await?;
+
+    let mut state = Schema::default();
+    state.tables = tables
+        .into_values()
+        .map(|table| (table.qualified_name(), table))
+        .collect();
+    state.views = fetch_views(conn, &schema_list).await?;
+    state.functions = fetch_functions(conn, &schema_list).await?;
+    state.extensions = fetch_extensions(conn, &schema_list).await?;
+    state.enums = fetch_enums(conn, &schema_list).await?;
+    Ok(state)
+}
+
+async fn fetch_tables(
+    conn: &mut PgConnection,
+    schemas: &[String],
+) -> Result<BTreeMap<i64, Table>, ExecutorError> {
+    let rows = sqlx::query_as::<_, PgTableRow>(
+        "SELECT c.oid::int8 AS oid, n.nspname AS schema_name, c.relname AS table_name \
+         FROM pg_class c \
+         JOIN pg_namespace n ON n.oid = c.relnamespace \
+         WHERE c.relkind IN ('r', 'p') \
+         AND n.nspname = ANY($1) \
+         AND c.relname != 'gaman_migrations' \
+         ORDER BY n.nspname, c.relname",
+    )
+    .bind(schemas)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let table = Table {
+                name: row.table_name,
+                schema: schema_for_output(&row.schema_name),
+                primary_key: None,
+                columns: Vec::new(),
+                foreign_keys: Vec::new(),
+                indexes: Vec::new(),
+                constraints: Vec::new(),
+                triggers: Vec::new(),
+            };
+            (row.oid, table)
+        })
+        .collect())
+}
+
+async fn attach_columns(
+    conn: &mut PgConnection,
+    schemas: &[String],
+    tables: &mut BTreeMap<i64, Table>,
+) -> Result<(), ExecutorError> {
+    let rows = sqlx::query_as::<_, PgColumnRow>(
+        "SELECT cl.oid::int8 AS table_oid, a.attname AS name, \
+         format_type(a.atttypid, a.atttypmod) AS type_display, \
+         NOT a.attnotnull AS nullable, pg_get_expr(ad.adbin, ad.adrelid) AS default_expr, \
+         a.attidentity::text AS identity_kind, a.attgenerated::text AS generated_kind, \
+         CASE WHEN a.attgenerated <> '' THEN pg_get_expr(ad.adbin, ad.adrelid) ELSE NULL END AS generated_expr, \
+         pg_get_serial_sequence(format('%I.%I', n.nspname, cl.relname), a.attname) IS NOT NULL AS has_owned_sequence \
+         FROM pg_class cl \
+         JOIN pg_namespace n ON n.oid = cl.relnamespace \
+         JOIN pg_attribute a ON a.attrelid = cl.oid \
+         LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
+         WHERE cl.relkind IN ('r', 'p') \
+         AND n.nspname = ANY($1) \
+         AND cl.relname != 'gaman_migrations' \
+         AND a.attnum > 0 AND NOT a.attisdropped \
+         ORDER BY cl.oid, a.attnum",
+    )
+    .bind(schemas)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+
+    for row in rows {
+        if let Some(table) = tables.get_mut(&row.table_oid) {
+            table.columns.push(column_from_row(row));
         }
-        let mut cols = Vec::new();
-        for raw in inner.split(',') {
-            let stripped = raw.trim();
-            if stripped.starts_with('(') {
-                return Err(ExecutorError::Fetch(format!(
-                    "unsupported PostgreSQL expression index; model index expressions explicitly before introspecting: {def}"
-                )));
-            }
-            // Strip quotes, then drop trailing sort/opclass tokens:
-            // e.g. `"col" DESC`, `col varchar_pattern_ops`, `col NULLS FIRST`
-            let stripped = stripped.trim_matches('"');
-            let col_name = stripped
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .trim_matches('"');
-            if col_name.contains('(') || col_name.contains(')') {
-                return Err(ExecutorError::Fetch(format!(
-                    "unsupported PostgreSQL expression index; model index expressions explicitly before introspecting: {def}"
-                )));
-            }
-            if !col_name.is_empty() {
-                cols.push(col_name.to_string());
-            }
-        }
-        cols
+    }
+    Ok(())
+}
+
+fn column_from_row(row: PgColumnRow) -> Column {
+    let generated = (!row.generated_kind.is_empty())
+        .then_some(row.generated_expr)
+        .flatten();
+    let mut default = if generated.is_some() {
+        None
     } else {
-        return Err(ExecutorError::Fetch(format!(
-            "unsupported PostgreSQL index definition without a column list: {def}"
-        )));
+        match row.identity_kind.as_str() {
+            "a" => Some("GENERATED ALWAYS AS IDENTITY".to_string()),
+            "d" => Some("GENERATED BY DEFAULT AS IDENTITY".to_string()),
+            _ => row.default_expr,
+        }
     };
-    if cols.is_empty() {
+    let mut col_type = row.type_display;
+    if row.has_owned_sequence
+        && row.identity_kind.is_empty()
+        && default
+            .as_deref()
+            .is_some_and(|expr| expr.trim_start().starts_with("nextval("))
+    {
+        if let Some(serial_type) = serial_type_for(&col_type) {
+            col_type = serial_type.to_string();
+            default = None;
+        }
+    }
+    Column {
+        name: row.name,
+        col_type,
+        nullable: row.nullable,
+        default,
+        primary_key: false,
+        references: None,
+        check: None,
+        generated,
+    }
+}
+
+fn serial_type_for(col_type: &str) -> Option<&'static str> {
+    match col_type {
+        "integer" => Some("serial"),
+        "bigint" => Some("bigserial"),
+        "smallint" => Some("smallserial"),
+        _ => None,
+    }
+}
+
+async fn attach_primary_keys(
+    conn: &mut PgConnection,
+    schemas: &[String],
+    tables: &mut BTreeMap<i64, Table>,
+) -> Result<(), ExecutorError> {
+    let rows = key_column_rows(conn, schemas, "p").await?;
+    let mut keys: BTreeMap<i64, (String, Vec<String>)> = BTreeMap::new();
+    for row in rows {
+        let entry = keys
+            .entry(row.table_oid)
+            .or_insert_with(|| (row.constraint_name, Vec::new()));
+        entry.1.push(row.column_name);
+    }
+    for (oid, (name, columns)) in keys {
+        if let Some(table) = tables.get_mut(&oid) {
+            for column in &mut table.columns {
+                column.primary_key = columns.iter().any(|name| name == &column.name);
+                if column.primary_key {
+                    column.nullable = false;
+                }
+            }
+            table.primary_key = Some(PrimaryKey { name, columns });
+        }
+    }
+    Ok(())
+}
+
+async fn attach_unique_constraints(
+    conn: &mut PgConnection,
+    schemas: &[String],
+    tables: &mut BTreeMap<i64, Table>,
+) -> Result<(), ExecutorError> {
+    let rows = key_column_rows(conn, schemas, "u").await?;
+    let mut keys: BTreeMap<(i64, String), Vec<String>> = BTreeMap::new();
+    for row in rows {
+        keys.entry((row.table_oid, row.constraint_name))
+            .or_default()
+            .push(row.column_name);
+    }
+    for ((oid, name), columns) in keys {
+        if let Some(table) = tables.get_mut(&oid) {
+            table.constraints.push(Constraint::Unique { name, columns });
+        }
+    }
+    Ok(())
+}
+
+async fn key_column_rows(
+    conn: &mut PgConnection,
+    schemas: &[String],
+    contype: &str,
+) -> Result<Vec<PgKeyColumnRow>, ExecutorError> {
+    sqlx::query_as::<_, PgKeyColumnRow>(
+        "SELECT rel.oid::int8 AS table_oid, con.conname AS constraint_name, a.attname AS column_name \
+         FROM pg_constraint con \
+         JOIN pg_class rel ON rel.oid = con.conrelid \
+         JOIN pg_namespace ns ON ns.oid = rel.relnamespace \
+         JOIN unnest(con.conkey) WITH ORDINALITY AS keys(attnum, ordinality) ON TRUE \
+         JOIN pg_attribute a ON a.attrelid = rel.oid AND a.attnum = keys.attnum \
+         WHERE con.contype = $2 AND ns.nspname = ANY($1) \
+         AND rel.relname != 'gaman_migrations' \
+         ORDER BY rel.oid, con.conname, keys.ordinality",
+    )
+    .bind(schemas)
+    .bind(contype)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| ExecutorError::Fetch(e.to_string()))
+}
+
+async fn attach_foreign_keys(
+    conn: &mut PgConnection,
+    schemas: &[String],
+    tables: &mut BTreeMap<i64, Table>,
+) -> Result<(), ExecutorError> {
+    let rows = sqlx::query_as::<_, PgForeignKeyRow>(
+        "SELECT t.oid::int8 AS table_oid, c.conname AS constraint_name, \
+         a.attname AS from_column, fn.nspname AS ref_schema, fc.relname AS ref_table, \
+         fa.attname AS ref_column, \
+         CASE c.confdeltype \
+           WHEN 'c' THEN 'cascade' \
+           WHEN 'r' THEN 'restrict' \
+           WHEN 'n' THEN 'set_null' \
+           WHEN 'd' THEN 'set_default' \
+           ELSE NULL \
+         END AS on_delete \
+         FROM pg_constraint c \
+         JOIN pg_class t ON t.oid = c.conrelid \
+         JOIN pg_namespace tn ON tn.oid = t.relnamespace \
+         JOIN pg_class fc ON fc.oid = c.confrelid \
+         JOIN pg_namespace fn ON fn.oid = fc.relnamespace \
+         JOIN unnest(c.conkey, c.confkey) WITH ORDINALITY AS keys(from_attnum, ref_attnum, ordinality) ON TRUE \
+         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = keys.from_attnum \
+         JOIN pg_attribute fa ON fa.attrelid = fc.oid AND fa.attnum = keys.ref_attnum \
+         WHERE c.contype = 'f' AND tn.nspname = ANY($1) \
+         AND t.relname != 'gaman_migrations' \
+         ORDER BY t.oid, c.conname, keys.ordinality",
+    )
+    .bind(schemas)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+
+    let mut keys: BTreeMap<(i64, String), (String, Vec<String>, Vec<String>, Option<String>)> =
+        BTreeMap::new();
+    for row in rows {
+        let to_table = schema_qualified_key(&row.ref_table, Some(&row.ref_schema));
+        let entry = keys
+            .entry((row.table_oid, row.constraint_name))
+            .or_insert_with(|| (to_table, Vec::new(), Vec::new(), row.on_delete));
+        entry.1.push(row.from_column);
+        entry.2.push(row.ref_column);
+    }
+    for ((oid, name), (to_table, columns, to_columns, on_delete)) in keys {
+        if let Some(table) = tables.get_mut(&oid) {
+            let mut foreign_key = ForeignKey::new(name, columns, to_table, to_columns);
+            foreign_key.on_delete = on_delete;
+            table.foreign_keys.push(foreign_key);
+        }
+    }
+    Ok(())
+}
+
+async fn attach_check_constraints(
+    conn: &mut PgConnection,
+    schemas: &[String],
+    tables: &mut BTreeMap<i64, Table>,
+) -> Result<(), ExecutorError> {
+    let rows = sqlx::query_as::<_, PgCheckRow>(
+        "SELECT rel.oid::int8 AS table_oid, con.conname AS constraint_name, \
+         pg_get_constraintdef(con.oid, true) AS definition \
+         FROM pg_constraint con \
+         JOIN pg_class rel ON rel.oid = con.conrelid \
+         JOIN pg_namespace ns ON ns.oid = rel.relnamespace \
+         WHERE con.contype = 'c' AND ns.nspname = ANY($1) \
+         AND rel.relname != 'gaman_migrations' \
+         ORDER BY rel.oid, con.conname",
+    )
+    .bind(schemas)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+
+    for row in rows {
+        if let Some(table) = tables.get_mut(&row.table_oid) {
+            table.constraints.push(Constraint::Check {
+                name: row.constraint_name,
+                expression: strip_check_wrapper(&row.definition).to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn attach_indexes(
+    conn: &mut PgConnection,
+    schemas: &[String],
+    tables: &mut BTreeMap<i64, Table>,
+) -> Result<(), ExecutorError> {
+    let rows = sqlx::query_as::<_, PgIndexRow>(
+        "SELECT t.oid::int8 AS table_oid, i.relname AS index_name, ix.indisunique AS unique, \
+         pg_get_expr(ix.indpred, ix.indrelid) AS predicate, \
+         array_agg(a.attname ORDER BY keys.ordinality) FILTER (WHERE keys.attnum > 0) AS columns, \
+         array_agg(pg_get_indexdef(i.oid, keys.ordinality::int, true) ORDER BY keys.ordinality) AS element_defs, \
+         bool_or(keys.attnum <= 0) AS has_expression \
+         FROM pg_index ix \
+         JOIN pg_class t ON t.oid = ix.indrelid \
+         JOIN pg_namespace n ON n.oid = t.relnamespace \
+         JOIN pg_class i ON i.oid = ix.indexrelid \
+         JOIN unnest(ix.indkey) WITH ORDINALITY AS keys(attnum, ordinality) ON TRUE \
+         LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = keys.attnum \
+         WHERE n.nspname = ANY($1) \
+         AND t.relname != 'gaman_migrations' \
+         AND NOT ix.indisprimary \
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = ix.indexrelid) \
+         GROUP BY t.oid, i.oid, i.relname, ix.indisunique, ix.indpred, ix.indrelid \
+         ORDER BY t.oid, i.relname",
+    )
+    .bind(schemas)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+
+    for row in rows {
+        let index = index_from_row(row)?;
+        if let Some(table) = tables.get_mut(&index.0) {
+            table.indexes.push(index.1);
+        }
+    }
+    Ok(())
+}
+
+fn index_from_row(row: PgIndexRow) -> Result<(i64, Index), ExecutorError> {
+    if row.has_expression {
         return Err(ExecutorError::Fetch(format!(
-            "unsupported PostgreSQL index definition with no simple columns: {def}"
+            "unsupported PostgreSQL expression index '{}'; model index expressions before inspection",
+            row.index_name
         )));
     }
-    Ok((cols, unique, predicate))
+    let columns = row.columns.unwrap_or_default();
+    if columns.is_empty() {
+        return Err(ExecutorError::Fetch(format!(
+            "unsupported PostgreSQL index '{}' with no simple columns",
+            row.index_name
+        )));
+    }
+    for (column, element_def) in columns.iter().zip(row.element_defs.iter()) {
+        if element_def != column && element_def != &quote_ident(column) {
+            return Err(ExecutorError::Fetch(format!(
+                "unsupported PostgreSQL index '{}' column metadata '{}'; operator classes, collations, and sort order are not modeled",
+                row.index_name, element_def
+            )));
+        }
+    }
+    Ok((
+        row.table_oid,
+        Index {
+            name: row.index_name,
+            columns,
+            unique: row.unique,
+            predicate: row.predicate.map(|value| normalize_index_predicate(&value)),
+        },
+    ))
+}
+
+async fn attach_triggers(
+    conn: &mut PgConnection,
+    schemas: &[String],
+    tables: &mut BTreeMap<i64, Table>,
+) -> Result<(), ExecutorError> {
+    let rows = sqlx::query_as::<_, PgTriggerRow>(
+        "SELECT c.oid::int8 AS table_oid, t.tgname AS trigger_name, t.tgtype, \
+         p.proname AS function_name, n2.nspname AS function_schema, l.lanname AS language \
+         FROM pg_trigger t \
+         JOIN pg_class c ON c.oid = t.tgrelid \
+         JOIN pg_namespace n ON n.oid = c.relnamespace \
+         JOIN pg_proc p ON p.oid = t.tgfoid \
+         JOIN pg_namespace n2 ON n2.oid = p.pronamespace \
+         JOIN pg_language l ON l.oid = p.prolang \
+         WHERE n.nspname = ANY($1) AND NOT t.tgisinternal \
+         AND c.relname != 'gaman_migrations' \
+         ORDER BY c.oid, t.tgname",
+    )
+    .bind(schemas)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+
+    for row in rows {
+        if let Some(table) = tables.get_mut(&row.table_oid) {
+            let (timing, events, scope) = decode_tgtype(row.tgtype);
+            table.triggers.push(TriggerDef {
+                name: Some(row.trigger_name),
+                timing,
+                events,
+                scope,
+                function_name: Some(schema_qualified_key(
+                    &row.function_name,
+                    Some(&row.function_schema),
+                )),
+                when: None,
+                query: None,
+                language: Some(row.language),
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn fetch_views(
+    conn: &mut PgConnection,
+    schemas: &[String],
+) -> Result<BTreeMap<String, ViewDef>, ExecutorError> {
+    let rows = sqlx::query_as::<_, PgViewRow>(
+        "SELECT table_name AS name, table_schema AS schema_name, view_definition AS definition \
+         FROM information_schema.views \
+         WHERE table_schema = ANY($1) \
+         ORDER BY table_schema, table_name",
+    )
+    .bind(schemas)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let view = ViewDef {
+                name: row.name,
+                schema: schema_for_output(&row.schema_name),
+                definition: row.definition,
+            };
+            (view.qualified_name(), view)
+        })
+        .collect())
+}
+
+async fn fetch_functions(
+    conn: &mut PgConnection,
+    schemas: &[String],
+) -> Result<BTreeMap<String, FunctionDef>, ExecutorError> {
+    let rows = sqlx::query_as::<_, PgFunctionRow>(
+        "SELECT p.proname AS name, n.nspname AS schema_name, \
+         pg_get_function_identity_arguments(p.oid) AS arguments, p.prosrc AS body, \
+         l.lanname AS language, p.provolatile AS volatility, p.prosecdef AS security_definer, \
+         pg_get_function_result(p.oid) AS returns \
+         FROM pg_proc p \
+         JOIN pg_namespace n ON n.oid = p.pronamespace \
+         JOIN pg_language l ON l.oid = p.prolang \
+         WHERE p.prokind = 'f' \
+         AND l.lanname NOT IN ('internal', 'c') \
+         AND n.nspname = ANY($1) \
+         ORDER BY n.nspname, p.proname",
+    )
+    .bind(schemas)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let function = FunctionDef {
+                name: row.name,
+                schema: schema_for_output(&row.schema_name),
+                arguments: row.arguments,
+                returns: row.returns,
+                language: row.language,
+                body: row.body,
+                volatility: volatility_from_pg(row.volatility),
+                security_definer: row.security_definer,
+            };
+            (function_key(&function), function)
+        })
+        .collect())
+}
+
+async fn fetch_extensions(
+    conn: &mut PgConnection,
+    schemas: &[String],
+) -> Result<BTreeMap<String, ExtensionDef>, ExecutorError> {
+    let rows = sqlx::query_as::<_, PgExtensionRow>(
+        "SELECT e.extname AS name, n.nspname AS schema_name, e.extversion AS version \
+         FROM pg_extension e \
+         JOIN pg_namespace n ON n.oid = e.extnamespace \
+         WHERE n.nspname = ANY($1) \
+         ORDER BY n.nspname, e.extname",
+    )
+    .bind(schemas)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let extension = ExtensionDef {
+                name: row.name,
+                schema: schema_for_output(&row.schema_name),
+                version: row.version,
+            };
+            (extension.qualified_name(), extension)
+        })
+        .collect())
+}
+
+async fn fetch_enums(
+    conn: &mut PgConnection,
+    schemas: &[String],
+) -> Result<BTreeMap<String, EnumDef>, ExecutorError> {
+    let rows = sqlx::query_as::<_, PgEnumRow>(
+        "SELECT t.typname AS name, n.nspname AS schema_name, e.enumlabel AS label \
+         FROM pg_type t \
+         JOIN pg_enum e ON e.enumtypid = t.oid \
+         JOIN pg_namespace n ON n.oid = t.typnamespace \
+         WHERE n.nspname = ANY($1) \
+         ORDER BY n.nspname, t.typname, e.enumsortorder",
+    )
+    .bind(schemas)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+
+    let mut enums = BTreeMap::new();
+    for row in rows {
+        let schema = schema_for_output(&row.schema_name);
+        let key = schema_qualified_key(&row.name, schema.as_deref());
+        enums
+            .entry(key)
+            .or_insert_with(|| EnumDef {
+                name: row.name,
+                schema,
+                values: Vec::new(),
+            })
+            .values
+            .push(row.label);
+    }
+    Ok(enums)
+}
+
+fn schema_for_output(schema: &str) -> Option<String> {
+    (schema != "public").then(|| schema.to_string())
+}
+
+fn function_key(function: &FunctionDef) -> String {
+    if function.arguments.is_empty() {
+        function.qualified_name()
+    } else {
+        format!("{}({})", function.qualified_name(), function.arguments)
+    }
+}
+
+fn volatility_from_pg(value: i8) -> Volatility {
+    match value as u8 {
+        b'i' => Volatility::Immutable,
+        b's' => Volatility::Stable,
+        _ => Volatility::Volatile,
+    }
 }
 
 fn normalize_index_predicate(predicate: &str) -> String {
@@ -182,33 +794,81 @@ fn normalize_index_predicate(predicate: &str) -> String {
     }
 }
 
+fn strip_check_wrapper(value: &str) -> &str {
+    let trimmed = value.trim();
+    let Some((_, rest)) = strip_keyword(trimmed, "CHECK") else {
+        return trimmed;
+    };
+    let rest = rest.trim_start();
+    let Some(end) = matching_paren(rest, 0) else {
+        return trimmed;
+    };
+    if rest[end + 1..].trim().is_empty() {
+        &rest[1..end]
+    } else {
+        trimmed
+    }
+}
+
+fn strip_keyword<'a>(input: &'a str, keyword: &str) -> Option<(&'a str, &'a str)> {
+    let trimmed = input.trim_start();
+    if trimmed.len() < keyword.len() || !trimmed[..keyword.len()].eq_ignore_ascii_case(keyword) {
+        return None;
+    }
+    let rest = &trimmed[keyword.len()..];
+    if rest
+        .chars()
+        .next()
+        .is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        return None;
+    }
+    Some((&trimmed[..keyword.len()], rest))
+}
+
 fn strip_balanced_outer_parens(value: &str) -> Option<&str> {
     let inner = value.strip_prefix('(')?.strip_suffix(')')?;
+    let end = matching_paren(value, 0)?;
+    (end == value.len() - 1).then_some(inner)
+}
+
+fn matching_paren(input: &str, open: usize) -> Option<usize> {
     let mut depth = 0usize;
-    for (idx, ch) in value.char_indices() {
+    let mut quote: Option<char> = None;
+    let mut chars = input.char_indices().peekable();
+    while let Some((idx, ch)) = chars.next() {
+        if idx < open {
+            continue;
+        }
+        if let Some(q) = quote {
+            if ch == q {
+                if chars.peek().is_some_and(|(_, next)| *next == q) {
+                    chars.next();
+                } else {
+                    quote = None;
+                }
+            }
+            continue;
+        }
         match ch {
+            '\'' | '"' => quote = Some(ch),
             '(' => depth += 1,
             ')' => {
                 depth = depth.checked_sub(1)?;
-                if depth == 0 && idx != value.len() - 1 {
-                    return None;
+                if depth == 0 {
+                    return Some(idx);
                 }
             }
             _ => {}
         }
     }
-    Some(inner)
+    None
 }
 
-// Decodes the tgtype bitmask from pg_trigger into timing, events, and scope.
-// Bitmask values per PostgreSQL source (commands/trigger.h):
-//   TRIGGER_TYPE_ROW       0x01
-//   TRIGGER_TYPE_BEFORE    0x02
-//   TRIGGER_TYPE_INSERT    0x04
-//   TRIGGER_TYPE_DELETE    0x08
-//   TRIGGER_TYPE_UPDATE    0x10
-//   TRIGGER_TYPE_TRUNCATE  0x20
-//   TRIGGER_TYPE_INSTEAD   0x40
+fn quote_ident(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
 fn decode_tgtype(tgtype: i16) -> (TriggerTiming, Vec<TriggerEvent>, TriggerScope) {
     let timing = if tgtype & 0x40 != 0 {
         TriggerTiming::InsteadOf
@@ -217,7 +877,7 @@ fn decode_tgtype(tgtype: i16) -> (TriggerTiming, Vec<TriggerEvent>, TriggerScope
     } else {
         TriggerTiming::After
     };
-    let mut events = vec![];
+    let mut events = Vec::new();
     if tgtype & 0x04 != 0 {
         events.push(TriggerEvent::Insert);
     }
@@ -238,708 +898,24 @@ fn decode_tgtype(tgtype: i16) -> (TriggerTiming, Vec<TriggerEvent>, TriggerScope
     (timing, events, scope)
 }
 
-impl Introspectable for PostgresExecutor {
-    fn inspect_db<'a>(
-        &'a mut self,
-        schemas: &'a [&'a str],
-    ) -> BoxFuture<'a, Result<Schema, ExecutorError>> {
-        Box::pin(async move {
-            let mut state = Schema::default();
-
-            for &schema in schemas {
-                let table_rows = sqlx::query(
-                    "SELECT table_name FROM information_schema.tables \
-                     WHERE table_schema = $1 AND table_type = 'BASE TABLE' \
-                     AND table_name != 'gaman_migrations' ORDER BY table_name",
-                )
-                .bind(schema)
-                .fetch_all(&mut self.conn)
-                .await
-                .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-                for row in &table_rows {
-                    let table_name: String = row
-                        .try_get(0)
-                        .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-                    let mut table = Table {
-                        name: table_name.clone(),
-                        schema: if schema == "public" {
-                            None
-                        } else {
-                            Some(schema.to_string())
-                        },
-                        primary_key: None,
-                        columns: vec![],
-                        foreign_keys: vec![],
-                        indexes: vec![],
-                        constraints: vec![],
-                        triggers: vec![],
-                    };
-
-                    let col_rows = sqlx::query(
-                        "SELECT c.column_name, c.data_type, c.udt_schema, c.udt_name, c.character_maximum_length, \
-                         c.numeric_precision, c.numeric_scale, c.is_nullable, c.column_default, \
-                         a.attidentity, c.generation_expression \
-                         FROM information_schema.columns c \
-                         JOIN pg_class cl ON cl.relname = c.table_name \
-                         JOIN pg_namespace ns ON ns.nspname = c.table_schema AND ns.oid = cl.relnamespace \
-                         JOIN pg_attribute a ON a.attrelid = cl.oid AND a.attname = c.column_name \
-                         WHERE c.table_schema = $1 AND c.table_name = $2 \
-                         ORDER BY c.ordinal_position",
-                    )
-                    .bind(schema)
-                    .bind(&table_name)
-                    .fetch_all(&mut self.conn)
-                    .await
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-                    let pk_rows = sqlx::query(
-                        "SELECT tc.constraint_name, kcu.column_name \
-                         FROM information_schema.table_constraints tc \
-                         JOIN information_schema.key_column_usage kcu \
-                           ON tc.constraint_name = kcu.constraint_name \
-                           AND tc.table_schema = kcu.table_schema \
-                           AND tc.table_name = kcu.table_name \
-                         WHERE tc.table_schema = $1 AND tc.table_name = $2 \
-                         AND tc.constraint_type = 'PRIMARY KEY' \
-                         ORDER BY kcu.ordinal_position",
-                    )
-                    .bind(schema)
-                    .bind(&table_name)
-                    .fetch_all(&mut self.conn)
-                    .await
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                    let mut pk_name: Option<String> = None;
-                    let mut pk_cols: Vec<String> = Vec::new();
-                    for row in &pk_rows {
-                        let name: String = row
-                            .try_get(0)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let column: String = row
-                            .try_get(1)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        pk_name.get_or_insert(name);
-                        pk_cols.push(column);
-                    }
-
-                    for cr in &col_rows {
-                        let col_name: String = cr
-                            .try_get(0)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let data_type: String = cr
-                            .try_get(1)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let udt_schema: String = cr
-                            .try_get(2)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let udt_name: String = cr
-                            .try_get(3)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let char_max: Option<i32> = cr
-                            .try_get(4)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let num_prec: Option<i32> = cr
-                            .try_get(5)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let num_scale: Option<i32> = cr
-                            .try_get(6)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let is_nullable: String = cr
-                            .try_get(7)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let col_default: Option<String> = cr
-                            .try_get(8)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        // attidentity is pg "char" (i8): b'a' = ALWAYS, b'd' = BY DEFAULT, 0 = not identity
-                        let attidentity: i8 = cr
-                            .try_get(9)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let generation_expression: Option<String> = cr
-                            .try_get(10)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-                        let generated = generation_expression.filter(|s| !s.is_empty());
-                        let default = if generated.is_some() {
-                            None
-                        } else {
-                            match attidentity as u8 {
-                                b'a' => Some("GENERATED ALWAYS AS IDENTITY".to_string()),
-                                b'd' => Some("GENERATED BY DEFAULT AS IDENTITY".to_string()),
-                                _ => col_default,
-                            }
-                        };
-
-                        let col_type = if data_type == "character varying" {
-                            match char_max {
-                                Some(n) => format!("varchar({})", n),
-                                None => "text".to_string(),
-                            }
-                        } else if data_type == "character" {
-                            match char_max {
-                                Some(n) => format!("char({})", n),
-                                None => "char".to_string(),
-                            }
-                        } else if data_type == "numeric" || data_type == "decimal" {
-                            match (num_prec, num_scale) {
-                                (Some(p), Some(s)) => format!("numeric({p}, {s})"),
-                                _ => "numeric".to_string(),
-                            }
-                        } else if data_type == "USER-DEFINED" {
-                            schema_qualified_key(&udt_name, Some(&udt_schema))
-                        } else {
-                            data_type.clone()
-                        };
-
-                        let is_pk = pk_cols.contains(&col_name);
-                        table.columns.push(Column {
-                            name: col_name,
-                            col_type,
-                            nullable: is_nullable == "YES",
-                            default,
-                            primary_key: is_pk,
-                            references: None,
-                            check: None,
-                            generated,
-                        });
-                    }
-                    if !pk_cols.is_empty() {
-                        table.primary_key = Some(PrimaryKey {
-                            name: pk_name.unwrap_or_else(|| table.pk_constraint_name()),
-                            columns: pk_cols,
-                        });
-                    }
-
-                    let fk_rows = sqlx::query(
-                        "SELECT c.conname, \
-                         a.attname AS from_col, \
-                         fn.nspname AS ref_schema, \
-                         fc.relname AS ref_table, \
-                         fa.attname AS ref_col, \
-                         keys.ordinality AS col_ordinality \
-                         FROM pg_constraint c \
-                         JOIN pg_class t ON t.oid = c.conrelid \
-                         JOIN pg_namespace tn ON tn.oid = t.relnamespace \
-                         JOIN pg_class fc ON fc.oid = c.confrelid \
-                         JOIN pg_namespace fn ON fn.oid = fc.relnamespace \
-                         JOIN unnest(c.conkey, c.confkey) WITH ORDINALITY \
-                           AS keys(from_attnum, ref_attnum, ordinality) ON TRUE \
-                         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = keys.from_attnum \
-                         JOIN pg_attribute fa ON fa.attrelid = fc.oid AND fa.attnum = keys.ref_attnum \
-                         WHERE c.contype = 'f' AND tn.nspname = $1 AND t.relname = $2 \
-                         ORDER BY c.conname, keys.ordinality",
-                    )
-                    .bind(schema)
-                    .bind(&table_name)
-                    .fetch_all(&mut self.conn)
-                    .await
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-                    let mut fk_map: std::collections::BTreeMap<
-                        String,
-                        (String, Vec<String>, Vec<String>),
-                    > = std::collections::BTreeMap::new();
-                    for fkr in &fk_rows {
-                        let fk_name: String = fkr
-                            .try_get(0)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let from_col: String = fkr
-                            .try_get(1)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let ref_schema: String = fkr
-                            .try_get(2)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let ref_table: String = fkr
-                            .try_get(3)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let ref_col: String = fkr
-                            .try_get(4)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let to_table = schema_qualified_key(&ref_table, Some(&ref_schema));
-                        let entry = fk_map
-                            .entry(fk_name)
-                            .or_insert_with(|| (to_table, Vec::new(), Vec::new()));
-                        entry.1.push(from_col);
-                        entry.2.push(ref_col);
-                    }
-                    for (name, (to_table, columns, to_columns)) in fk_map {
-                        table
-                            .foreign_keys
-                            .push(ForeignKey::new(name, columns, to_table, to_columns));
-                    }
-
-                    let uq_rows = sqlx::query(
-                        "SELECT tc.constraint_name, kcu.column_name \
-                         FROM information_schema.table_constraints tc \
-                         JOIN information_schema.key_column_usage kcu \
-                           ON tc.constraint_name = kcu.constraint_name \
-                           AND tc.table_schema = kcu.table_schema \
-                           AND tc.table_name = kcu.table_name \
-                         WHERE tc.table_schema = $1 AND tc.table_name = $2 \
-                         AND tc.constraint_type = 'UNIQUE' \
-                         ORDER BY tc.constraint_name, kcu.ordinal_position",
-                    )
-                    .bind(schema)
-                    .bind(&table_name)
-                    .fetch_all(&mut self.conn)
-                    .await
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-                    let mut uq_map: std::collections::BTreeMap<String, Vec<String>> =
-                        std::collections::BTreeMap::new();
-                    for uqr in &uq_rows {
-                        let cname: String = uqr
-                            .try_get(0)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let col: String = uqr
-                            .try_get(1)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        uq_map.entry(cname).or_default().push(col);
-                    }
-                    for (name, columns) in uq_map {
-                        table.constraints.push(Constraint::Unique { name, columns });
-                    }
-
-                    let ck_rows = sqlx::query(
-                        "SELECT con.conname, pg_get_constraintdef(con.oid, true) \
-                         FROM pg_constraint con \
-                         JOIN pg_class rel ON rel.oid = con.conrelid \
-                         JOIN pg_namespace ns ON ns.oid = rel.relnamespace \
-                         WHERE con.contype = 'c' \
-                         AND ns.nspname = $1 AND rel.relname = $2 \
-                         AND pg_get_constraintdef(con.oid, true) NOT LIKE '%IS NOT NULL' \
-                         ORDER BY con.conname",
-                    )
-                    .bind(schema)
-                    .bind(&table_name)
-                    .fetch_all(&mut self.conn)
-                    .await
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-                    for ckr in &ck_rows {
-                        let cname: String = ckr
-                            .try_get(0)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let expr: String = ckr
-                            .try_get(1)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let expr = expr
-                            .strip_prefix("CHECK (")
-                            .and_then(|s| s.strip_suffix(')'))
-                            .unwrap_or(&expr)
-                            .to_string();
-                        table.constraints.push(Constraint::Check {
-                            name: cname,
-                            expression: expr,
-                        });
-                    }
-
-                    let idx_rows = sqlx::query(
-                        "SELECT i.relname, ix2.indexdef \
-                         FROM pg_class t \
-                         JOIN pg_index ix ON t.oid = ix.indrelid \
-                         JOIN pg_class i ON i.oid = ix.indexrelid \
-                         JOIN pg_namespace n ON n.oid = t.relnamespace \
-                         JOIN pg_indexes ix2 ON ix2.indexname = i.relname AND ix2.schemaname = n.nspname \
-                         WHERE n.nspname = $1 AND t.relname = $2 \
-                         AND NOT ix.indisprimary \
-                         AND NOT EXISTS ( \
-                           SELECT 1 FROM information_schema.table_constraints c \
-                           WHERE c.table_schema = n.nspname AND c.table_name = t.relname \
-                           AND c.constraint_name = i.relname \
-                         ) \
-                         ORDER BY i.relname",
-                    )
-                    .bind(schema)
-                    .bind(&table_name)
-                    .fetch_all(&mut self.conn)
-                    .await
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-                    for idr in &idx_rows {
-                        let idx_name: String = idr
-                            .try_get(0)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let idx_def: String = idr
-                            .try_get(1)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let (cols, unique, predicate) = parse_index_def(&idx_def)?;
-                        table.indexes.push(Index {
-                            name: idx_name,
-                            columns: cols,
-                            unique,
-                            predicate,
-                        });
-                    }
-
-                    let tg_rows = sqlx::query(
-                        "SELECT t.tgname, t.tgtype, p.proname, n2.nspname \
-                         FROM pg_trigger t \
-                         JOIN pg_class c ON c.oid = t.tgrelid \
-                         JOIN pg_namespace n ON n.oid = c.relnamespace \
-                         JOIN pg_proc p ON p.oid = t.tgfoid \
-                         JOIN pg_namespace n2 ON n2.oid = p.pronamespace \
-                         WHERE n.nspname = $1 AND c.relname = $2 \
-                         AND NOT t.tgisinternal \
-                         ORDER BY t.tgname",
-                    )
-                    .bind(schema)
-                    .bind(&table_name)
-                    .fetch_all(&mut self.conn)
-                    .await
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-                    for tgr in &tg_rows {
-                        let tg_name: String = tgr
-                            .try_get(0)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let tgtype: i16 = tgr
-                            .try_get(1)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let fn_name: String = tgr
-                            .try_get(2)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let fn_schema: String = tgr
-                            .try_get(3)
-                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                        let (timing, events, scope) = decode_tgtype(tgtype);
-                        let fn_key = schema_qualified_key(&fn_name, Some(&fn_schema));
-                        table.triggers.push(TriggerDef {
-                            name: Some(tg_name),
-                            timing,
-                            events,
-                            scope,
-                            function_name: Some(fn_key),
-                            when: None,
-                            query: None,
-                            language: None,
-                        });
-                    }
-
-                    state.tables.insert(table.qualified_name(), table);
-                }
-
-                let view_rows = sqlx::query(
-                    "SELECT table_name, view_definition FROM information_schema.views \
-                     WHERE table_schema = $1 ORDER BY table_name",
-                )
-                .bind(schema)
-                .fetch_all(&mut self.conn)
-                .await
-                .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-                for vr in &view_rows {
-                    let view_name: String = vr
-                        .try_get(0)
-                        .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                    let definition: String = vr
-                        .try_get(1)
-                        .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                    let key = schema_qualified_key(&view_name, Some(schema));
-                    state.views.insert(
-                        key,
-                        ViewDef {
-                            name: view_name,
-                            schema: if schema == "public" {
-                                None
-                            } else {
-                                Some(schema.to_string())
-                            },
-                            definition,
-                        },
-                    );
-                }
-            }
-
-            let schema_list: Vec<String> = schemas.iter().map(|s| s.to_string()).collect();
-            let fn_rows = sqlx::query(
-                "SELECT p.proname, n.nspname, \
-                 pg_get_function_identity_arguments(p.oid) AS args, \
-                 p.prosrc AS body, \
-                 l.lanname, \
-                 p.provolatile, \
-                 p.prosecdef, \
-                 pg_get_function_result(p.oid) AS returns \
-                 FROM pg_proc p \
-                 JOIN pg_namespace n ON n.oid = p.pronamespace \
-                 JOIN pg_language l ON l.oid = p.prolang \
-                 WHERE p.prokind = 'f' \
-                 AND l.lanname NOT IN ('internal', 'c') \
-                 AND n.nspname = ANY($1) \
-                 ORDER BY n.nspname, p.proname",
-            )
-            .bind(&schema_list[..])
-            .fetch_all(&mut self.conn)
-            .await
-            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-            for fnr in &fn_rows {
-                let fn_name: String = fnr
-                    .try_get(0)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let fn_schema: String = fnr
-                    .try_get(1)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let args: String = fnr
-                    .try_get(2)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let body: String = fnr
-                    .try_get(3)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let language: String = fnr
-                    .try_get(4)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let provolatile: i8 = fnr
-                    .try_get(5)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let security_definer: bool = fnr
-                    .try_get(6)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let returns: String = fnr
-                    .try_get(7)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-                let volatility = match provolatile as u8 {
-                    b'i' => Volatility::Immutable,
-                    b's' => Volatility::Stable,
-                    _ => Volatility::Volatile,
-                };
-
-                let key = schema_qualified_key(&fn_name, Some(&fn_schema));
-                let final_key = if args.is_empty() {
-                    key
-                } else {
-                    format!("{}({})", key, args)
-                };
-
-                state.functions.insert(
-                    final_key,
-                    FunctionDef {
-                        name: fn_name,
-                        schema: if fn_schema == "public" {
-                            None
-                        } else {
-                            Some(fn_schema)
-                        },
-                        arguments: args,
-                        returns,
-                        language,
-                        body,
-                        volatility,
-                        security_definer,
-                    },
-                );
-            }
-
-            let ext_rows = sqlx::query(
-                "SELECT e.extname, n.nspname, e.extversion \
-                 FROM pg_extension e \
-                 JOIN pg_namespace n ON n.oid = e.extnamespace \
-                 WHERE n.nspname = ANY($1) \
-                 ORDER BY n.nspname, e.extname",
-            )
-            .bind(&schema_list[..])
-            .fetch_all(&mut self.conn)
-            .await
-            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-            for row in &ext_rows {
-                let name: String = row
-                    .try_get(0)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let schema: String = row
-                    .try_get(1)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let version: Option<String> = row
-                    .try_get(2)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let extension = ExtensionDef {
-                    name,
-                    schema: if schema == "public" {
-                        None
-                    } else {
-                        Some(schema)
-                    },
-                    version,
-                };
-                state
-                    .extensions
-                    .insert(extension.qualified_name(), extension);
-            }
-
-            let enum_rows = sqlx::query(
-                "SELECT t.typname, n.nspname, e.enumlabel \
-                 FROM pg_type t \
-                 JOIN pg_enum e ON e.enumtypid = t.oid \
-                 JOIN pg_namespace n ON n.oid = t.typnamespace \
-                 WHERE n.nspname = ANY($1) \
-                 ORDER BY n.nspname, t.typname, e.enumsortorder",
-            )
-            .bind(&schema_list[..])
-            .fetch_all(&mut self.conn)
-            .await
-            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-            let mut enum_map: std::collections::BTreeMap<String, EnumDef> =
-                std::collections::BTreeMap::new();
-            for row in &enum_rows {
-                let name: String = row
-                    .try_get(0)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let schema: String = row
-                    .try_get(1)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let label: String = row
-                    .try_get(2)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let schema = if schema == "public" {
-                    None
-                } else {
-                    Some(schema)
-                };
-                let key = schema_qualified_key(&name, schema.as_deref());
-                enum_map
-                    .entry(key)
-                    .or_insert_with(|| EnumDef {
-                        name,
-                        schema,
-                        values: Vec::new(),
-                    })
-                    .values
-                    .push(label);
-            }
-            state.enums.extend(enum_map);
-
-            Ok(state)
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Verifies that a simple non-unique btree index definition is parsed correctly.
+    /// Verifies a CHECK wrapper is removed only when the full value is one CHECK expression.
     #[test]
-    fn parse_index_def_non_unique() {
-        let def = "CREATE INDEX idx_users_email ON public.users USING btree (email)";
-        let (cols, unique, predicate) = parse_index_def(def).unwrap();
-        assert_eq!(cols, vec!["email"]);
-        assert!(!unique);
-        assert!(predicate.is_none());
+    fn strip_check_wrapper_removes_outer_check() {
+        assert_eq!(strip_check_wrapper("CHECK ((value > 0))"), "(value > 0)");
+        assert_eq!(strip_check_wrapper("value > 0"), "value > 0");
     }
 
-    /// Verifies that a unique multi-column index is parsed correctly.
+    /// Verifies index predicates lose only one balanced outer parenthesis pair.
     #[test]
-    fn parse_index_def_unique_multi_col() {
-        let def =
-            r#"CREATE UNIQUE INDEX idx ON public.orders USING btree ("tenant_id", order_num)"#;
-        let (cols, unique, predicate) = parse_index_def(def).unwrap();
-        assert_eq!(cols, vec!["tenant_id", "order_num"]);
-        assert!(unique);
-        assert!(predicate.is_none());
-    }
-
-    /// Verifies that an empty indexdef string fails instead of producing lossy metadata.
-    #[test]
-    fn parse_index_def_empty() {
-        let err = parse_index_def("").unwrap_err();
-        assert!(err.to_string().contains("without a column list"));
-    }
-
-    /// Verifies that a partial index has its WHERE predicate extracted and columns are clean.
-    #[test]
-    fn parse_index_def_partial_index() {
-        let def =
-            "CREATE INDEX idx ON public.tasks USING btree (status, ready_time) WHERE (status = 0)";
-        let (cols, unique, predicate) = parse_index_def(def).unwrap();
-        assert_eq!(cols, vec!["status", "ready_time"]);
-        assert!(!unique);
-        assert_eq!(predicate.as_deref(), Some("status = 0"));
-    }
-
-    /// Verifies unparenthesized PostgreSQL partial-index predicates are preserved.
-    #[test]
-    fn parse_index_def_partial_index_without_predicate_parens() {
-        let def = "CREATE INDEX idx ON public.users USING btree (email) WHERE active";
-        let (cols, unique, predicate) = parse_index_def(def).unwrap();
-        assert_eq!(cols, vec!["email"]);
-        assert!(!unique);
-        assert_eq!(predicate.as_deref(), Some("active"));
-    }
-
-    /// Verifies that DESC sort modifiers and operator classes are stripped from column names.
-    #[test]
-    fn parse_index_def_strips_modifiers() {
-        let def =
-            "CREATE INDEX idx ON t USING btree (provider_id, created DESC) WHERE (deleted IS NULL)";
-        let (cols, _, predicate) = parse_index_def(def).unwrap();
-        assert_eq!(cols, vec!["provider_id", "created"]);
-        assert_eq!(predicate.as_deref(), Some("deleted IS NULL"));
-    }
-
-    /// Verifies that varchar operator classes are stripped from LIKE-support indexes.
-    #[test]
-    fn parse_index_def_strips_opclass() {
-        let def = "CREATE INDEX idx ON t USING btree (username varchar_pattern_ops)";
-        let (cols, _, _) = parse_index_def(def).unwrap();
-        assert_eq!(cols, vec!["username"]);
-    }
-
-    #[test]
-    fn parse_index_def_rejects_expression_indexes() {
-        let def = "CREATE INDEX idx ON t USING btree ((lower(username)))";
-        let err = parse_index_def(def).unwrap_err();
-        assert!(err.to_string().contains("expression index"));
-    }
-
-    /// Verifies function-call expression indexes are rejected even without double parentheses.
-    #[test]
-    fn parse_index_def_rejects_function_expression_indexes() {
-        let def = "CREATE INDEX idx ON t USING btree (lower(username))";
-        let err = parse_index_def(def).unwrap_err();
-        assert!(err.to_string().contains("expression index"));
-    }
-
-    /// Verifies BEFORE INSERT ROW trigger decoding.
-    #[test]
-    fn decode_tgtype_before_insert_row() {
-        // TRIGGER_TYPE_BEFORE(0x02) | TRIGGER_TYPE_INSERT(0x04) | TRIGGER_TYPE_ROW(0x01)
-        let (timing, events, scope) = decode_tgtype(0x02 | 0x04 | 0x01);
-        assert_eq!(timing, TriggerTiming::Before);
-        assert_eq!(events, vec![TriggerEvent::Insert]);
-        assert_eq!(scope, TriggerScope::Row);
-    }
-
-    /// Verifies AFTER UPDATE and DELETE STATEMENT trigger decoding.
-    #[test]
-    fn decode_tgtype_after_update_delete_statement() {
-        let tgtype: i16 = 0x08 | 0x10; // DELETE | UPDATE, statement level
-        let (timing, events, scope) = decode_tgtype(tgtype);
-        assert_eq!(timing, TriggerTiming::After);
-        assert!(events.contains(&TriggerEvent::Delete));
-        assert!(events.contains(&TriggerEvent::Update));
-        assert!(!events.contains(&TriggerEvent::Insert));
-        assert_eq!(scope, TriggerScope::Statement);
-    }
-
-    /// Verifies INSTEAD OF trigger decoding.
-    #[test]
-    fn decode_tgtype_instead_of() {
-        let tgtype: i16 = 0x40 | 0x04; // INSTEAD_OF | INSERT
-        let (timing, events, scope) = decode_tgtype(tgtype);
-        assert_eq!(timing, TriggerTiming::InsteadOf);
-        assert_eq!(events, vec![TriggerEvent::Insert]);
-        assert_eq!(scope, TriggerScope::Statement);
-    }
-
-    /// Verifies TRUNCATE AFTER STATEMENT trigger.
-    #[test]
-    fn decode_tgtype_truncate_after_statement() {
-        let tgtype: i16 = 0x20;
-        let (timing, events, scope) = decode_tgtype(tgtype);
-        assert_eq!(timing, TriggerTiming::After);
-        assert_eq!(events, vec![TriggerEvent::Truncate]);
-        assert_eq!(scope, TriggerScope::Statement);
+    fn normalize_index_predicate_strips_balanced_outer_parens() {
+        assert_eq!(
+            normalize_index_predicate("(deleted IS NULL)"),
+            "deleted IS NULL"
+        );
+        assert_eq!(normalize_index_predicate("active"), "active");
     }
 }

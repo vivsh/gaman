@@ -14,6 +14,10 @@ fn print_header() {
     eprintln!();
 }
 
+fn print_version() {
+    println!("gaman {VERSION}");
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let raw_args: Vec<String> = std::env::args().collect();
@@ -21,8 +25,22 @@ async fn main() {
         print_header();
         std::process::exit(1);
     }
-
-    let _ = dotenvy::dotenv();
+    if raw_args
+        .iter()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+    {
+        print_version();
+        return;
+    }
+    if raw_args
+        .iter()
+        .skip(1)
+        .any(|arg| arg == "--help" || arg == "help")
+    {
+        println!("gaman {VERSION}");
+        println!();
+    }
 
     let args: GamanArgs = argh::from_env();
 

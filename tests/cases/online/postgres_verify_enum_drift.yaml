@@ -20,11 +20,11 @@ dialects:
   postgres:
     checks: [verify]
     expect_verify:
-      - type: create_enum
-        enum_def:
-          name: ticket_status
-          values: [open, pending, closed]
       - type: drop_enum
         enum_def:
           name: ticket_status
           values: [open, closed, pending]
+      - type: create_enum
+        enum_def:
+          name: ticket_status
+          values: [open, pending, closed]

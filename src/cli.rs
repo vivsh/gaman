@@ -5,15 +5,19 @@ use argh::FromArgs;
 /// Gaman CLI.
 #[derive(FromArgs, Debug)]
 pub struct GamanArgs {
-    /// path to the migrations directory (default: ./migrations)
+    /// load environment variables from this file before resolving config
+    #[argh(option)]
+    pub env: Option<String>,
+
+    /// path to the migrations directory (env: MIGRATIONS_DIR, default: ./migrations)
     #[argh(option, short = 'm')]
     pub migrations_dir: Option<String>,
 
-    /// path to the schema file (default: ./schema.yaml)
+    /// path to the schema file or directory (env: SCHEMA, default: ./schema.yaml)
     #[argh(option, short = 's')]
-    pub schema_file: Option<String>,
+    pub schema: Option<String>,
 
-    /// database connection string (overrides DATABASE_URL env var)
+    /// database connection string (env: DATABASE_URL, default: postgres:///)
     #[argh(option, short = 'd')]
     pub database_url: Option<String>,
 
@@ -141,13 +145,23 @@ pub enum CommandError {
 }
 
 impl GamanArgs {
+    /// Loads explicitly requested environment variables before configuration resolution.
+    pub(crate) fn load_env_file(&self) -> Result<(), CommandError> {
+        if let Some(path) = &self.env {
+            dotenvy::from_path(path).map_err(|err| {
+                CommandError::Config(format!("failed to load env file '{path}': {err}"))
+            })?;
+        }
+        Ok(())
+    }
+
     /// Apply CLI overrides onto `config` and return the selected subcommand.
     pub(crate) fn apply_to(self, config: &mut Config) -> Result<Command, CommandError> {
         if let Some(dir) = self.migrations_dir {
             config.migrations_dir = std::path::PathBuf::from(dir);
         }
-        if let Some(sf) = self.schema_file {
-            config.schema_file = std::path::PathBuf::from(sf);
+        if let Some(schema) = self.schema {
+            config.schema_file = std::path::PathBuf::from(schema);
         }
         if let Some(url) = self.database_url {
             let dialect = Config::dialect_from_database_url(&url).map_err(|err| {
@@ -161,6 +175,7 @@ impl GamanArgs {
 }
 
 pub async fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
+    args.load_env_file()?;
     let mut config = Config::from_env().map_err(|err| {
         CommandError::Config(format!("failed to parse dialect from DATABASE_URL: {err}"))
     })?;
@@ -177,7 +192,7 @@ pub(crate) async fn dispatch(engine: MigrationEngine, cmd: Command) -> Result<()
         Command::Config(_) => {
             let config = engine.config();
             println!("  migrations_dir  {}", config.migrations_dir.display());
-            println!("  schema_file     {}", config.schema_file.display());
+            println!("  schema          {}", config.schema_file.display());
             println!("  database_url    {}", config.database_url);
             Ok(())
         }
@@ -325,17 +340,18 @@ pub(crate) async fn dispatch(engine: MigrationEngine, cmd: Command) -> Result<()
         }
         Command::VerifyDb(cmd) => {
             let schema = cmd.schema.as_deref().unwrap_or("public");
-            let drift = engine.verify(schema).await.map_err(command_error)?;
-            if drift.is_empty() {
+            let report = engine.verify_report(schema).await.map_err(command_error)?;
+            if report.findings.is_empty() && report.pending_migrations.is_empty() {
                 println!("No drift detected.");
                 Ok(())
             } else {
-                for op in &drift {
-                    println!("  drift: {}", op.type_name());
+                for line in crate::verification::format_report(&report) {
+                    println!("{line}");
                 }
                 Err(CommandError::Config(format!(
-                    "{} drift operation(s) detected",
-                    drift.len()
+                    "{} drift finding(s), {} pending migration(s) detected",
+                    report.findings.len(),
+                    report.pending_migrations.len()
                 )))
             }
         }
@@ -394,8 +410,9 @@ mod tests {
         let mut config = Config::default().with_dialect(Dialect::Postgres);
 
         let command = GamanArgs {
+            env: None,
             migrations_dir: None,
-            schema_file: None,
+            schema: None,
             database_url: Some("postgres://localhost/app".to_string()),
             command: Command::Config(ShowConfigCmd {}),
         }
@@ -414,8 +431,9 @@ mod tests {
         let mut config = Config::default().with_dialect(Dialect::Postgres);
 
         GamanArgs {
+            env: None,
             migrations_dir: None,
-            schema_file: None,
+            schema: None,
             database_url: Some("sqlite::memory:".to_string()),
             command: Command::Config(ShowConfigCmd {}),
         }
@@ -432,8 +450,9 @@ mod tests {
         let mut config = Config::default().with_dialect(Dialect::Postgres);
 
         let err = GamanArgs {
+            env: None,
             migrations_dir: None,
-            schema_file: None,
+            schema: None,
             database_url: Some("oracle://localhost/app".to_string()),
             command: Command::Config(ShowConfigCmd {}),
         }
@@ -458,6 +477,7 @@ tables:
       - name: id
         type: mystery_type
 "#,
+            Dialect::Postgres,
         )
         .unwrap();
         let engine = test_engine(schema);
@@ -493,6 +513,7 @@ tables:
       - name: id
         type: mystery_type
 "#,
+            Dialect::Postgres,
         )
         .unwrap();
         let engine = test_engine(schema);

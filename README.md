@@ -44,7 +44,7 @@ compatibility mode.
 cargo install gaman
 export DATABASE_URL=postgres://localhost/myapp
 export MIGRATIONS_DIR=migrations
-export SCHEMA_FILE=schema.yaml
+export SCHEMA=schema.yaml
 
 gaman make_migration initial
 gaman sql_migrate
@@ -79,13 +79,17 @@ cargo install gaman --no-default-features --features cli,sqlite
 Use `--non-interactive` in CI when prompts should fail the run instead of
 waiting for input.
 
+Gaman does not load `.env` automatically. Use `--env .env` when you want local
+dotenv-style configuration.
+
 ## CLI Reference
 
 Global flags come before the subcommand:
 
 - `-m <dir>` overrides `MIGRATIONS_DIR`.
-- `-s <file-or-dir>` overrides `SCHEMA_FILE`.
+- `-s <file-or-dir>` / `--schema <file-or-dir>` overrides `SCHEMA`.
 - `-d <url>` overrides `DATABASE_URL`.
+- `--env <file>` loads environment variables from a dotenv file before config resolution.
 - `--dialect postgres|sqlite` selects the renderer for offline commands.
 
 Everyday commands:
@@ -117,7 +121,7 @@ Environment variables:
 
 - `DATABASE_URL`: required for `migrate`, `inspect_db`, and `verify_db`.
 - `MIGRATIONS_DIR`: defaults to `migrations`.
-- `SCHEMA_FILE`: defaults to `schema.yaml`; may be YAML, SQL, or a directory.
+- `SCHEMA`: defaults to `schema.yaml`; may be YAML, JSON, SQL, or a directory.
 
 ## Support
 
@@ -130,6 +134,13 @@ fixture results; live rows require database-backed evidence.
 
 Legend: ✅ accepted evidence, ◐ bounded support, 🚧 planned or not evidenced
 yet, ❌ unsupported by design or by the database engine.
+
+`inspect_db` is the high-fidelity reflection path for onboarding existing
+projects into Gaman. `verify_db` is narrower by design: each dialect owns a
+static registry of entity properties that live inspection can recover accurately
+and deterministically. Opaque objects are still tracked by presence and stable
+metadata, but their bodies are not drift inputs unless a dialect-specific
+verifier can inspect them deterministically.
 
 <!-- gaman:support-matrix:start -->
 | Feature | PostgreSQL | SQLite | MySQL / MariaDB |
@@ -269,7 +280,7 @@ manual static definition; use `from_source` for custom storage.
 use gaman::{Config, MigrationEngine};
 use gaman::core::Dialect;
 
-let schema = gaman::schema_file::load_schema_path("schema.yaml")?;
+let schema = gaman::schema_file::load_schema_path("schema.yaml", Dialect::Postgres)?;
 let engine = MigrationEngine::new(Config::default(), &MIGRATIONS)
     .with_dialect(Dialect::Postgres)
     .with_schema(|_| schema)?;
@@ -320,8 +331,11 @@ Gaman is not a universal DDL modeler or a live-database-first planner.
   `Statement` operations for backend-specific PK surgery.
 - Opaque source text is preserved exactly. Lexical canonicalization is used only
   to suppress formatting-only diff churn.
-- `verify_db` compares deterministic opaque metadata where available, but it
-  does not prove function, trigger, or view body equivalence from live catalog text.
+- `inspect_db` preserves useful reflected catalog state for onboarding existing
+  projects, even when that state is not part of drift verification.
+- `verify_db` compares deterministic inspected properties only and reports the
+  entity property that drifted. It does not prove function, trigger, or view
+  body equivalence from live catalog text.
 - PostgreSQL trigger `query` source is wrapped in generated trigger functions
   with default return behavior. Use explicit functions for custom returns.
 - SQLite table rebuilds require `atomic: true`; unsafe rebuilds fail early.

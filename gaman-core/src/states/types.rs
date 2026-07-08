@@ -288,6 +288,8 @@ pub struct ColumnRef {
     pub column: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_delete: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -315,6 +317,8 @@ pub struct ForeignKey {
     pub columns: Vec<String>,
     pub to_table: String,
     pub to_columns: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_delete: Option<String>,
 }
 
 impl ForeignKey {
@@ -329,7 +333,16 @@ impl ForeignKey {
             columns: columns.into_iter().map(Into::into).collect(),
             to_table: to_table.into(),
             to_columns: to_columns.into_iter().map(Into::into).collect(),
+            on_delete: None,
         }
+    }
+
+    pub fn on_delete(mut self, action: impl Into<String>) -> Self {
+        let action = action.into();
+        if !action.trim().is_empty() {
+            self.on_delete = Some(action);
+        }
+        self
     }
 
     pub fn single(
@@ -350,6 +363,22 @@ impl ForeignKey {
     }
 }
 
+pub fn canonical_foreign_key_action(action: &str) -> Option<&'static str> {
+    match action
+        .trim()
+        .to_ascii_lowercase()
+        .replace(' ', "_")
+        .as_str()
+    {
+        "cascade" => Some("cascade"),
+        "restrict" => Some("restrict"),
+        "set_null" => Some("set_null"),
+        "set_default" => Some("set_default"),
+        "no_action" | "" => None,
+        _ => None,
+    }
+}
+
 #[derive(Deserialize)]
 struct ForeignKeyWire {
     #[serde(default)]
@@ -363,6 +392,8 @@ struct ForeignKeyWire {
     to_columns: Vec<String>,
     #[serde(default)]
     to_column: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    on_delete: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for ForeignKey {
@@ -381,6 +412,7 @@ impl<'de> Deserialize<'de> for ForeignKey {
             columns,
             to_table: wire.to_table,
             to_columns,
+            on_delete: wire.on_delete.filter(|action| !action.trim().is_empty()),
         })
     }
 }

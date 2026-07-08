@@ -14,6 +14,9 @@
 //! This module is the only boundary that uses the `sqlparser` crate. Public
 //! parser APIs expose Gaman-owned types only: `Schema`, `Dialect`,
 //! `SqlSegment`, `SqlStatementKind`, and `ParseError`.
+//!
+//! There is no default SQL dialect at this boundary. Callers must pass the
+//! dialect explicitly for parsing and segmentation.
 
 mod common;
 mod error;
@@ -30,4 +33,4 @@ pub use error::ParseError;
 pub use segments::{
     DdlStatementKind, DmlStatementKind, SqlObjectName, SqlSegment, SqlStatementKind, segment_sql,
 };
-pub use sql::{parse_sql, parse_sql_for_dialect};
+pub use sql::parse_sql;

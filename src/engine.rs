@@ -286,7 +286,10 @@ impl MigrationEngine {
             return Ok(schema.clone());
         }
         if matches!(&self.source, EngineSource::Directory) {
-            return Ok(load_schema_path(&self.config.schema_file)?);
+            return Ok(load_schema_path(
+                &self.config.schema_file,
+                self.config.dialect,
+            )?);
         }
         Err(EngineError::NoSchema)
     }
@@ -405,6 +408,14 @@ impl MigrationEngine {
     /// An empty vec means the database is in sync with migrations.
     pub async fn verify(self, schema: &str) -> Result<Vec<Operation>, EngineError> {
         Ok(self.build_migrator()?.verify(schema).await?)
+    }
+
+    /// Compare replayed schema against the live database and return detailed drift findings.
+    pub async fn verify_report(
+        self,
+        schema: &str,
+    ) -> Result<crate::verification::VerificationReport, EngineError> {
+        Ok(self.build_migrator()?.verify_report(schema).await?)
     }
 
     /// Introspect the live database and return the schema.
@@ -541,8 +552,8 @@ impl MigrationEngine {
     /// the embedded migration source and the optionally provided schema.
     /// Supports the full CLI interface: make_migration, migrate, verify_db, etc.
     pub async fn handle_args(self) -> Result<(), EngineError> {
-        let _ = dotenvy::dotenv();
         let args: GamanArgs = argh::from_env();
+        args.load_env_file()?;
         let mut config = self.config;
         let cmd = args.apply_to(&mut config)?;
         let engine = MigrationEngine::from_cli_config(config, self.schema);
@@ -777,6 +788,7 @@ tables:
       - name: id
         type: integer
 "#,
+            Dialect::Postgres,
         )
         .unwrap();
         let engine = MigrationEngine::from_source(
@@ -892,6 +904,7 @@ tables:
       - name: id
         type: integer
 "#,
+            Dialect::Postgres,
         )
         .unwrap();
 
@@ -925,6 +938,7 @@ tables:
       - name: id
         type: integer
 "#,
+            Dialect::Postgres,
         )
         .unwrap();
 
@@ -947,6 +961,7 @@ tables:
       - name: code
         type: project_code
 "#,
+            Dialect::Postgres,
         )
         .unwrap();
 
@@ -972,6 +987,7 @@ tables:
       - name: code
         type: project_code
 "#,
+            Dialect::Postgres,
         )
         .unwrap();
         let decisions = vec![Decision {

@@ -81,6 +81,7 @@ dialects:
               events: [insert]
               scope: row
               function_name: users_insert_after_trg_fn
+              language: plpgsql
       enums:
         user_status:
           name: user_status

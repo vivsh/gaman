@@ -197,7 +197,7 @@ which `CREATE` SQL DDL statements successfully lower into Gaman `Schema`
 entities through the public parser API:
 
 ```rust
-gaman::parsers::parse_sql_for_dialect(sql, dialect)
+gaman::parsers::parse_sql(sql, dialect)
 ```
 
 Parser fixtures assert two levels of evidence:

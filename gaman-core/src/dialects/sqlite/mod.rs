@@ -145,13 +145,31 @@ fn inline_constraint_def(c: &Constraint) -> String {
 }
 
 fn foreign_key_clause(foreign_key: &crate::states::ForeignKey) -> Result<String, DialectError> {
-    Ok(format!(
+    let mut clause = format!(
         "CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({})",
         quote_ident(&foreign_key.name),
         quoted_columns(&foreign_key.columns),
         quote_table_name(&foreign_key.to_table)?,
         quoted_columns(&foreign_key.to_columns),
-    ))
+    );
+    if let Some(action) = foreign_key.on_delete.as_deref() {
+        clause.push_str(" ON DELETE ");
+        clause.push_str(delete_action_sql(action)?);
+    }
+    Ok(clause)
+}
+
+fn delete_action_sql(action: &str) -> Result<&'static str, DialectError> {
+    match action {
+        "cascade" => Ok("CASCADE"),
+        "restrict" => Ok("RESTRICT"),
+        "set_null" => Ok("SET NULL"),
+        "set_default" => Ok("SET DEFAULT"),
+        other => Err(unsupported(
+            "foreign_key",
+            &format!("unsupported on_delete action '{other}'"),
+        )),
+    }
 }
 
 fn col_def(c: &Column, for_add_column: bool) -> Result<String, DialectError> {

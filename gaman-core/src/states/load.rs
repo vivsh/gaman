@@ -3,32 +3,20 @@ use crate::dialects::Dialect;
 use super::*;
 
 impl Schema {
-    pub fn from_yaml_str(s: &str) -> Result<Self, SchemaLoadError> {
+    pub fn from_yaml_str(s: &str, dialect: Dialect) -> Result<Self, SchemaLoadError> {
         let mut state: Self = serde_yaml::from_str(s)?;
         state.normalize();
-        Ok(state)
+        Ok(state.prepare(dialect)?)
     }
 
-    pub fn from_yaml_str_for_dialect(s: &str, dialect: Dialect) -> Result<Self, SchemaLoadError> {
-        Ok(Self::from_yaml_str(s)?.prepare(dialect)?)
-    }
-
-    pub fn from_json_str(s: &str) -> Result<Self, SchemaLoadError> {
+    pub fn from_json_str(s: &str, dialect: Dialect) -> Result<Self, SchemaLoadError> {
         let mut state: Self = serde_json::from_str(s)?;
         state.normalize();
-        Ok(state)
+        Ok(state.prepare(dialect)?)
     }
 
-    pub fn from_json_str_for_dialect(s: &str, dialect: Dialect) -> Result<Self, SchemaLoadError> {
-        Ok(Self::from_json_str(s)?.prepare(dialect)?)
-    }
-
-    pub fn from_sql_str(s: &str) -> Result<Self, SchemaLoadError> {
-        Ok(crate::parsers::parse_sql(s)?)
-    }
-
-    pub fn from_sql_str_for_dialect(s: &str, dialect: Dialect) -> Result<Self, SchemaLoadError> {
-        Ok(crate::parsers::parse_sql_for_dialect(s, dialect)?.prepare(dialect)?)
+    pub fn from_sql_str(s: &str, dialect: Dialect) -> Result<Self, SchemaLoadError> {
+        Ok(crate::parsers::parse_sql(s, dialect)?.prepare(dialect)?)
     }
 
     /// Merge `other` into `self`. Duplicate table names are an error; other objects (views,

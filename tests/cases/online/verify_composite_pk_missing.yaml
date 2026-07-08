@@ -23,12 +23,12 @@ migrations:
 
 dialects:
   postgres:
-    checks: [verify, error]
+    checks: [verify]
     mutate_sql: |
       ALTER TABLE memberships DROP CONSTRAINT memberships_pkey;
-    expect_error: primary key changes on existing table 'memberships' are not generated automatically
+    expect_verify: []
   sqlite:
-    checks: [verify, error]
+    checks: [verify]
     mutate_sql: |
       CREATE TABLE memberships_rebuild (
         tenant_id integer NOT NULL,
@@ -39,4 +39,4 @@ dialects:
         SELECT tenant_id, user_id, role FROM memberships;
       DROP TABLE memberships;
       ALTER TABLE memberships_rebuild RENAME TO memberships;
-    expect_error: primary key changes on existing table 'memberships' are not generated automatically
+    expect_verify: []

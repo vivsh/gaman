@@ -1,6 +1,6 @@
 use sqlparser::ast::{
     ColumnOption, CreateIndex, CreateTable, DataType, Expr, IndexColumn, ObjectName,
-    TableConstraint,
+    ReferentialAction, TableConstraint,
 };
 
 use super::error::ParseError;
@@ -118,12 +118,12 @@ pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), Pa
                         .first()
                         .map(|i| i.value.clone())
                         .unwrap_or_default();
-                    table.foreign_keys.push(ForeignKey::single(
-                        fk_name,
-                        col_name.clone(),
-                        to_table,
-                        to_column,
-                    ));
+                    let mut foreign_key =
+                        ForeignKey::single(fk_name, col_name.clone(), to_table, to_column);
+                    if let Some(action) = normalize_referential_action(fk.on_delete) {
+                        foreign_key.on_delete = Some(action);
+                    }
+                    table.foreign_keys.push(foreign_key);
                 }
                 ColumnOption::Check(chk) => {
                     let cname = chk
@@ -230,9 +230,11 @@ fn apply_table_constraint(tc: &TableConstraint, table_name: &str, table: &mut Ta
             let to_table = schema_qualified_key(&to_table_name, to_schema.as_deref());
             let from_columns = fk.columns.iter().map(|i| i.value.clone());
             let to_columns = fk.referred_columns.iter().map(|i| i.value.clone());
-            table
-                .foreign_keys
-                .push(ForeignKey::new(fk_name, from_columns, to_table, to_columns));
+            let mut foreign_key = ForeignKey::new(fk_name, from_columns, to_table, to_columns);
+            if let Some(action) = normalize_referential_action(fk.on_delete) {
+                foreign_key.on_delete = Some(action);
+            }
+            table.foreign_keys.push(foreign_key);
         }
         TableConstraint::Check(chk) => {
             let cname = chk
@@ -246,5 +248,15 @@ fn apply_table_constraint(tc: &TableConstraint, table_name: &str, table: &mut Ta
             });
         }
         _ => {}
+    }
+}
+
+fn normalize_referential_action(action: Option<ReferentialAction>) -> Option<String> {
+    match action? {
+        ReferentialAction::Cascade => Some("cascade".to_string()),
+        ReferentialAction::Restrict => Some("restrict".to_string()),
+        ReferentialAction::SetNull => Some("set_null".to_string()),
+        ReferentialAction::SetDefault => Some("set_default".to_string()),
+        ReferentialAction::NoAction => None,
     }
 }

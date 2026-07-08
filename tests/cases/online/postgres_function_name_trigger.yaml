@@ -67,6 +67,7 @@ dialects:
               events: [insert]
               scope: row
               function_name: audit_users_fn
+              language: plpgsql
       functions:
         audit_users_fn:
           name: audit_users_fn

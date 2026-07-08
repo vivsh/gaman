@@ -242,7 +242,7 @@ fn run_case(name: &str, case: &ParserCase) -> CaseStatus {
 }
 
 fn run_case_inner(name: &str, case: &ParserCase) -> Result<(), ParserHarnessError> {
-    let result = gaman::parsers::parse_sql_for_dialect(&case.sql, case.dialect.to_dialect());
+    let result = gaman::parsers::parse_sql(&case.sql, case.dialect.to_dialect());
     if let Some(expected_error) = &case.expect_error {
         return match result {
             Ok(schema) => Err(ParserHarnessError::message(format!(

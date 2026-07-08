@@ -32,7 +32,7 @@ fn apply_ok(state: &mut Schema, op: Operation) {
 
 #[test]
 fn prepare_normalizes_common_postgres_type_aliases_from_yaml() {
-    let schema = Schema::from_yaml_str_for_dialect(
+    let schema = Schema::from_yaml_str(
         r#"
 tables:
   users:
@@ -60,7 +60,7 @@ tables:
 
 #[test]
 fn checked_frontends_prepare_to_the_same_schema() {
-    let yaml = Schema::from_yaml_str_for_dialect(
+    let yaml = Schema::from_yaml_str(
         r#"
 tables:
   users:
@@ -75,12 +75,12 @@ tables:
         Dialect::Postgres,
     )
     .expect("yaml");
-    let json = Schema::from_json_str_for_dialect(
+    let json = Schema::from_json_str(
         r#"{"tables":{"users":{"columns":[{"name":"id","type":"int4","primary_key":true},{"name":"name","type":"text","nullable":true}]}}}"#,
         Dialect::Postgres,
     )
     .expect("json");
-    let sql = Schema::from_sql_str_for_dialect(
+    let sql = Schema::from_sql_str(
         "CREATE TABLE users (id int4 PRIMARY KEY, name text);",
         Dialect::Postgres,
     )
@@ -108,7 +108,7 @@ impl IntoTable for PreparedUser {
 
 #[test]
 fn prepare_preserves_unknown_postgres_type_for_later_clarification() {
-    let schema = Schema::from_yaml_str_for_dialect(
+    let schema = Schema::from_yaml_str(
         r#"
 tables:
   users:
@@ -125,7 +125,7 @@ tables:
 
 #[test]
 fn prepare_rejects_unknown_foreign_key_reference_before_sql_rendering() {
-    let err = Schema::from_yaml_str_for_dialect(
+    let err = Schema::from_yaml_str(
         r#"
 tables:
   posts:
@@ -147,7 +147,7 @@ tables:
 
 #[test]
 fn prepare_rejects_unknown_index_column() {
-    let err = Schema::from_yaml_str_for_dialect(
+    let err = Schema::from_yaml_str(
         r#"
 tables:
   users:
@@ -168,7 +168,7 @@ tables:
 
 #[test]
 fn prepare_normalizes_sqlite_type_aliases() {
-    let schema = Schema::from_yaml_str_for_dialect(
+    let schema = Schema::from_yaml_str(
         r#"
 tables:
   users:
@@ -192,7 +192,7 @@ tables:
 
 #[test]
 fn prepare_rejects_sqlite_unsupported_features() {
-    let err = Schema::from_yaml_str_for_dialect(
+    let err = Schema::from_yaml_str(
         r#"
 extensions:
   pgcrypto:
@@ -330,6 +330,7 @@ tables:
       - name: tenant_id
         type: bigint
 "#,
+        Dialect::Postgres,
     )
     .unwrap();
 
@@ -1165,6 +1166,7 @@ fn normalize_moves_inline_fk_to_foreign_keys() {
             table: "users".to_string(),
             column: "id".to_string(),
             name: None,
+            on_delete: None,
         }),
         check: None,
         generated: None,
@@ -1204,6 +1206,7 @@ fn normalize_inline_fk_uses_explicit_name_when_provided() {
             table: "users".to_string(),
             column: "id".to_string(),
             name: Some("fk_posts_user".to_string()),
+            on_delete: None,
         }),
         check: None,
         generated: None,
@@ -1226,7 +1229,7 @@ fn normalize_inline_fk_uses_explicit_name_when_provided() {
 
 #[test]
 fn yaml_accepts_composite_foreign_key_metadata() {
-    let schema = Schema::from_yaml_str_for_dialect(
+    let schema = Schema::from_yaml_str(
         r#"
 tables:
   users:
@@ -1262,7 +1265,7 @@ tables:
 
 #[test]
 fn yaml_accepts_unnamed_derived_schema_objects() {
-    let schema = Schema::from_yaml_str_for_dialect(
+    let schema = Schema::from_yaml_str(
         r#"
 tables:
   users:
@@ -1318,7 +1321,7 @@ tables:
 
 #[test]
 fn yaml_accepts_legacy_single_column_foreign_key_metadata() {
-    let schema = Schema::from_yaml_str_for_dialect(
+    let schema = Schema::from_yaml_str(
         r#"
 tables:
   users:
@@ -1347,7 +1350,7 @@ tables:
 
 #[test]
 fn prepare_rejects_invalid_composite_foreign_key_metadata() {
-    let err = Schema::from_yaml_str_for_dialect(
+    let err = Schema::from_yaml_str(
         r#"
 tables:
   users:
@@ -1474,7 +1477,7 @@ fn builder_trigger_accepts_model_and_normalize_derives_name() {
 
 #[test]
 fn generated_name_collision_fails_validation() {
-    let err = Schema::from_yaml_str_for_dialect(
+    let err = Schema::from_yaml_str(
         r#"
 tables:
   users:
@@ -1540,6 +1543,7 @@ fn normalize_is_idempotent() {
             table: "users".to_string(),
             column: "id".to_string(),
             name: None,
+            on_delete: None,
         }),
         check: None,
         generated: None,
@@ -1821,7 +1825,7 @@ tables:
         scope: row
         function_name: some_fn
 "#;
-    let state = Schema::from_yaml_str(yaml).expect("parse");
+    let state = Schema::from_yaml_str(yaml, Dialect::Postgres).expect("parse");
     let trigger = &state.tables["users"].triggers[0];
     assert_eq!(
         trigger.name.as_deref(),
@@ -1847,7 +1851,7 @@ tables:
         scope: row
         query: "INSERT INTO audit_log(order_id) VALUES (NEW.id);"
 "#;
-    let state = Schema::from_yaml_str(yaml).expect("parse");
+    let state = Schema::from_yaml_str(yaml, Dialect::Postgres).expect("parse");
     let trigger = &state.tables["orders"].triggers[0];
     assert_eq!(
         trigger.query.as_deref(),
@@ -1872,7 +1876,9 @@ tables:
         scope: row
         body: "BEGIN RETURN NEW; END;"
 "#;
-    let err = Schema::from_yaml_str(yaml).unwrap_err().to_string();
+    let err = Schema::from_yaml_str(yaml, Dialect::Postgres)
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("body"), "expected body in error, got {err}");
     assert!(err.contains("query"), "expected query in error, got {err}");
 }
@@ -2753,6 +2759,90 @@ fn apply_create_table_qualified_key() {
     apply_ok(&mut s, Operation::CreateTable { table });
     assert!(s.tables.contains_key("analytics.events"));
     assert!(!s.tables.contains_key("events"));
+}
+
+/// Verifies inline column references preserve canonical on_delete metadata during normalization.
+#[test]
+fn normalize_inline_fk_preserves_on_delete() {
+    let mut schema = Schema::default();
+    schema.tables.insert(
+        "users".to_string(),
+        Table {
+            name: "users".to_string(),
+            columns: vec![Column {
+                name: "id".to_string(),
+                col_type: "integer".to_string(),
+                primary_key: true,
+                ..Default::default()
+            }],
+            ..basic_table("users")
+        },
+    );
+    schema.tables.insert(
+        "posts".to_string(),
+        Table {
+            name: "posts".to_string(),
+            columns: vec![Column {
+                name: "user_id".to_string(),
+                col_type: "integer".to_string(),
+                references: Some(ColumnRef {
+                    table: "users".to_string(),
+                    column: "id".to_string(),
+                    name: None,
+                    on_delete: Some("CASCADE".to_string()),
+                }),
+                ..Default::default()
+            }],
+            ..basic_table("posts")
+        },
+    );
+
+    schema.normalize();
+
+    assert_eq!(
+        schema.tables["posts"].foreign_keys[0].on_delete.as_deref(),
+        Some("cascade")
+    );
+}
+
+/// Verifies schema validation rejects unsupported foreign-key delete actions.
+#[test]
+fn validate_rejects_invalid_foreign_key_on_delete() {
+    let mut schema = Schema::default();
+    schema.tables.insert(
+        "users".to_string(),
+        Table {
+            name: "users".to_string(),
+            columns: vec![Column {
+                name: "id".to_string(),
+                col_type: "integer".to_string(),
+                primary_key: true,
+                ..Default::default()
+            }],
+            ..basic_table("users")
+        },
+    );
+    let mut foreign_key = ForeignKey::single("posts_user_id_fkey", "user_id", "users", "id");
+    foreign_key.on_delete = Some("explode".to_string());
+    schema.tables.insert(
+        "posts".to_string(),
+        Table {
+            name: "posts".to_string(),
+            columns: vec![Column {
+                name: "user_id".to_string(),
+                col_type: "integer".to_string(),
+                ..Default::default()
+            }],
+            foreign_keys: vec![foreign_key],
+            ..basic_table("posts")
+        },
+    );
+
+    let err = schema
+        .validate()
+        .expect_err("invalid on_delete should fail");
+
+    assert!(err.contains("unsupported on_delete action 'explode'"));
 }
 
 mod property_states {

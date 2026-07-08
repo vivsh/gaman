@@ -25,6 +25,7 @@ impl ColumnBuilder {
             table: table.into(),
             column: column.into(),
             name,
+            on_delete: None,
         });
         self
     }

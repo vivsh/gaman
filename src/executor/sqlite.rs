@@ -86,12 +86,68 @@ fn synth_fk_name(table: &str, from_column: &str) -> String {
 }
 
 type SqliteFkColumns = Vec<(i64, String, String)>;
-type SqliteFkGroups = std::collections::BTreeMap<i64, (String, SqliteFkColumns)>;
+type SqliteFkGroups = std::collections::BTreeMap<i64, (String, SqliteFkColumns, Option<String>)>;
+
+struct MasterRow {
+    kind: String,
+    name: String,
+    table_name: String,
+    sql: Option<String>,
+}
+
+fn sqlite_fk_action(action: &str) -> Option<String> {
+    match action.trim().to_ascii_uppercase().as_str() {
+        "CASCADE" => Some("cascade".to_string()),
+        "RESTRICT" => Some("restrict".to_string()),
+        "SET NULL" => Some("set_null".to_string()),
+        "SET DEFAULT" => Some("set_default".to_string()),
+        "NO ACTION" | "" => None,
+        _ => None,
+    }
+}
 
 #[derive(Default)]
 struct ParsedTableSql {
     generated_columns: std::collections::BTreeMap<String, String>,
     constraints: Vec<Constraint>,
+}
+
+#[derive(Default)]
+struct ParsedIndexSql {
+    columns: Vec<String>,
+    predicate: Option<String>,
+}
+
+async fn fetch_master_rows(conn: &mut SqliteConnection) -> Result<Vec<MasterRow>, ExecutorError> {
+    let rows = sqlx::query(
+        "SELECT type, name, tbl_name, sql FROM sqlite_master \
+         WHERE type IN ('table', 'index', 'view', 'trigger') \
+         AND name NOT LIKE 'sqlite_%' \
+         AND name != 'gaman_migrations' \
+         ORDER BY type, name",
+    )
+    .fetch_all(conn)
+    .await
+    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(MasterRow {
+                kind: row
+                    .try_get("type")
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?,
+                name: row
+                    .try_get("name")
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?,
+                table_name: row
+                    .try_get("tbl_name")
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?,
+                sql: row
+                    .try_get("sql")
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?,
+            })
+        })
+        .collect()
 }
 
 impl Introspectable for SqliteExecutor {
@@ -102,26 +158,11 @@ impl Introspectable for SqliteExecutor {
         Box::pin(async move {
             let mut state = Schema::default();
 
-            let table_rows = sqlx::query(
-                "SELECT name, sql FROM sqlite_master \
-                 WHERE type = 'table' \
-                 AND name NOT LIKE 'sqlite_%' \
-                 AND name != 'gaman_migrations' \
-                 ORDER BY name",
-            )
-            .fetch_all(&mut self.conn)
-            .await
-            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+            let master_rows = fetch_master_rows(&mut self.conn).await?;
 
-            for row in table_rows {
-                let table_name: String = row
-                    .try_get(0)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let create_sql: Option<String> = row
-                    .try_get(1)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let parsed_table =
-                    parse_create_table_sql(create_sql.as_deref().unwrap_or_default());
+            for row in master_rows.iter().filter(|row| row.kind == "table") {
+                let table_name = row.name.clone();
+                let parsed_table = parse_create_table_sql(row.sql.as_deref().unwrap_or_default());
                 let quoted_table = quote_ident(&table_name);
                 let mut table = Table {
                     name: table_name.clone(),
@@ -206,10 +247,15 @@ impl Introspectable for SqliteExecutor {
                     let to_column: String = fkr
                         .try_get("to")
                         .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                    let entry = fk_map.entry(id).or_insert_with(|| (to_table, Vec::new()));
+                    let on_delete: String = fkr
+                        .try_get("on_delete")
+                        .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                    let entry = fk_map
+                        .entry(id)
+                        .or_insert_with(|| (to_table, Vec::new(), sqlite_fk_action(&on_delete)));
                     entry.1.push((seq, from_column, to_column));
                 }
-                for (_, (to_table, mut columns)) in fk_map {
+                for (_, (to_table, mut columns, on_delete)) in fk_map {
                     columns.sort_by_key(|(seq, _, _)| *seq);
                     let from_columns: Vec<String> = columns
                         .iter()
@@ -219,12 +265,14 @@ impl Introspectable for SqliteExecutor {
                         .into_iter()
                         .map(|(_, _, to_column)| to_column)
                         .collect();
-                    table.foreign_keys.push(ForeignKey::new(
+                    let mut foreign_key = ForeignKey::new(
                         synth_fk_name(&table_name, &from_columns.join("_")),
                         from_columns,
                         to_table,
                         to_columns,
-                    ));
+                    );
+                    foreign_key.on_delete = on_delete;
+                    table.foreign_keys.push(foreign_key);
                 }
 
                 let idx_rows = sqlx::query(&format!("PRAGMA index_list({quoted_table})"))
@@ -245,76 +293,73 @@ impl Introspectable for SqliteExecutor {
                         .try_get("unique")
                         .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                     let quoted_idx = quote_ident(&idx_name);
-                    let info_rows = sqlx::query(&format!("PRAGMA index_info({quoted_idx})"))
+                    let index_sql = master_rows
+                        .iter()
+                        .find(|row| row.kind == "index" && row.name == idx_name)
+                        .and_then(|row| row.sql.as_deref());
+                    let parsed_index = index_sql.map(parse_create_index_sql).unwrap_or_default();
+                    let info_rows = sqlx::query(&format!("PRAGMA index_xinfo({quoted_idx})"))
                         .fetch_all(&mut self.conn)
                         .await
                         .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                    let mut columns = Vec::new();
+                    let mut keyed_columns = Vec::new();
                     for ir in info_rows {
-                        columns.push(
-                            ir.try_get::<String, _>("name")
-                                .map_err(|e| ExecutorError::Fetch(e.to_string()))?,
-                        );
+                        let key: i64 = ir
+                            .try_get("key")
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        if key == 0 {
+                            continue;
+                        }
+                        let seqno: i64 = ir
+                            .try_get("seqno")
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        let name: Option<String> = ir
+                            .try_get("name")
+                            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                        keyed_columns.push((seqno, name));
+                    }
+                    keyed_columns.sort_by_key(|(seqno, _)| *seqno);
+                    let mut columns = Vec::new();
+                    for (idx, (_, name)) in keyed_columns.into_iter().enumerate() {
+                        match name {
+                            Some(name) => columns.push(name),
+                            None => {
+                                let Some(expr) = parsed_index.columns.get(idx) else {
+                                    return Err(ExecutorError::Fetch(format!(
+                                        "unsupported SQLite expression index '{idx_name}' without recoverable expression SQL"
+                                    )));
+                                };
+                                columns.push(expr.clone());
+                            }
+                        }
                     }
                     table.indexes.push(Index {
                         name: idx_name,
                         columns,
                         unique: unique != 0,
-                        predicate: None,
+                        predicate: parsed_index.predicate,
                     });
                 }
 
                 state.tables.insert(table_name, table);
             }
 
-            let view_rows = sqlx::query(
-                "SELECT name, sql FROM sqlite_master \
-                 WHERE type = 'view' \
-                 ORDER BY name",
-            )
-            .fetch_all(&mut self.conn)
-            .await
-            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-            for row in view_rows {
-                let name: String = row
-                    .try_get(0)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let sql: Option<String> = row
-                    .try_get(1)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+            for row in master_rows.iter().filter(|row| row.kind == "view") {
+                let name = row.name.clone();
                 state.views.insert(
                     name.clone(),
                     ViewDef {
                         name,
                         schema: None,
-                        definition: parse_view_definition(sql.as_deref().unwrap_or_default()),
+                        definition: parse_view_definition(row.sql.as_deref().unwrap_or_default()),
                     },
                 );
             }
 
-            let trigger_rows = sqlx::query(
-                "SELECT name, tbl_name, sql FROM sqlite_master \
-                 WHERE type = 'trigger' \
-                 ORDER BY name",
-            )
-            .fetch_all(&mut self.conn)
-            .await
-            .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-
-            for row in trigger_rows {
-                let name: String = row
-                    .try_get(0)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let table_name: String = row
-                    .try_get(1)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                let sql: Option<String> = row
-                    .try_get(2)
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                if let Some(table) = state.tables.get_mut(&table_name)
+            for row in master_rows.iter().filter(|row| row.kind == "trigger") {
+                if let Some(table) = state.tables.get_mut(&row.table_name)
                     && let Some(trigger) =
-                        parse_trigger_sql(&name, sql.as_deref().unwrap_or_default())
+                        parse_trigger_sql(&row.name, row.sql.as_deref().unwrap_or_default())
                 {
                     table.triggers.push(trigger);
                 }
@@ -343,6 +388,31 @@ fn parse_create_table_sql(sql: &str) -> ParsedTableSql {
         }
     }
     parsed
+}
+
+fn parse_create_index_sql(sql: &str) -> ParsedIndexSql {
+    let Some(on_pos) = find_top_level_keyword(sql, "ON") else {
+        return ParsedIndexSql::default();
+    };
+    let after_on = &sql[on_pos + "ON".len()..];
+    let Some(body) = parenthesized_body(after_on) else {
+        return ParsedIndexSql::default();
+    };
+    ParsedIndexSql {
+        columns: split_top_level(body, ',')
+            .into_iter()
+            .map(|part| part.trim().to_string())
+            .filter(|part| !part.is_empty())
+            .collect(),
+        predicate: find_top_level_keyword(sql, "WHERE")
+            .map(|pos| {
+                sql[pos + "WHERE".len()..]
+                    .trim()
+                    .trim_end_matches(';')
+                    .to_string()
+            })
+            .filter(|predicate| !predicate.is_empty()),
+    }
 }
 
 fn parse_named_constraint(input: &str, parsed: &mut ParsedTableSql) {
@@ -474,6 +544,51 @@ fn split_ident_list(input: &str) -> Vec<String> {
         .into_iter()
         .filter_map(|part| take_ident(part.trim()).map(|(ident, _)| ident))
         .collect()
+}
+
+fn find_top_level_keyword(input: &str, keyword: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut chars = input.char_indices().peekable();
+    while let Some((idx, ch)) = chars.next() {
+        if let Some(q) = quote {
+            if ch == q {
+                if chars.peek().is_some_and(|(_, next)| *next == q) {
+                    chars.next();
+                } else {
+                    quote = None;
+                }
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' | '`' => quote = Some(ch),
+            '[' => quote = Some(']'),
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && starts_keyword_at(input, idx, keyword) => return Some(idx),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn starts_keyword_at(input: &str, idx: usize, keyword: &str) -> bool {
+    let Some(rest) = input.get(idx..) else {
+        return false;
+    };
+    if rest.len() < keyword.len() || !rest[..keyword.len()].eq_ignore_ascii_case(keyword) {
+        return false;
+    }
+    let before_ok = input[..idx]
+        .chars()
+        .next_back()
+        .is_none_or(|ch| !(ch == '_' || ch.is_ascii_alphanumeric()));
+    let after_ok = rest[keyword.len()..]
+        .chars()
+        .next()
+        .is_none_or(|ch| !(ch == '_' || ch.is_ascii_alphanumeric()));
+    before_ok && after_ok
 }
 
 fn take_ident(input: &str) -> Option<(String, &str)> {

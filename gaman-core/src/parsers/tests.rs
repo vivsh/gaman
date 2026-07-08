@@ -22,7 +22,7 @@ fn col<'a>(schema: &'a Schema, tbl: &str, col: &str) -> &'a crate::states::Colum
 #[test]
 fn test_simple_table() {
     let sql = "CREATE TABLE users (id bigserial PRIMARY KEY, name text NOT NULL);";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
 
     assert!(schema.tables.contains_key("users"));
     let id = col(&schema, "users", "id");
@@ -42,7 +42,7 @@ fn test_column_nullability() {
         b integer NULL,
         c integer
     );";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     assert!(!col(&schema, "t", "a").nullable);
     assert!(col(&schema, "t", "b").nullable);
     // Postgres default: nullable when neither NULL nor NOT NULL is specified
@@ -53,7 +53,7 @@ fn test_column_nullability() {
 #[test]
 fn test_column_default() {
     let sql = "CREATE TABLE t (created_at timestamptz NOT NULL DEFAULT now());";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let c = col(&schema, "t", "created_at");
     assert_eq!(c.default.as_deref(), Some("now()"));
 }
@@ -65,7 +65,7 @@ fn test_table_level_primary_key() {
         id bigint,
         PRIMARY KEY (id)
     );";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let table = table(&schema, "orders");
     let pk = table.primary_key.as_ref().expect("primary key");
     assert_eq!(pk.name, "orders_pkey");
@@ -80,7 +80,7 @@ fn test_named_composite_primary_key_preserves_order() {
         tenant_id bigint,
         CONSTRAINT order_lines_identity PRIMARY KEY (tenant_id, order_id)
     );";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let table = table(&schema, "order_lines");
     let pk = table.primary_key.as_ref().expect("primary key");
     assert_eq!(pk.name, "order_lines_identity");
@@ -97,7 +97,7 @@ fn test_column_level_foreign_key() {
         id bigserial PRIMARY KEY,
         user_id bigint NOT NULL REFERENCES users(id)
     );";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let t = table(&schema, "posts");
     assert_eq!(t.foreign_keys.len(), 1);
     let fk = &t.foreign_keys[0];
@@ -115,7 +115,7 @@ fn test_table_level_foreign_key_named() {
         user_id bigint NOT NULL,
         CONSTRAINT fk_posts_user FOREIGN KEY (user_id) REFERENCES users(id)
     );";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let t = table(&schema, "posts");
     assert_eq!(t.foreign_keys.len(), 1);
     assert_eq!(t.foreign_keys[0].name, "fk_posts_user");
@@ -128,7 +128,7 @@ fn test_named_composite_foreign_key_preserves_order() {
         user_id bigint,
         CONSTRAINT orders_user_fkey FOREIGN KEY (tenant_id, user_id) REFERENCES users(tenant_id, id)
     );";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let fk = &table(&schema, "orders").foreign_keys[0];
 
     assert_eq!(fk.name, "orders_user_fkey");
@@ -144,7 +144,7 @@ fn test_unnamed_composite_foreign_key_uses_deterministic_name() {
         user_id bigint,
         FOREIGN KEY (tenant_id, user_id) REFERENCES users(tenant_id, id)
     );";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let fk = &table(&schema, "orders").foreign_keys[0];
 
     assert_eq!(fk.name, "orders_tenant_id_user_id_fkey");
@@ -159,7 +159,7 @@ fn test_composite_foreign_key_preserves_schema_qualified_target() {
         user_id bigint,
         FOREIGN KEY (tenant_id, user_id) REFERENCES auth.users(tenant_id, id)
     );";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let fk = &table(&schema, "orders").foreign_keys[0];
 
     assert_eq!(fk.to_table, "auth.users");
@@ -174,7 +174,7 @@ fn test_table_level_unique_constraint() {
         email text NOT NULL,
         CONSTRAINT users_email_unique UNIQUE (email)
     );";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let t = table(&schema, "users");
     let unique = t
         .constraints
@@ -192,7 +192,7 @@ fn test_table_level_check_constraint() {
         price numeric NOT NULL,
         CONSTRAINT products_price_positive CHECK (price > 0)
     );";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let t = table(&schema, "products");
     let chk = t
         .constraints
@@ -208,7 +208,7 @@ fn test_column_level_check_constraint() {
     let sql = "CREATE TABLE products (
         price numeric CHECK (price > 0)
     );";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let t = table(&schema, "products");
     assert_eq!(t.constraints.len(), 1);
     assert_eq!(t.constraints[0].name(), "products_price_check");
@@ -223,7 +223,7 @@ fn test_mixed_nullability() {
         c text NOT NULL,
         d text
     );";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     assert!(!col(&schema, "t", "a").nullable);
     assert!(col(&schema, "t", "b").nullable);
     assert!(!col(&schema, "t", "c").nullable);
@@ -238,7 +238,7 @@ fn test_create_index() {
         CREATE TABLE articles (id bigserial PRIMARY KEY, title text);
         CREATE INDEX articles_title_idx ON articles (title);
     ";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let t = table(&schema, "articles");
     assert_eq!(t.indexes.len(), 1);
     assert_eq!(t.indexes[0].name, "articles_title_idx");
@@ -253,7 +253,7 @@ fn test_create_unique_index() {
         CREATE TABLE users (id bigserial PRIMARY KEY, email text);
         CREATE UNIQUE INDEX users_email_idx ON users (email);
     ";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let t = table(&schema, "users");
     assert!(t.indexes[0].unique);
 }
@@ -265,7 +265,7 @@ fn test_partial_index_with_predicate() {
         CREATE TABLE events (id bigserial PRIMARY KEY, active boolean);
         CREATE INDEX events_active_idx ON events (id) WHERE active = true;
     ";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let t = table(&schema, "events");
     let idx = &t.indexes[0];
     assert!(
@@ -279,7 +279,7 @@ fn test_partial_index_with_predicate() {
 #[test]
 fn test_index_unknown_table_is_error() {
     let sql = "CREATE INDEX missing_idx ON ghost (id);";
-    let err = parse_sql(sql).unwrap_err();
+    let err = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap_err();
     assert!(
         matches!(err, ParseError::UnknownTable { .. }),
         "expected UnknownTable error, got: {err}"
@@ -290,7 +290,7 @@ fn test_index_unknown_table_is_error() {
 #[test]
 fn test_create_view() {
     let sql = "CREATE VIEW active_users AS SELECT id, name FROM users WHERE active = true;";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     assert!(schema.views.contains_key("active_users"));
     let v = &schema.views["active_users"];
     assert_eq!(v.name, "active_users");
@@ -301,7 +301,7 @@ fn test_create_view() {
 #[test]
 fn test_create_extension() {
     let sql = "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     assert!(schema.extensions.contains_key("uuid-ossp"));
 }
 
@@ -309,7 +309,7 @@ fn test_create_extension() {
 #[test]
 fn test_create_enum() {
     let sql = "CREATE TYPE mood AS ENUM ('happy', 'sad', 'neutral');";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     assert!(schema.enums.contains_key("mood"));
     let e = &schema.enums["mood"];
     assert_eq!(e.values, ["happy", "sad", "neutral"]);
@@ -323,7 +323,7 @@ fn test_create_function() {
         LANGUAGE sql
         AS $$ SELECT a + b; $$;
     "#;
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     assert!(schema.functions.contains_key("add_numbers"));
     let f = &schema.functions["add_numbers"];
     assert_eq!(f.language, "sql");
@@ -337,7 +337,7 @@ fn test_function_volatility() {
     let sql = r#"
         CREATE FUNCTION pure_fn() RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT 1; $$;
     "#;
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let f = &schema.functions["pure_fn"];
     assert_eq!(f.volatility, Volatility::Immutable);
 }
@@ -348,7 +348,7 @@ fn test_function_security_definer() {
     let sql = r#"
         CREATE FUNCTION privileged() RETURNS void LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1; $$;
     "#;
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let f = &schema.functions["privileged"];
     assert!(f.security_definer);
 }
@@ -357,7 +357,7 @@ fn test_function_security_definer() {
 #[test]
 fn test_public_schema_is_none() {
     let sql = "CREATE TABLE public.users (id bigserial PRIMARY KEY);";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     // Key should be just "users"
     assert!(schema.tables.contains_key("users"), "expected key 'users'");
     assert_eq!(schema.tables["users"].schema, None);
@@ -367,7 +367,7 @@ fn test_public_schema_is_none() {
 #[test]
 fn test_custom_schema_is_preserved() {
     let sql = "CREATE TABLE analytics.events (id bigserial PRIMARY KEY);";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     assert!(schema.tables.contains_key("analytics.events"));
     assert_eq!(
         schema.tables["analytics.events"].schema,
@@ -383,7 +383,7 @@ fn test_multi_statement_sql() {
         CREATE TABLE posts (id bigserial PRIMARY KEY, user_id bigint NOT NULL);
         CREATE INDEX posts_user_idx ON posts (user_id);
     ";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     assert!(schema.tables.contains_key("users"));
     assert!(schema.tables.contains_key("posts"));
     assert_eq!(table(&schema, "posts").indexes.len(), 1);
@@ -393,11 +393,83 @@ fn test_multi_statement_sql() {
 #[test]
 fn test_unsupported_statement_is_error() {
     let sql = "INSERT INTO users (name) VALUES ('alice');";
-    let err = parse_sql(sql).unwrap_err();
+    let err = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap_err();
     assert!(
         matches!(err, ParseError::UnsupportedStatement { .. }),
         "expected Unsupported error, got: {err}"
     );
+}
+
+/// Parse errors in later segments report original source line and column context.
+#[test]
+fn test_parse_error_remaps_second_statement_location() {
+    let sql = "\
+CREATE TABLE ok (id integer);
+CREATE TABLE broken (id integer,);
+";
+    let err = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap_err();
+    let ParseError::Parse {
+        line,
+        segment_ordinal,
+        segment_start_line,
+        ..
+    } = err
+    else {
+        panic!("expected Parse error");
+    };
+
+    assert_eq!(segment_ordinal, Some(2));
+    assert_eq!(segment_start_line, Some(1));
+    assert_eq!(line, Some(2));
+}
+
+/// Leading metadata comments remain part of the segment while parse errors still map to source.
+#[test]
+fn test_parse_error_remaps_location_with_leading_comments() {
+    let sql = "\
+-- metadata for next statement
+CREATE TABLE broken (id integer,);
+";
+    let err = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap_err();
+    let ParseError::Parse {
+        line,
+        segment_ordinal,
+        segment_start_line,
+        ..
+    } = err
+    else {
+        panic!("expected Parse error");
+    };
+
+    assert_eq!(segment_ordinal, Some(1));
+    assert_eq!(segment_start_line, Some(1));
+    assert_eq!(line, Some(2));
+}
+
+/// Parse errors in an unterminated final statement still report original source location.
+#[test]
+fn test_parse_error_remaps_final_statement_without_semicolon() {
+    let sql = "\
+CREATE TABLE ok (id integer);
+CREATE TABLE broken (
+  id integer,
+  name text,
+)
+";
+    let err = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap_err();
+    let ParseError::Parse {
+        line,
+        segment_ordinal,
+        segment_start_line,
+        ..
+    } = err
+    else {
+        panic!("expected Parse error");
+    };
+
+    assert_eq!(segment_ordinal, Some(2));
+    assert_eq!(segment_start_line, Some(1));
+    assert_eq!(line, Some(5));
 }
 
 /// Duplicate table names produce `ParseError::DuplicateTable`.
@@ -407,7 +479,7 @@ fn test_duplicate_table_is_error() {
         CREATE TABLE users (id bigserial PRIMARY KEY);
         CREATE TABLE users (email text);
     ";
-    let err = parse_sql(sql).unwrap_err();
+    let err = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap_err();
     assert!(
         matches!(err, ParseError::DuplicateTable(ref name) if name == "users"),
         "expected DuplicateTable error, got: {err}"
@@ -421,7 +493,7 @@ fn test_index_auto_name() {
         CREATE TABLE orders (id bigserial PRIMARY KEY, status text);
         CREATE INDEX ON orders (status);
     ";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let t = table(&schema, "orders");
     assert_eq!(t.indexes.len(), 1);
     assert_eq!(t.indexes[0].name, "orders_status_idx");
@@ -431,7 +503,7 @@ fn test_index_auto_name() {
 #[test]
 fn test_column_level_unique_auto_name() {
     let sql = "CREATE TABLE users (id bigserial PRIMARY KEY, email text UNIQUE);";
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let t = table(&schema, "users");
     assert_eq!(t.constraints.len(), 1);
     assert_eq!(t.constraints[0].name(), "users_email_key");
@@ -444,7 +516,7 @@ fn test_function_argument_modes() {
         CREATE FUNCTION compute(IN a integer, OUT b integer)
         RETURNS integer LANGUAGE sql AS $$ SELECT a; $$;
     "#;
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     let f = &schema.functions["compute"];
     assert!(f.arguments.contains("IN"), "expected IN mode in arguments");
     assert!(
@@ -466,7 +538,7 @@ fn test_postgres_segmented_function_trigger_body() {
         $$;
         CREATE TRIGGER users_ai AFTER INSERT ON users FOR EACH ROW EXECUTE FUNCTION audit_users();
     "#;
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     assert!(schema.functions.contains_key("audit_users"));
     assert_eq!(table(&schema, "users").triggers.len(), 1);
 }
@@ -482,7 +554,7 @@ fn test_sqlite_segmented_trigger_body() {
           UPDATE users SET touched = touched + 1 WHERE id = NEW.id;
         END;
     "#;
-    let schema = super::parse_sql_for_dialect(sql, crate::dialects::Dialect::Sqlite).unwrap();
+    let schema = super::parse_sql(sql, crate::dialects::Dialect::Sqlite).unwrap();
     assert_eq!(table(&schema, "users").triggers.len(), 1);
 }
 
@@ -493,7 +565,7 @@ fn test_segmented_final_statement_without_semicolon() {
         CREATE TABLE users (id integer PRIMARY KEY);
         CREATE TABLE posts (id integer PRIMARY KEY)
     "#;
-    let schema = parse_sql(sql).unwrap();
+    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
     assert!(schema.tables.contains_key("users"));
     assert!(schema.tables.contains_key("posts"));
 }

@@ -69,11 +69,6 @@ fn validate_trigger_source(
         .is_some_and(|query| !query.trim().is_empty());
 
     match (has_function, has_query) {
-        (true, false) if trigger.language.is_some() => {
-            Err(SchemaValidationError::Invalid(format!(
-                "trigger '{tname}' on table '{table_name}' sets `language`, but language is only valid with `query` triggers"
-            )))
-        }
         (true, false) | (false, true) => Ok(()),
         (true, true) => Err(SchemaValidationError::Invalid(format!(
             "trigger '{tname}' on table '{table_name}' must set either `function_name` or `query`, not both"
@@ -150,6 +145,14 @@ fn validate_table_references(
             return Err(SchemaValidationError::Invalid(format!(
                 "table {table_name} foreign key {}: target columns must not be empty",
                 fk.name
+            )));
+        }
+        if let Some(action) = &fk.on_delete
+            && canonical_foreign_key_action(action).is_none()
+        {
+            return Err(SchemaValidationError::Invalid(format!(
+                "table {table_name} foreign key {}: unsupported on_delete action '{}'",
+                fk.name, action
             )));
         }
         if fk.columns.len() != fk.to_columns.len() {

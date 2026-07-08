@@ -372,14 +372,32 @@ fn add_enum_value_statements(old: &[String], new: &[String], type_name: &str) ->
     statements
 }
 
-fn foreign_key_clause(foreign_key: &ForeignKey) -> String {
-    format!(
+fn foreign_key_clause(foreign_key: &ForeignKey) -> Result<String, DialectError> {
+    let mut clause = format!(
         "CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({})",
         quote_ident(&foreign_key.name),
         quoted_columns(&foreign_key.columns),
         quote_table_name(&foreign_key.to_table),
         quoted_columns(&foreign_key.to_columns),
-    )
+    );
+    if let Some(action) = foreign_key.on_delete.as_deref() {
+        clause.push_str(" ON DELETE ");
+        clause.push_str(delete_action_sql(action)?);
+    }
+    Ok(clause)
+}
+
+fn delete_action_sql(action: &str) -> Result<&'static str, DialectError> {
+    match action {
+        "cascade" => Ok("CASCADE"),
+        "restrict" => Ok("RESTRICT"),
+        "set_null" => Ok("SET NULL"),
+        "set_default" => Ok("SET DEFAULT"),
+        other => Err(DialectError::Unsupported(
+            "foreign_key".to_string(),
+            format!("unsupported on_delete action '{other}'"),
+        )),
+    }
 }
 
 fn create_index_sql(index: &Index, table_name: &str, concurrent: bool) -> String {
@@ -424,7 +442,7 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
                 parts.push(primary_key_def(&pk.name, &pk.columns));
             }
             for fk in &table.foreign_keys {
-                parts.push(foreign_key_clause(fk));
+                parts.push(foreign_key_clause(fk)?);
             }
             for c in &table.constraints {
                 parts.push(format!("CONSTRAINT {}", inline_constraint_def(c)));
@@ -495,7 +513,7 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             vec![format!(
                 "ALTER TABLE {} ADD {}",
                 quote_table_name(table_name),
-                foreign_key_clause(foreign_key)
+                foreign_key_clause(foreign_key)?
             )]
         }
         Operation::DropForeignKey {

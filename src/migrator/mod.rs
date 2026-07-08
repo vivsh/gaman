@@ -6,7 +6,9 @@ use crate::adapters::{AdapterError, MigrationSource};
 use crate::conf::Config;
 use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
 use crate::executor::{Executor, ExecutorError};
+use crate::inspection::{self, InspectionError};
 use crate::tracking::{DatabaseTrackingStore, TrackingError, TrackingStore};
+use crate::verification;
 use gaman_core::clarifier::{Clarification, Clarifier, ClarifyError, ClarifyResult, Decision};
 use gaman_core::clarifier::{TypeResolution, non_type_decisions, resolve_unknown_types};
 use gaman_core::dialects::{Dialect, DialectError};
@@ -30,6 +32,8 @@ pub enum MigratorError {
     Dialect(#[from] DialectError),
     #[error("database operation failed: {0}")]
     Executor(#[from] ExecutorError),
+    #[error("{0}")]
+    Inspection(#[from] InspectionError),
     #[error("migration replay failed")]
     Replay(#[from] ReplayError),
     #[error("sql plan failed: {0}")]
@@ -702,13 +706,7 @@ impl Migrator {
 
     pub async fn inspect_db(&self, schemas: &[&str]) -> Result<Schema, MigratorError> {
         let mut executor = self.executor().await?;
-        let schema = executor
-            .inspect_db(schemas)
-            .await
-            .map_err(MigratorError::Executor)?;
-        schema
-            .prepare(self.dialect())
-            .map_err(|err| MigratorError::Config(err.to_string()))
+        Ok(inspection::inspect_database(executor.as_mut(), schemas, self.dialect()).await?)
     }
 
     /// Compare migration-owned schema objects against the live database.
@@ -720,8 +718,15 @@ impl Migrator {
     /// comparison; verify checks stable metadata such as signatures and trigger
     /// wiring, not catalog-rendered source text.
     pub async fn verify(&self, schema: &str) -> Result<Vec<Operation>, MigratorError> {
+        Ok(self.verify_report(schema).await?.operations)
+    }
+
+    pub async fn verify_report(
+        &self,
+        schema: &str,
+    ) -> Result<verification::VerificationReport, MigratorError> {
         let mut executor = self.executor().await?;
-        self.verify_with(executor.as_mut(), schema).await
+        self.verify_report_with(executor.as_mut(), schema).await
     }
 
     pub async fn verify_with(
@@ -729,30 +734,32 @@ impl Migrator {
         executor: &mut (dyn EnvironmentExecutor + Send),
         schema: &str,
     ) -> Result<Vec<Operation>, MigratorError> {
+        Ok(self.verify_report_with(executor, schema).await?.operations)
+    }
+
+    pub(crate) async fn verify_report_with(
+        &self,
+        executor: &mut (dyn EnvironmentExecutor + Send),
+        schema: &str,
+    ) -> Result<verification::VerificationReport, MigratorError> {
         let dialect = self.dialect();
         let mut replay = self.replay()?;
         replay
             .prepare_mut(&dialect)
             .map_err(|err| MigratorError::Config(err.to_string()))?;
-        scope_tables_for_verify(&mut replay, schema, dialect);
-        scope_opaque_objects_for_verify(&mut replay, schema, dialect);
-        normalize_state_types(&mut replay, &dialect);
 
-        let mut live = executor
-            .inspect_db(&[schema])
-            .await
-            .map_err(MigratorError::Executor)?;
-        live.prepare_mut(&dialect)
-            .map_err(|err| MigratorError::Config(err.to_string()))?;
-        scope_tables_for_verify(&mut live, schema, dialect);
-        scope_opaque_objects_for_verify(&mut live, schema, dialect);
-        normalize_state_types(&mut live, &dialect);
-        project_live_schema_to_replay_ownership(&mut live, &replay);
-
-        strip_opaque_source_for_verify(&mut replay);
-        strip_opaque_source_for_verify(&mut live);
-
-        Ok(self.diff.diff(&replay, &live, &dialect)?)
+        let live = inspection::inspect_database(executor, &[schema], dialect).await?;
+        let mut report = verification::verify(replay, live, schema, dialect);
+        self.install(executor).await?;
+        let applied = self.applied_set(executor).await?;
+        self.validate_applied_ids(&applied)?;
+        report.pending_migrations = self
+            .ordered_ids
+            .iter()
+            .filter(|id| !applied.contains(id.as_str()))
+            .cloned()
+            .collect();
+        Ok(report)
     }
 }
 
@@ -946,224 +953,6 @@ fn compute_deps(
     deps.sort();
     deps.dedup();
     deps
-}
-
-fn scope_tables_for_verify(state: &mut Schema, schema: &str, dialect: Dialect) {
-    let tables = std::mem::take(&mut state.tables);
-    state.tables = tables
-        .into_values()
-        .filter_map(|mut table| match table.schema.as_deref() {
-            None => {
-                scope_table_references(&mut table, schema);
-                Some(table)
-            }
-            Some(current)
-                if schema_matches_verify_scope(dialect, EntityKind::Table, current, schema) =>
-            {
-                table.schema = None;
-                scope_table_references(&mut table, schema);
-                Some(table)
-            }
-            _ => None,
-        })
-        .map(|table| (table.qualified_name(), table))
-        .collect();
-}
-
-fn scope_opaque_objects_for_verify(state: &mut Schema, schema: &str, dialect: Dialect) {
-    let views = std::mem::take(&mut state.views);
-    state.views = views
-        .into_values()
-        .filter_map(|mut view| match view.schema.as_deref() {
-            None => Some(view),
-            Some(current)
-                if schema_matches_verify_scope(dialect, EntityKind::View, current, schema) =>
-            {
-                view.schema = None;
-                Some(view)
-            }
-            _ => None,
-        })
-        .map(|view| (view.qualified_name(), view))
-        .collect();
-
-    let functions = std::mem::take(&mut state.functions);
-    state.functions = functions
-        .into_values()
-        .filter_map(|mut function| match function.schema.as_deref() {
-            None => Some(function),
-            Some(current)
-                if schema_matches_verify_scope(dialect, EntityKind::Function, current, schema) =>
-            {
-                function.schema = None;
-                Some(function)
-            }
-            _ => None,
-        })
-        .map(|function| {
-            let key = function_verify_key(&function);
-            (key, function)
-        })
-        .collect();
-
-    let extensions = std::mem::take(&mut state.extensions);
-    state.extensions = extensions
-        .into_values()
-        .filter_map(|mut extension| match extension.schema.as_deref() {
-            None => Some(extension),
-            Some(current)
-                if schema_matches_verify_scope(dialect, EntityKind::Extension, current, schema) =>
-            {
-                extension.schema = None;
-                Some(extension)
-            }
-            _ => None,
-        })
-        .map(|extension| (extension.qualified_name(), extension))
-        .collect();
-
-    let enums = std::mem::take(&mut state.enums);
-    state.enums = enums
-        .into_values()
-        .filter_map(|mut enum_def| match enum_def.schema.as_deref() {
-            None => Some(enum_def),
-            Some(current)
-                if schema_matches_verify_scope(dialect, EntityKind::Enum, current, schema) =>
-            {
-                enum_def.schema = None;
-                Some(enum_def)
-            }
-            _ => None,
-        })
-        .map(|enum_def| (enum_def.qualified_name(), enum_def))
-        .collect();
-}
-
-fn schema_matches_verify_scope(
-    dialect: Dialect,
-    kind: EntityKind,
-    current: &str,
-    requested: &str,
-) -> bool {
-    let current = dialect.canonicalize_schema_name(kind, Some(current));
-    let requested = dialect.canonicalize_schema_name(kind, Some(requested));
-    current == requested
-}
-
-fn function_verify_key(function: &gaman_core::states::FunctionDef) -> String {
-    if function.arguments.is_empty() {
-        function.qualified_name()
-    } else {
-        format!("{}({})", function.qualified_name(), function.arguments)
-    }
-}
-
-fn project_live_schema_to_replay_ownership(live: &mut Schema, replay: &Schema) {
-    live.tables.retain(
-        |table_name, live_table| match replay.tables.get(table_name) {
-            Some(replay_table) => {
-                project_live_table_to_replay_ownership(live_table, replay_table);
-                true
-            }
-            None => false,
-        },
-    );
-    live.views
-        .retain(|name, _| replay.views.contains_key(name.as_str()));
-    live.functions
-        .retain(|name, _| replay.functions.contains_key(name.as_str()));
-    live.extensions
-        .retain(|name, _| replay.extensions.contains_key(name.as_str()));
-    live.enums
-        .retain(|name, _| replay.enums.contains_key(name.as_str()));
-}
-
-fn project_live_table_to_replay_ownership(
-    live: &mut gaman_core::states::Table,
-    replay: &gaman_core::states::Table,
-) {
-    live.columns
-        .retain(|column| replay.columns.iter().any(|owned| owned.name == column.name));
-    if replay.primary_key.is_none() {
-        live.primary_key = None;
-    }
-    live.foreign_keys.retain(|foreign_key| {
-        replay
-            .foreign_keys
-            .iter()
-            .any(|owned| owned.name == foreign_key.name)
-    });
-    live.indexes
-        .retain(|index| replay.indexes.iter().any(|owned| owned.name == index.name));
-    live.constraints.retain(|constraint| {
-        replay
-            .constraints
-            .iter()
-            .any(|owned| owned.name() == constraint.name())
-    });
-    live.triggers.retain(|trigger| {
-        let name = trigger.name.as_deref();
-        replay
-            .triggers
-            .iter()
-            .any(|owned| owned.name.as_deref() == name)
-    });
-}
-
-fn scope_table_references(table: &mut gaman_core::states::Table, schema: &str) {
-    let prefix = format!("{schema}.");
-    for fk in &mut table.foreign_keys {
-        if let Some(local) = fk.to_table.strip_prefix(&prefix) {
-            fk.to_table = local.to_string();
-        }
-    }
-    for trigger in &mut table.triggers {
-        if let Some(function_name) = &mut trigger.function_name
-            && let Some(local) = function_name.strip_prefix(&prefix)
-        {
-            *function_name = local.to_string();
-        }
-    }
-}
-
-fn normalize_state_types(state: &mut Schema, dialect: &gaman_core::dialects::Dialect) {
-    for table in state.tables.values_mut() {
-        for col in table.columns.iter_mut() {
-            let normalized = dialect.normalize_type(&col.col_type).to_string();
-            col.col_type = normalized;
-            if let Some(default) = &mut col.default {
-                *default = normalize_default_for_compare(default, dialect);
-            }
-        }
-    }
-}
-
-fn normalize_default_for_compare(default: &str, dialect: &gaman_core::dialects::Dialect) -> String {
-    match dialect {
-        gaman_core::dialects::Dialect::Postgres => default
-            .strip_suffix("::text")
-            .filter(|value| value.starts_with('\''))
-            .unwrap_or(default)
-            .to_string(),
-        #[cfg(feature = "sqlite")]
-        gaman_core::dialects::Dialect::Sqlite => default.to_string(),
-        gaman_core::dialects::Dialect::Mysql => default.to_string(),
-    }
-}
-
-fn strip_opaque_source_for_verify(state: &mut Schema) {
-    for function in state.functions.values_mut() {
-        function.body.clear();
-    }
-    for view in state.views.values_mut() {
-        view.definition.clear();
-    }
-    for table in state.tables.values_mut() {
-        for trigger in &mut table.triggers {
-            trigger.query = None;
-            trigger.when = None;
-        }
-    }
 }
 
 #[cfg(test)]

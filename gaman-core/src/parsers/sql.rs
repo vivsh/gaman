@@ -46,13 +46,8 @@ impl ParseContext {
     }
 }
 
-/// Parses PostgreSQL SQL DDL into a Gaman schema.
-pub fn parse_sql(sql: &str) -> Result<Schema, ParseError> {
-    parse_sql_for_dialect(sql, Dialect::Postgres)
-}
-
 /// Parses SQL DDL for a supported dialect into a Gaman schema.
-pub fn parse_sql_for_dialect(sql: &str, dialect: Dialect) -> Result<Schema, ParseError> {
+pub fn parse_sql(sql: &str, dialect: Dialect) -> Result<Schema, ParseError> {
     let segments = segment_sql(sql, dialect)?;
     if matches!(dialect, Dialect::Mysql) {
         return Err(ParseError::UnsupportedDialect("mysql".to_string()));
@@ -65,7 +60,7 @@ pub fn parse_sql_for_dialect(sql: &str, dialect: Dialect) -> Result<Schema, Pars
             Dialect::Sqlite => Parser::parse_sql(&SQLiteDialect {}, &segment.sql),
             Dialect::Mysql => unreachable!("mysql returned above"),
         }
-        .map_err(|error| ParseError::parse(dialect, error.to_string()))?;
+        .map_err(|error| ParseError::parse_in_segment(dialect, &segment, error))?;
         for stmt in &statements {
             ensure_modeled_create_statement(stmt, dialect)?;
             match dialect {

@@ -7,6 +7,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use gaman_core::dialects::Dialect;
 use gaman_core::states::{Schema, SchemaLoadError};
 
 /// Load a schema from a native filesystem path.
@@ -14,12 +15,15 @@ use gaman_core::states::{Schema, SchemaLoadError};
 /// Files are parsed by extension and directories are merged in deterministic
 /// path order. This helper belongs to the root crate so `gaman-core` can remain
 /// string-only and usable in offline/WASM contexts.
-pub fn load_schema_path(path: impl AsRef<Path>) -> Result<Schema, SchemaLoadError> {
+pub fn load_schema_path(
+    path: impl AsRef<Path>,
+    dialect: Dialect,
+) -> Result<Schema, SchemaLoadError> {
     let path = path.as_ref();
     if path.is_dir() {
-        load_schema_dir(path)
+        load_schema_dir(path, dialect)
     } else {
-        load_schema_file(path)
+        load_schema_file(path, dialect)
     }
 }
 
@@ -27,14 +31,17 @@ pub fn load_schema_path(path: impl AsRef<Path>) -> Result<Schema, SchemaLoadErro
 ///
 /// `.sql` files use the SQL parser, `.json` files use JSON, and all other file
 /// extensions are treated as YAML to preserve the legacy CLI behavior.
-pub fn load_schema_file(path: impl AsRef<Path>) -> Result<Schema, SchemaLoadError> {
+pub fn load_schema_file(
+    path: impl AsRef<Path>,
+    dialect: Dialect,
+) -> Result<Schema, SchemaLoadError> {
     let path = path.as_ref();
     let raw =
         fs::read_to_string(path).map_err(|e| SchemaLoadError::Io(path.display().to_string(), e))?;
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("sql") => Schema::from_sql_str(&raw),
-        Some("json") => Schema::from_json_str(&raw),
-        _ => Schema::from_yaml_str(&raw),
+        Some("sql") => Schema::from_sql_str(&raw, dialect),
+        Some("json") => Schema::from_json_str(&raw, dialect),
+        _ => Schema::from_yaml_str(&raw, dialect),
     }
 }
 
@@ -43,14 +50,14 @@ pub fn load_schema_file(path: impl AsRef<Path>) -> Result<Schema, SchemaLoadErro
 /// Supported file extensions are `.yaml`, `.yml`, `.json`, and `.sql`. Table
 /// name collisions are rejected; other top-level objects use the same
 /// last-writer-wins behavior as schema merging.
-pub fn load_schema_dir(dir: impl AsRef<Path>) -> Result<Schema, SchemaLoadError> {
+pub fn load_schema_dir(dir: impl AsRef<Path>, dialect: Dialect) -> Result<Schema, SchemaLoadError> {
     let dir = dir.as_ref();
     let mut entries = schema_entries(dir)?;
     entries.sort();
 
     let mut merged = Schema::default();
     for path in entries {
-        let fragment = load_schema_file(&path)?;
+        let fragment = load_schema_file(&path, dialect)?;
         merged = merge_fragment(merged, fragment, dir, &path)?;
     }
     Ok(merged)
@@ -110,7 +117,7 @@ mod tests {
         )
         .expect("write sql schema");
 
-        let schema = load_schema_file(&path).expect("load sql schema");
+        let schema = load_schema_file(&path, Dialect::Postgres).expect("load sql schema");
 
         assert!(schema.tables.contains_key("items"));
     }
@@ -135,7 +142,7 @@ mod tests {
         )
         .expect("write sql schema");
 
-        let schema = load_schema_dir(dir.path()).expect("load schema dir");
+        let schema = load_schema_dir(dir.path(), Dialect::Postgres).expect("load schema dir");
 
         assert!(schema.tables.contains_key("categories"));
         assert!(schema.tables.contains_key("labels"));
@@ -154,7 +161,8 @@ mod tests {
         fs::write(dir.path().join("b.sql"), "CREATE TABLE things (name text);")
             .expect("write second sql schema");
 
-        let err = load_schema_dir(dir.path()).expect_err("duplicate table should fail");
+        let err = load_schema_dir(dir.path(), Dialect::Postgres)
+            .expect_err("duplicate table should fail");
 
         assert!(
             err.to_string().contains("things"),

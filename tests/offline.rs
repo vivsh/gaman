@@ -279,7 +279,7 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
             expect_schema,
             expect_error,
         } => {
-            let result = Schema::from_sql_str(sql);
+            let result = Schema::from_sql_str(sql, gaman::core::Dialect::Postgres);
             if let Some(expected) = expect_error {
                 return assert_error_contains(name, result.map(|_| ()), expected);
             }
@@ -664,10 +664,10 @@ fn run_parser_case(
 fn lower_sql_to_schema(dialect: ParserFixtureDialect, sql: &str) -> Result<Schema, String> {
     match dialect {
         ParserFixtureDialect::Postgres => {
-            gaman::parsers::parse_sql_for_dialect(sql, gaman::core::Dialect::Postgres)
+            gaman::parsers::parse_sql(sql, gaman::core::Dialect::Postgres)
         }
         ParserFixtureDialect::Sqlite => {
-            gaman::parsers::parse_sql_for_dialect(sql, gaman::core::Dialect::Sqlite)
+            gaman::parsers::parse_sql(sql, gaman::core::Dialect::Sqlite)
         }
         ParserFixtureDialect::Mysql => Err(gaman::parsers::ParseError::UnsupportedDialect(
             "mysql".to_string(),

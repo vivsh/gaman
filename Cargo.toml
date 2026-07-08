@@ -75,7 +75,7 @@ mysql = ["db", "sqlx/mysql"]
 argh = { version = "0.1.19", optional = true }
 dotenvy = { version = "0.15.7", optional = true }
 gaman-core = { version = "0.3.20", path = "gaman-core", optional = true, default-features = false }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-native-tls"], optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-native-tls", "derive"], optional = true }
 tokio = { version = "1", features = ["rt", "macros"], optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
 serde_yaml = { version = "0.9.34", optional = true }

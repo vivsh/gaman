@@ -43,8 +43,8 @@ pub enum ConfigError {
     MigrationsDirParentMissing(String),
     #[error("migrations_dir parent is not writable: {0}")]
     MigrationsDirParentNotWritable(String),
-    #[error("schema_file exists but is not a file: {0}")]
-    SchemaFileNotFile(String),
+    #[error("schema path exists but is neither a file nor a directory: {0}")]
+    SchemaPathInvalid(String),
 }
 
 impl Config {
@@ -62,7 +62,7 @@ impl Config {
             migrations_dir: std::env::var("MIGRATIONS_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("migrations")),
-            schema_file: std::env::var("SCHEMA_FILE")
+            schema_file: std::env::var("SCHEMA")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("schema.yaml")),
             tls: TlsMode::NoTls,
@@ -151,8 +151,8 @@ fn is_writable_path(path: &Path) -> bool {
 }
 
 fn validate_schema_file(path: &Path) -> Result<(), ConfigError> {
-    if path.exists() && !path.is_file() {
-        return Err(ConfigError::SchemaFileNotFile(path.display().to_string()));
+    if path.exists() && !path.is_file() && !path.is_dir() {
+        return Err(ConfigError::SchemaPathInvalid(path.display().to_string()));
     }
     Ok(())
 }
@@ -315,9 +315,9 @@ mod tests {
         ));
     }
 
-    /// Verifies validation rejects a schema path that is already a directory.
+    /// Verifies validation accepts a schema path that is already a directory.
     #[test]
-    fn validate_rejects_directory_schema_file() {
+    fn validate_accepts_directory_schema_path() {
         let dir = tempfile::tempdir().unwrap();
         let schema_dir = dir.path().join("schema.yaml");
         std::fs::create_dir(&schema_dir).unwrap();
@@ -328,9 +328,6 @@ mod tests {
             Dialect::Postgres,
         );
 
-        assert!(matches!(
-            config.validate(),
-            Err(ConfigError::SchemaFileNotFile(_))
-        ));
+        config.validate().unwrap();
     }
 }

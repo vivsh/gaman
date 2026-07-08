@@ -19,12 +19,14 @@ impl Schema {
                     let fk_name = r
                         .name
                         .unwrap_or_else(|| names::foreign_key(&table_name, &[col.name.as_str()]));
-                    table.foreign_keys.push(ForeignKey::single(
-                        fk_name,
-                        col.name.clone(),
-                        r.table,
-                        r.column,
-                    ));
+                    let mut foreign_key =
+                        ForeignKey::single(fk_name, col.name.clone(), r.table, r.column);
+                    foreign_key.on_delete = r
+                        .on_delete
+                        .as_deref()
+                        .and_then(canonical_foreign_key_action)
+                        .map(str::to_string);
+                    table.foreign_keys.push(foreign_key);
                 }
                 if let Some(expr) = col.check.take() {
                     table.constraints.push(Constraint::Check {

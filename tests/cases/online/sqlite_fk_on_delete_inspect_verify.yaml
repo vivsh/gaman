@@ -1,0 +1,64 @@
+description: SQLite inspect and verify preserve foreign key on_delete action
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - single_foreign_keys
+
+migrations:
+  - id: 0001_create_users_preferences
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+      - type: create_table
+        table:
+          name: preferences
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: user_id
+              type: integer
+          foreign_keys:
+            - name: preferences_user_id_fkey
+              columns: [user_id]
+              to_table: users
+              to_columns: [id]
+              on_delete: cascade
+
+dialects:
+  sqlite:
+    checks: [migrate, inspect, verify]
+    expect_schema:
+      tables:
+        preferences:
+          name: preferences
+          primary_key:
+            name: preferences_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: user_id
+              type: integer
+          foreign_keys:
+            - name: preferences_user_id_fkey
+              columns: [user_id]
+              to_table: users
+              to_columns: [id]
+              on_delete: cascade
+        users:
+          name: users
+          primary_key:
+            name: users_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+    expect_verify: []
