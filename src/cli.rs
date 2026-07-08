@@ -1,7 +1,6 @@
 use crate::conf::Config;
 use crate::engine::{EngineError, MigrationEngine, clarifications_disabled_message};
 use argh::FromArgs;
-use gaman_core::dialects::Dialect;
 
 /// Gaman CLI.
 #[derive(FromArgs, Debug)]
@@ -17,10 +16,6 @@ pub struct GamanArgs {
     /// database connection string (overrides DATABASE_URL env var)
     #[argh(option, short = 'd')]
     pub database_url: Option<String>,
-
-    /// database dialect to use when it cannot be inferred from DATABASE_URL
-    #[argh(option)]
-    pub dialect: Option<String>,
 
     #[argh(subcommand)]
     pub command: Command,
@@ -147,7 +142,7 @@ pub enum CommandError {
 
 impl GamanArgs {
     /// Apply CLI overrides onto `config` and return the selected subcommand.
-    pub(crate) fn apply_to(self, config: &mut Config) -> (Command, Option<String>) {
+    pub(crate) fn apply_to(self, config: &mut Config) -> Result<Command, CommandError> {
         if let Some(dir) = self.migrations_dir {
             config.migrations_dir = std::path::PathBuf::from(dir);
         }
@@ -155,26 +150,25 @@ impl GamanArgs {
             config.schema_file = std::path::PathBuf::from(sf);
         }
         if let Some(url) = self.database_url {
-            config.database_url = Some(url);
+            let dialect = Config::dialect_from_database_url(&url).map_err(|err| {
+                CommandError::Config(format!("failed to parse dialect from database_url: {err}"))
+            })?;
+            config.database_url = url;
+            config.dialect = dialect
         }
-        (self.command, self.dialect)
-    }
-}
-
-pub(crate) fn parse_dialect(value: Option<String>) -> Result<Option<Dialect>, CommandError> {
-    match value {
-        Some(value) => Dialect::parse(&value)
-            .map(Some)
-            .ok_or_else(|| CommandError::Config(format!("unsupported dialect '{value}'"))),
-        None => Ok(None),
+        Ok(self.command)
     }
 }
 
 pub async fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
-    let mut config = Config::default();
-    let (cmd, dialect) = args.apply_to(&mut config);
-    let dialect = parse_dialect(dialect)?;
-    let engine = MigrationEngine::from_cli_config(config, dialect, None);
+    let mut config = Config::from_env().map_err(|err| {
+        CommandError::Config(format!("failed to parse dialect from DATABASE_URL: {err}"))
+    })?;
+    let cmd = args.apply_to(&mut config)?;
+    config
+        .validate()
+        .map_err(|err| CommandError::Config(format!("invalid configuration: {err}")))?;
+    let engine = MigrationEngine::from_cli_config(config, None);
     dispatch(engine, cmd).await
 }
 
@@ -184,10 +178,7 @@ pub(crate) async fn dispatch(engine: MigrationEngine, cmd: Command) -> Result<()
             let config = engine.config();
             println!("  migrations_dir  {}", config.migrations_dir.display());
             println!("  schema_file     {}", config.schema_file.display());
-            println!(
-                "  database_url    {}",
-                config.database_url.as_deref().unwrap_or("(not set)")
-            );
+            println!("  database_url    {}", config.database_url);
             Ok(())
         }
         Command::MakeMigrations(cmd) => {
@@ -397,6 +388,65 @@ mod tests {
         );
     }
 
+    /// Verifies CLI database URL overrides infer the PostgreSQL dialect.
+    #[test]
+    fn apply_to_infers_postgres_dialect_from_database_url() {
+        let mut config = Config::default().with_dialect(Dialect::Postgres);
+
+        let command = GamanArgs {
+            migrations_dir: None,
+            schema_file: None,
+            database_url: Some("postgres://localhost/app".to_string()),
+            command: Command::Config(ShowConfigCmd {}),
+        }
+        .apply_to(&mut config)
+        .unwrap();
+
+        assert!(matches!(command, Command::Config(_)));
+        assert_eq!(config.database_url, "postgres://localhost/app");
+        assert_eq!(config.dialect, Dialect::Postgres);
+    }
+
+    /// Verifies CLI database URL overrides infer the SQLite dialect when enabled.
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn apply_to_infers_sqlite_dialect_from_database_url() {
+        let mut config = Config::default().with_dialect(Dialect::Postgres);
+
+        GamanArgs {
+            migrations_dir: None,
+            schema_file: None,
+            database_url: Some("sqlite::memory:".to_string()),
+            command: Command::Config(ShowConfigCmd {}),
+        }
+        .apply_to(&mut config)
+        .unwrap();
+
+        assert_eq!(config.database_url, "sqlite::memory:");
+        assert_eq!(config.dialect, Dialect::Sqlite);
+    }
+
+    /// Verifies CLI database URL overrides reject unsupported dialect schemes.
+    #[test]
+    fn apply_to_rejects_unsupported_database_url_scheme() {
+        let mut config = Config::default().with_dialect(Dialect::Postgres);
+
+        let err = GamanArgs {
+            migrations_dir: None,
+            schema_file: None,
+            database_url: Some("oracle://localhost/app".to_string()),
+            command: Command::Config(ShowConfigCmd {}),
+        }
+        .apply_to(&mut config)
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("unsupported database URL dialect scheme")
+        );
+        assert_eq!(config.dialect, Dialect::Postgres);
+    }
+
     /// Verifies non-interactive CLI migration generation fails instead of prompting.
     #[tokio::test]
     async fn make_migration_non_interactive_fails_when_clarification_is_needed() {
@@ -468,6 +518,6 @@ tables:
     }
 
     fn test_engine(schema: Schema) -> MigrationEngine {
-        MigrationEngine::from_cli_config(Config::default(), Some(Dialect::Postgres), Some(schema))
+        MigrationEngine::from_cli_config(Config::default(), Some(schema))
     }
 }

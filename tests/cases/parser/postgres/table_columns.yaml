@@ -1,0 +1,28 @@
+---
+description: PostgreSQL CREATE TABLE lowers table and column entities.
+dialect: postgres
+sql: |
+  CREATE TABLE users (
+      id integer,
+      email text NOT NULL
+  );
+expect_entities:
+- kind: table
+  name: users
+- kind: column
+  table: users
+  name: id
+- kind: column
+  table: users
+  name: email
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        nullable: true
+      - name: email
+        type: text
+        nullable: false

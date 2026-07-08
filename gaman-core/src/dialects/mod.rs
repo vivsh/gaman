@@ -2,12 +2,24 @@ use thiserror::Error;
 
 use crate::migrations::Migration;
 use crate::operations::Operation;
+use crate::states::types::EntityKind;
 use crate::states::{Schema, SchemaValidationError};
 
 #[derive(Debug, Error)]
 pub enum DialectError {
     #[error("unsupported operation '{0}': {1}")]
     Unsupported(String, String),
+}
+
+/// Error returned when a database URL cannot be mapped to a supported dialect.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum DialectParseError {
+    #[error("database URL is empty")]
+    EmptyUrl,
+    #[error("database URL '{0}' does not contain a dialect scheme")]
+    MissingScheme(String),
+    #[error("unsupported database URL dialect scheme '{0}'")]
+    UnsupportedScheme(String),
 }
 
 /// Database dialect selection and dialect-specific behavior.
@@ -24,33 +36,115 @@ pub enum DialectError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialect {
     Postgres,
-    #[cfg(feature = "sqlite")]
     Sqlite,
+    Mysql,
+}
+
+/// Internal dialect behavior boundary.
+///
+/// Shared planning code asks a processor to canonicalize, validate, finalize,
+/// and render schema changes. Dialect-specific SQL and schema quirks should
+/// live behind this trait instead of leaking into shared code as variant
+/// matches.
+pub(crate) trait DialectProcessor: Sync {
+    fn migration_to_sql(
+        &self,
+        migration: &Migration,
+        start: &Schema,
+    ) -> Result<Vec<String>, DialectError>;
+
+    fn finalize_diff_operations(
+        &self,
+        ops: Vec<Operation>,
+        previous: &Schema,
+        current: &Schema,
+    ) -> Vec<Operation>;
+
+    fn should_merge(&self, table_name: &str, op: &Operation) -> bool;
+
+    fn canonicalize_schema_name(&self, object: EntityKind, schema: Option<&str>) -> Option<String>;
+
+    /// Returns a fast equivalence-normalized view of a type name.
+    ///
+    /// The returned value is a borrowed `&str` into either an alias table entry or
+    /// the original input. It should be used for type-compatibility checks and
+    /// diff/noise reduction, not as a stable stored representation.
+    fn normalize_type<'a>(&self, t: &'a str) -> &'a str;
+
+    /// Returns the canonical, persistent representation for a type name.
+    ///
+    /// This allocates and rewrites known aliases/modifiers into the dialect's
+    /// preferred catalog shape, while preserving unknown/extension types. Use this
+    /// when persisting or normalizing schema state before comparison/validation.
+    fn canonical_type(&self, t: &str) -> String;
+
+    fn is_catalog_type(&self, t: &str) -> bool;
+
+    fn type_suggestions(&self, t: &str) -> Vec<String>;
+
+    fn validate_schema(&self, schema: &Schema) -> Result<(), SchemaValidationError>;
+
+    fn validate_migration(&self, migration: &Migration) -> Result<(), DialectError>;
+
+    fn validate_migration_with_state(
+        &self,
+        migration: &Migration,
+        start: &Schema,
+    ) -> Result<(), DialectError>;
 }
 
 impl Dialect {
+    /// Returns the stable lowercase name for this dialect.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Postgres => "postgres",
+            Self::Sqlite => "sqlite",
+            Self::Mysql => "mysql",
+        }
+    }
+
+    /// Parses a dialect name such as `postgres`, `postgresql`, `sqlite`, `sqlite3`, `mysql`, or `mariadb`.
     pub fn parse(value: &str) -> Option<Self> {
         if value.eq_ignore_ascii_case("postgres") || value.eq_ignore_ascii_case("postgresql") {
             Some(Self::Postgres)
         } else if value.eq_ignore_ascii_case("sqlite") || value.eq_ignore_ascii_case("sqlite3") {
-            #[cfg(feature = "sqlite")]
-            {
-                Some(Self::Sqlite)
-            }
-            #[cfg(not(feature = "sqlite"))]
-            {
-                None
-            }
+            Some(Self::Sqlite)
+        } else if value.eq_ignore_ascii_case("mysql") || value.eq_ignore_ascii_case("mariadb") {
+            Some(Self::Mysql)
         } else {
             None
         }
     }
 
-    pub fn operation_to_sql(&self, op: &Operation) -> Result<Vec<String>, DialectError> {
+    /// Infers the dialect from a database URL scheme.
+    ///
+    /// This accepts normal URL forms such as `postgres://...`, `postgresql://...`,
+    /// `sqlite://...`, `mysql://...`, and `mariadb://...`, plus SQLx's SQLite
+    /// shorthand such as `sqlite::memory:`.
+    pub fn parse_from_url(database_url: &str) -> Result<Self, DialectParseError> {
+        let value = database_url.trim();
+        if value.is_empty() {
+            return Err(DialectParseError::EmptyUrl);
+        }
+
+        let scheme = if value.starts_with("sqlite:") {
+            "sqlite"
+        } else if let Some((scheme, _)) = value.split_once("://") {
+            scheme
+        } else if let Some((scheme, _)) = value.split_once(':') {
+            scheme
+        } else {
+            return Err(DialectParseError::MissingScheme(value.to_string()));
+        };
+
+        Self::parse(scheme).ok_or_else(|| DialectParseError::UnsupportedScheme(scheme.to_string()))
+    }
+
+    pub(crate) fn processor(&self) -> &'static dyn DialectProcessor {
         match self {
-            Dialect::Postgres => postgres::operation_to_sql(op),
-            #[cfg(feature = "sqlite")]
-            Dialect::Sqlite => sqlite::operation_to_sql(op),
+            Dialect::Postgres => &postgres::POSTGRES,
+            Dialect::Sqlite => &sqlite::SQLITE,
+            Dialect::Mysql => &mysql::MYSQL,
         }
     }
 
@@ -60,32 +154,7 @@ impl Dialect {
         migration: &Migration,
         _start: &Schema,
     ) -> Result<Vec<String>, DialectError> {
-        match self {
-            Dialect::Postgres => migration
-                .operations
-                .iter()
-                .map(postgres::operation_to_sql)
-                .collect::<Result<Vec<_>, _>>()
-                .map(|chunks| chunks.into_iter().flatten().collect()),
-            #[cfg(feature = "sqlite")]
-            Dialect::Sqlite => sqlite::migration_to_sql(migration, _start),
-        }
-    }
-
-    #[doc(hidden)]
-    pub fn plan_migration_sql(
-        &self,
-        migration: &Migration,
-        _start: &Schema,
-    ) -> Result<Vec<String>, DialectError> {
-        match self {
-            Dialect::Postgres => {
-                postgres::validate_migration(migration)?;
-                self.migration_to_sql(migration, _start)
-            }
-            #[cfg(feature = "sqlite")]
-            Dialect::Sqlite => sqlite::migration_to_sql(migration, _start),
-        }
+        self.processor().migration_to_sql(migration, _start)
     }
 
     /// Reorders operations to satisfy database-specific execution constraints.
@@ -97,104 +166,48 @@ impl Dialect {
         previous: &Schema,
         current: &Schema,
     ) -> Vec<Operation> {
-        match self {
-            Dialect::Postgres => postgres::reorder_ops(ops, previous, current),
-            #[cfg(feature = "sqlite")]
-            Dialect::Sqlite => ops,
-        }
+        self.processor()
+            .finalize_diff_operations(ops, previous, current)
     }
 
     /// Whether a decomposed sub-entity op should be folded back into its
     /// parent CreateTable. Postgres can inline everything; other dialects
     /// (e.g. SQLite) may need FKs kept inline while indexes stay separate.
     pub fn should_merge(&self, _table_name: &str, _op: &Operation) -> bool {
-        match self {
-            Dialect::Postgres => true,
-            #[cfg(feature = "sqlite")]
-            Dialect::Sqlite => matches!(
-                _op,
-                Operation::AddForeignKey { .. } | Operation::AddConstraint { .. }
-            ),
-        }
+        self.processor().should_merge(_table_name, _op)
     }
 
-    /// Returns the DDL statements to bootstrap the migration tracking table.
-    /// Uses CREATE TABLE IF NOT EXISTS so it is safe to call repeatedly.
-    pub fn create_tracking_table_sql(&self) -> Vec<String> {
-        match self {
-            Dialect::Postgres => postgres::create_tracking_table_sql(),
-            #[cfg(feature = "sqlite")]
-            Dialect::Sqlite => sqlite::create_tracking_table_sql(),
-        }
-    }
-
-    /// SQL to fetch all applied migration ids in application order.
-    pub fn applied_migrations_sql(&self) -> &'static str {
-        match self {
-            Dialect::Postgres => "SELECT id FROM gaman_migrations ORDER BY applied_at, id",
-            #[cfg(feature = "sqlite")]
-            Dialect::Sqlite => "SELECT id FROM gaman_migrations ORDER BY applied_at, id",
-        }
-    }
-
-    /// SQL to record a migration id as applied without running its operations.
-    pub fn record_sql(&self, id: &str) -> String {
-        let escaped = id.replace('\'', "''");
-        format!("INSERT INTO gaman_migrations (id) VALUES ('{escaped}')")
-    }
-
-    /// SQL to remove a migration id from the tracking table.
-    pub fn unrecord_sql(&self, id: &str) -> String {
-        let escaped = id.replace('\'', "''");
-        format!("DELETE FROM gaman_migrations WHERE id = '{escaped}'")
+    #[doc(hidden)]
+    pub fn canonicalize_schema_name(
+        &self,
+        object: EntityKind,
+        schema: Option<&str>,
+    ) -> Option<String> {
+        self.processor().canonicalize_schema_name(object, schema)
     }
 
     pub fn normalize_type<'a>(&self, t: &'a str) -> &'a str {
-        match self {
-            Dialect::Postgres => postgres::normalize_type(t),
-            #[cfg(feature = "sqlite")]
-            Dialect::Sqlite => sqlite::normalize_type(t),
-        }
+        self.processor().normalize_type(t)
     }
 
     pub fn canonical_type(&self, t: &str) -> String {
-        match self {
-            Dialect::Postgres => postgres::canonical_type(t),
-            #[cfg(feature = "sqlite")]
-            Dialect::Sqlite => sqlite::canonical_type(t),
-        }
+        self.processor().canonical_type(t)
     }
 
     pub fn is_catalog_type(&self, t: &str) -> bool {
-        match self {
-            Dialect::Postgres => postgres::is_catalog_type(t),
-            #[cfg(feature = "sqlite")]
-            Dialect::Sqlite => sqlite::is_catalog_type(t),
-        }
+        self.processor().is_catalog_type(t)
     }
 
     pub fn type_suggestions(&self, t: &str) -> Vec<String> {
-        match self {
-            Dialect::Postgres => postgres::type_suggestions(t),
-            #[cfg(feature = "sqlite")]
-            Dialect::Sqlite => sqlite::type_suggestions(t),
-        }
+        self.processor().type_suggestions(t)
     }
 
     pub fn validate_schema(&self, schema: &Schema) -> Result<(), SchemaValidationError> {
-        match self {
-            Dialect::Postgres => postgres::validate_schema(schema),
-            #[cfg(feature = "sqlite")]
-            Dialect::Sqlite => sqlite::validate_schema(schema),
-        }
+        self.processor().validate_schema(schema)
     }
 
     pub fn validate_migration(&self, m: &Migration) -> Result<(), DialectError> {
-        match self {
-            Dialect::Postgres => postgres::validate_migration(m),
-            #[cfg(feature = "sqlite")]
-            Dialect::Sqlite => sqlite::validate_migration(m),
-        }
+        self.processor().validate_migration(m)
     }
 
     #[doc(hidden)]
@@ -203,14 +216,74 @@ impl Dialect {
         m: &Migration,
         _start: &Schema,
     ) -> Result<(), DialectError> {
-        match self {
-            Dialect::Postgres => postgres::validate_migration(m),
-            #[cfg(feature = "sqlite")]
-            Dialect::Sqlite => sqlite::migration_to_sql(m, _start).map(|_| ()),
-        }
+        self.processor().validate_migration_with_state(m, _start)
     }
 }
 
+mod mysql;
 mod postgres;
-#[cfg(feature = "sqlite")]
 mod sqlite;
+
+#[cfg(test)]
+mod tests {
+    use super::{Dialect, DialectParseError};
+
+    /// Verifies PostgreSQL URLs infer the PostgreSQL dialect.
+    #[test]
+    fn parse_from_url_accepts_postgres_urls() {
+        assert_eq!(
+            Dialect::parse_from_url("postgres://localhost/app"),
+            Ok(Dialect::Postgres)
+        );
+        assert_eq!(
+            Dialect::parse_from_url("postgresql://localhost/app"),
+            Ok(Dialect::Postgres)
+        );
+    }
+
+    /// Verifies SQLite URLs infer the SQLite dialect.
+    #[test]
+    fn parse_from_url_accepts_sqlite_urls() {
+        assert_eq!(
+            Dialect::parse_from_url("sqlite://app.db"),
+            Ok(Dialect::Sqlite)
+        );
+        assert_eq!(
+            Dialect::parse_from_url("sqlite::memory:"),
+            Ok(Dialect::Sqlite)
+        );
+    }
+
+    /// Verifies MySQL and MariaDB URLs infer the MySQL dialect stub.
+    #[test]
+    fn parse_from_url_accepts_mysql_urls() {
+        assert_eq!(
+            Dialect::parse_from_url("mysql://localhost/app"),
+            Ok(Dialect::Mysql)
+        );
+        assert_eq!(
+            Dialect::parse_from_url("mariadb://localhost/app"),
+            Ok(Dialect::Mysql)
+        );
+    }
+
+    /// Verifies unsupported URL schemes return a structured error.
+    #[test]
+    fn parse_from_url_rejects_unsupported_schemes() {
+        assert_eq!(
+            Dialect::parse_from_url("oracle://localhost/app"),
+            Err(DialectParseError::UnsupportedScheme("oracle".to_string()))
+        );
+    }
+
+    /// Verifies URLs without schemes fail before selecting a dialect.
+    #[test]
+    fn parse_from_url_rejects_missing_schemes() {
+        assert_eq!(
+            Dialect::parse_from_url("localhost/app"),
+            Err(DialectParseError::MissingScheme(
+                "localhost/app".to_string()
+            ))
+        );
+    }
+}

@@ -1,0 +1,44 @@
+---
+description: TypeCastImplicit allows a type change without an explicit cast expression.
+group: clarifier
+features:
+- answer.type_cast_implicit
+- group.clarifier
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: alter_age_type
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: age
+        type: text
+        nullable: true
+decisions:
+- clarification_id: typecast:users:age
+  answer:
+    type: type_cast_implicit
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: age
+        type: integer
+        nullable: true
+expect_operations:
+- type: alter_column
+  table_name: users
+  old:
+    name: age
+    type: text
+    nullable: true
+  new:
+    name: age
+    type: integer
+    nullable: true
+  cast_expr:

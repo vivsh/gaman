@@ -1,0 +1,14 @@
+---
+description: PostgreSQL CREATE TYPE enum lowers into EnumDef.
+dialect: postgres
+sql: |
+  CREATE TYPE mood AS ENUM ('happy', 'sad');
+expect_entities:
+- kind: enum
+  name: mood
+expect_schema:
+  tables: {}
+  enums:
+    mood:
+      name: mood
+      values: [happy, sad]

@@ -92,5 +92,5 @@ pub enum SchemaLoadError {
     #[error("schema validation failed: {0}")]
     Validation(#[from] SchemaValidationError),
     #[error(transparent)]
-    Sql(#[from] crate::sql::SqlParseError),
+    Sql(#[from] crate::parsers::ParseError),
 }

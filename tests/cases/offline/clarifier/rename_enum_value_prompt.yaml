@@ -1,0 +1,36 @@
+---
+description: Enum label replacement emits a structured rename-enum-value clarification.
+group: clarifier
+features:
+- clarification.rename_enum_value
+- group.clarifier
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: rename_status_label
+migrations:
+- id: 0001_create_status
+  operations:
+  - type: create_enum
+    enum_def:
+      name: status
+      values:
+      - active
+      - inactive
+current:
+  tables: {}
+  enums:
+    status:
+      name: status
+      values:
+      - active
+      - disabled
+expect_clarifications:
+- id: rename_enum_value:status:inactive
+  severity: warning
+  kind:
+    type: rename_enum_value
+    enum_name: status
+    old: inactive
+    candidates:
+    - disabled

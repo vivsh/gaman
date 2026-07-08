@@ -1,15 +1,15 @@
 ---
-description: MySQL parser accepts prefix indexes as parser-only coverage.
+description: MySQL prefix index lowering is unsupported while MySQL remains a stub dialect.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.mysql.parser_mysql_create_prefix_index
-kind: sql_parse
+kind: parser
 parser_dialect: mysql
 sql: |
   CREATE TABLE users (email varchar(255));
   CREATE INDEX users_email_prefix_idx ON users (email(32));
-expect_parse: ok
-expect_lowering: unsupported
-expect_error: unsupported
+expect_parse: error
+expect_lowering: error
+expect_error: unsupported SQL dialect

@@ -1,15 +1,14 @@
 ---
-description: SQLite parser accepts STRICT tables; Gaman SQL lowering is PostgreSQL-only.
+description: SQLite parser lowers STRICT table definitions into schema state.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.sqlite.parser_sqlite_create_strict_table
-kind: sql_parse
+kind: parser
 parser_dialect: sqlite
 sql: 'CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL) STRICT;
 
 '
 expect_parse: ok
-expect_lowering: unsupported
-expect_error: unsupported
+expect_lowering: ok

@@ -1,0 +1,43 @@
+---
+description: Column drop/add emits a structured rename-column clarification.
+group: clarifier
+features:
+- clarification.rename_column
+- group.clarifier
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: rename_username
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: username
+        type: text
+        nullable: true
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: handle
+        type: text
+        nullable: true
+expect_clarifications:
+- id: rename_col:users:username
+  severity: suggestion
+  kind:
+    type: rename_column
+    table: users
+    old: username
+    candidates:
+    - handle

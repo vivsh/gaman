@@ -1,0 +1,23 @@
+---
+description: PostgreSQL UNIQUE constraint lowers into Constraint::Unique.
+dialect: postgres
+sql: |
+  CREATE TABLE users (
+      email text UNIQUE
+  );
+expect_entities:
+- kind: constraint
+  table: users
+  name: users_email_key
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: email
+        type: text
+        nullable: true
+      constraints:
+      - kind: unique
+        name: users_email_key
+        columns: [email]

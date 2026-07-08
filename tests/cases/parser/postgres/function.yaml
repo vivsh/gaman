@@ -1,0 +1,19 @@
+---
+description: PostgreSQL CREATE FUNCTION lowers into FunctionDef.
+dialect: postgres
+sql: |
+  CREATE FUNCTION add_numbers(a integer, b integer) RETURNS integer
+  LANGUAGE sql
+  AS $$ SELECT a + b; $$;
+expect_entities:
+- kind: function
+  name: add_numbers
+expect_schema:
+  tables: {}
+  functions:
+    add_numbers:
+      name: add_numbers
+      arguments: a integer, b integer
+      returns: integer
+      language: sql
+      body: " SELECT a + b; "

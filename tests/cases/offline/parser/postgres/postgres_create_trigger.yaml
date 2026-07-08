@@ -1,18 +1,17 @@
 ---
-description: sqlparser parses PostgreSQL CREATE TRIGGER but Gaman lowering does not
-  model standalone trigger DDL yet.
+description: PostgreSQL parser lowers a function-backed CREATE TRIGGER onto its table.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.postgres.parser_postgres_create_trigger
-kind: sql_parse
+kind: parser
 parser_dialect: postgres
 sql: |
+  CREATE TABLE users (id bigint);
   CREATE TRIGGER users_audit_trg
   AFTER INSERT ON users
   FOR EACH ROW
   EXECUTE FUNCTION audit_users();
 expect_parse: ok
-expect_lowering: unsupported
-expect_error: unsupported SQL statement
+expect_lowering: ok

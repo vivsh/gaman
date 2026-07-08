@@ -1,0 +1,6 @@
+description: PostgreSQL DELETE is rejected because parser input is CREATE-only.
+dialect: postgres
+sql: |
+  DELETE FROM users WHERE id = 1;
+
+expect_error: only CREATE statements for modeled schema entities are parsed

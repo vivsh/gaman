@@ -3,15 +3,91 @@
 use std::sync::Arc;
 
 use gaman::core::{
-    BoxFuture, Dialect, Environment, EnvironmentError, EnvironmentExecutor, Executor, Migrator,
-    SqliteExecutor, VecAdapter,
+    BoxFuture, Dialect, DialectError, Environment, EnvironmentError, EnvironmentExecutor, Executor,
+    Migrator, SqliteExecutor, VecAdapter,
 };
 use gaman::schema::{
     Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, Operation,
-    PrimaryKey, Table, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming, ViewDef, Volatility,
+    PrimaryKey, Schema, Table, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming, ViewDef,
+    Volatility,
 };
 use gaman::{Config, Migration};
 use sqlx::ConnectOptions;
+
+fn operation_to_sql(operation: Operation) -> Result<Vec<String>, DialectError> {
+    let start = start_schema_for_operation(&operation);
+    migration_operation_to_sql(operation, &start)
+}
+
+fn operation_to_sql_without_start(operation: Operation) -> Result<Vec<String>, DialectError> {
+    migration_operation_to_sql(operation, &Schema::default())
+}
+
+fn migration_operation_to_sql(
+    operation: Operation,
+    start: &Schema,
+) -> Result<Vec<String>, DialectError> {
+    Dialect::Sqlite.migration_to_sql(
+        &Migration {
+            id: "test".to_string(),
+            dependencies: vec![],
+            operations: vec![operation],
+            atomic: true,
+        },
+        start,
+    )
+}
+
+fn start_schema_for_operation(operation: &Operation) -> Schema {
+    let mut schema = Schema::default();
+    match operation {
+        Operation::DropTable { table } => {
+            schema.tables.insert(table.qualified_name(), table.clone());
+        }
+        Operation::RenameTable { old_name, .. } => {
+            let table = table(old_name);
+            schema.tables.insert(table.qualified_name(), table);
+        }
+        Operation::AddColumn { table_name, .. }
+        | Operation::AddIndex { table_name, .. }
+        | Operation::CreateTrigger { table_name, .. } => {
+            let table = table(table_name);
+            schema.tables.insert(table.qualified_name(), table);
+        }
+        Operation::DropIndex {
+            table_name, index, ..
+        } => {
+            let mut table = table(table_name);
+            table.indexes.push(index.clone());
+            schema.tables.insert(table.qualified_name(), table);
+        }
+        Operation::AlterTrigger {
+            table_name, old, ..
+        }
+        | Operation::DropTrigger {
+            table_name,
+            trigger: old,
+        } => {
+            let mut table = table(table_name);
+            table.triggers.push(old.clone());
+            schema.tables.insert(table.qualified_name(), table);
+        }
+        Operation::RenameColumn {
+            table_name,
+            old_name,
+            ..
+        } => {
+            let mut table = table(table_name);
+            table.columns.push(col(old_name, "text", true));
+            schema.tables.insert(table.qualified_name(), table);
+        }
+        Operation::ReplaceView { old, .. } | Operation::DropView { view: old } => {
+            schema.views.insert(old.qualified_name(), old.clone());
+        }
+        _ => {}
+    }
+    schema
+}
 
 fn table(name: &str) -> Table {
     Table {
@@ -97,9 +173,7 @@ fn create_table_composite_primary_key() {
         triggers: vec![],
     };
 
-    let sql = Dialect::Sqlite
-        .operation_to_sql(&Operation::CreateTable { table })
-        .unwrap();
+    let sql = operation_to_sql(Operation::CreateTable { table }).unwrap();
 
     assert_eq!(sql.len(), 1);
     assert!(
@@ -132,9 +206,7 @@ fn create_table_composite_foreign_key() {
         triggers: vec![],
     };
 
-    let sql = Dialect::Sqlite
-        .operation_to_sql(&Operation::CreateTable { table })
-        .unwrap();
+    let sql = operation_to_sql(Operation::CreateTable { table }).unwrap();
 
     assert_eq!(sql.len(), 1);
     assert!(
@@ -160,12 +232,11 @@ fn create_query_trigger_sqlite() {
         language: None,
     };
 
-    let sql = Dialect::Sqlite
-        .operation_to_sql(&Operation::CreateTrigger {
-            table_name: "orders".to_string(),
-            trigger,
-        })
-        .unwrap();
+    let sql = operation_to_sql(Operation::CreateTrigger {
+        table_name: "orders".to_string(),
+        trigger,
+    })
+    .unwrap();
 
     assert_eq!(sql.len(), 1);
     assert!(
@@ -193,12 +264,11 @@ fn sqlite_trigger_function_name_is_unsupported() {
         language: None,
     };
 
-    let err = Dialect::Sqlite
-        .operation_to_sql(&Operation::CreateTrigger {
-            table_name: "orders".to_string(),
-            trigger,
-        })
-        .unwrap_err();
+    let err = operation_to_sql(Operation::CreateTrigger {
+        table_name: "orders".to_string(),
+        trigger,
+    })
+    .unwrap_err();
     assert!(err.to_string().contains("function_name"));
 }
 
@@ -216,12 +286,11 @@ fn sqlite_trigger_language_is_unsupported() {
         language: Some("plpgsql".to_string()),
     };
 
-    let err = Dialect::Sqlite
-        .operation_to_sql(&Operation::CreateTrigger {
-            table_name: "orders".to_string(),
-            trigger,
-        })
-        .unwrap_err();
+    let err = operation_to_sql(Operation::CreateTrigger {
+        table_name: "orders".to_string(),
+        trigger,
+    })
+    .unwrap_err();
     assert!(err.to_string().contains("language"));
 }
 
@@ -239,12 +308,11 @@ fn sqlite_trigger_truncate_is_unsupported() {
         language: None,
     };
 
-    let err = Dialect::Sqlite
-        .operation_to_sql(&Operation::CreateTrigger {
-            table_name: "orders".to_string(),
-            trigger,
-        })
-        .unwrap_err();
+    let err = operation_to_sql(Operation::CreateTrigger {
+        table_name: "orders".to_string(),
+        trigger,
+    })
+    .unwrap_err();
     assert!(err.to_string().contains("TRUNCATE"));
 }
 
@@ -272,13 +340,12 @@ fn sqlite_renders_alter_trigger_as_create_trigger() {
         language: None,
     };
 
-    let sql = Dialect::Sqlite
-        .operation_to_sql(&Operation::AlterTrigger {
-            table_name: "orders".to_string(),
-            old,
-            new,
-        })
-        .unwrap();
+    let sql = operation_to_sql(Operation::AlterTrigger {
+        table_name: "orders".to_string(),
+        old,
+        new,
+    })
+    .unwrap();
 
     assert_eq!(
         sql,
@@ -302,12 +369,11 @@ fn sqlite_renders_drop_trigger() {
         language: None,
     };
 
-    let sql = Dialect::Sqlite
-        .operation_to_sql(&Operation::DropTrigger {
-            table_name: "orders".to_string(),
-            trigger,
-        })
-        .unwrap();
+    let sql = operation_to_sql(Operation::DropTrigger {
+        table_name: "orders".to_string(),
+        trigger,
+    })
+    .unwrap();
 
     assert_eq!(sql, vec![r#"DROP TRIGGER "orders_insert_after_trg""#]);
 }
@@ -363,9 +429,9 @@ fn sqlite_rebuild_operations_require_migration_context() {
     ];
 
     for operation in operations {
-        let err = Dialect::Sqlite.operation_to_sql(&operation).unwrap_err();
+        let err = operation_to_sql_without_start(operation.clone()).unwrap_err();
         assert!(
-            err.to_string().contains("render through Migrator"),
+            err.to_string().contains("table rebuild planning failed"),
             "unexpected error for {operation:?}: {err}"
         );
     }
@@ -434,7 +500,7 @@ fn sqlite_rejects_unsupported_opaque_operations() {
     ];
 
     for operation in operations {
-        let err = Dialect::Sqlite.operation_to_sql(&operation).unwrap_err();
+        let err = operation_to_sql(operation.clone()).unwrap_err();
         assert!(
             err.to_string()
                 .contains("not supported by the SQLite dialect"),
@@ -499,11 +565,10 @@ fn sql_for(migrations: Vec<Migration>) -> Vec<String> {
 
 #[test]
 fn sqlite_renders_supported_create_table_subset() {
-    let sql = Dialect::Sqlite
-        .operation_to_sql(&Operation::CreateTable {
-            table: table("users"),
-        })
-        .unwrap();
+    let sql = operation_to_sql(Operation::CreateTable {
+        table: table("users"),
+    })
+    .unwrap();
 
     assert_eq!(
         sql,
@@ -517,11 +582,10 @@ fn sqlite_renders_supported_create_table_subset() {
 /// SQLite renders simple table drops directly.
 #[test]
 fn sqlite_renders_drop_table() {
-    let sql = Dialect::Sqlite
-        .operation_to_sql(&Operation::DropTable {
-            table: table("users"),
-        })
-        .unwrap();
+    let sql = operation_to_sql(Operation::DropTable {
+        table: table("users"),
+    })
+    .unwrap();
 
     assert_eq!(sql, vec![r#"DROP TABLE "users""#]);
 }
@@ -529,12 +593,11 @@ fn sqlite_renders_drop_table() {
 /// SQLite renders simple table renames directly.
 #[test]
 fn sqlite_renders_rename_table() {
-    let sql = Dialect::Sqlite
-        .operation_to_sql(&Operation::RenameTable {
-            old_name: "users".to_string(),
-            new_name: "accounts".to_string(),
-        })
-        .unwrap();
+    let sql = operation_to_sql(Operation::RenameTable {
+        old_name: "users".to_string(),
+        new_name: "accounts".to_string(),
+    })
+    .unwrap();
 
     assert_eq!(sql, vec![r#"ALTER TABLE "users" RENAME TO "accounts""#]);
 }
@@ -542,12 +605,11 @@ fn sqlite_renders_rename_table() {
 /// SQLite renders simple column additions directly.
 #[test]
 fn sqlite_renders_simple_add_column() {
-    let sql = Dialect::Sqlite
-        .operation_to_sql(&Operation::AddColumn {
-            table_name: "users".to_string(),
-            column: col("email", "text", true),
-        })
-        .unwrap();
+    let sql = operation_to_sql(Operation::AddColumn {
+        table_name: "users".to_string(),
+        column: col("email", "text", true),
+    })
+    .unwrap();
 
     assert_eq!(sql, vec![r#"ALTER TABLE "users" ADD COLUMN "email" text"#]);
 }
@@ -555,13 +617,12 @@ fn sqlite_renders_simple_add_column() {
 /// SQLite renders column renames directly.
 #[test]
 fn sqlite_renders_rename_column() {
-    let sql = Dialect::Sqlite
-        .operation_to_sql(&Operation::RenameColumn {
-            table_name: "users".to_string(),
-            old_name: "email".to_string(),
-            new_name: "primary_email".to_string(),
-        })
-        .unwrap();
+    let sql = operation_to_sql(Operation::RenameColumn {
+        table_name: "users".to_string(),
+        old_name: "email".to_string(),
+        new_name: "primary_email".to_string(),
+    })
+    .unwrap();
 
     assert_eq!(
         sql,
@@ -572,18 +633,17 @@ fn sqlite_renders_rename_column() {
 /// SQLite renders direct index creation.
 #[test]
 fn sqlite_renders_add_index() {
-    let sql = Dialect::Sqlite
-        .operation_to_sql(&Operation::AddIndex {
-            table_name: "users".to_string(),
-            index: Index {
-                name: "users_email_idx".to_string(),
-                columns: vec!["email".to_string()],
-                unique: false,
-                predicate: None,
-            },
-            concurrent: false,
-        })
-        .unwrap();
+    let sql = operation_to_sql(Operation::AddIndex {
+        table_name: "users".to_string(),
+        index: Index {
+            name: "users_email_idx".to_string(),
+            columns: vec!["email".to_string()],
+            unique: false,
+            predicate: None,
+        },
+        concurrent: false,
+    })
+    .unwrap();
 
     assert_eq!(
         sql,
@@ -594,18 +654,17 @@ fn sqlite_renders_add_index() {
 /// SQLite renders direct index drops.
 #[test]
 fn sqlite_renders_drop_index() {
-    let sql = Dialect::Sqlite
-        .operation_to_sql(&Operation::DropIndex {
-            table_name: "users".to_string(),
-            index: Index {
-                name: "users_email_idx".to_string(),
-                columns: vec!["email".to_string()],
-                unique: false,
-                predicate: None,
-            },
-            concurrent: false,
-        })
-        .unwrap();
+    let sql = operation_to_sql(Operation::DropIndex {
+        table_name: "users".to_string(),
+        index: Index {
+            name: "users_email_idx".to_string(),
+            columns: vec!["email".to_string()],
+            unique: false,
+            predicate: None,
+        },
+        concurrent: false,
+    })
+    .unwrap();
 
     assert_eq!(sql, vec![r#"DROP INDEX "users_email_idx""#]);
 }
@@ -613,12 +672,11 @@ fn sqlite_renders_drop_index() {
 /// SQLite preserves raw SQL statements exactly.
 #[test]
 fn sqlite_renders_statement_exactly() {
-    let sql = Dialect::Sqlite
-        .operation_to_sql(&Operation::Statement {
-            up: "UPDATE users SET active = 1".to_string(),
-            down: None,
-        })
-        .unwrap();
+    let sql = operation_to_sql(Operation::Statement {
+        up: "UPDATE users SET active = 1".to_string(),
+        down: None,
+    })
+    .unwrap();
 
     assert_eq!(sql, vec!["UPDATE users SET active = 1"]);
 }
@@ -638,42 +696,36 @@ fn sqlite_renders_view_operations() {
     };
 
     assert_eq!(
-        Dialect::Sqlite
-            .operation_to_sql(&Operation::CreateView { view: old.clone() })
-            .unwrap(),
+        operation_to_sql(Operation::CreateView { view: old.clone() }).unwrap(),
         vec![r#"CREATE VIEW "active_users" AS SELECT id FROM users"#]
     );
     assert_eq!(
-        Dialect::Sqlite
-            .operation_to_sql(&Operation::ReplaceView {
-                old: old.clone(),
-                new
-            })
-            .unwrap(),
+        operation_to_sql(Operation::ReplaceView {
+            old: old.clone(),
+            new
+        })
+        .unwrap(),
         vec![
             r#"DROP VIEW "active_users""#,
             r#"CREATE VIEW "active_users" AS SELECT id FROM users WHERE active = 1"#
         ]
     );
     assert_eq!(
-        Dialect::Sqlite
-            .operation_to_sql(&Operation::DropView { view: old })
-            .unwrap(),
+        operation_to_sql(Operation::DropView { view: old }).unwrap(),
         vec![r#"DROP VIEW "active_users""#]
     );
 }
 
 #[test]
 fn sqlite_errors_for_unsupported_extension_operations() {
-    let err = Dialect::Sqlite
-        .operation_to_sql(&Operation::CreateExtension {
-            extension: ExtensionDef {
-                name: "pgcrypto".to_string(),
-                schema: None,
-                version: None,
-            },
-        })
-        .unwrap_err();
+    let err = operation_to_sql(Operation::CreateExtension {
+        extension: ExtensionDef {
+            name: "pgcrypto".to_string(),
+            schema: None,
+            version: None,
+        },
+    })
+    .unwrap_err();
 
     assert!(
         err.to_string()
@@ -686,24 +738,21 @@ fn sqlite_errors_for_schema_qualified_tables() {
     let mut users = table("users");
     users.schema = Some("app".to_string());
 
-    let err = Dialect::Sqlite
-        .operation_to_sql(&Operation::CreateTable { table: users })
-        .unwrap_err();
+    let err = operation_to_sql(Operation::CreateTable { table: users }).unwrap_err();
 
     assert!(err.to_string().contains("does not support schemas"));
 }
 
 #[test]
 fn sqlite_operation_renderer_points_rebuild_ops_to_migrator() {
-    let err = Dialect::Sqlite
-        .operation_to_sql(&Operation::DropColumn {
-            table_name: "users".to_string(),
-            column: col("email", "text", true),
-            cascade: false,
-        })
-        .unwrap_err();
+    let err = operation_to_sql_without_start(Operation::DropColumn {
+        table_name: "users".to_string(),
+        column: col("email", "text", true),
+        cascade: false,
+    })
+    .unwrap_err();
 
-    assert!(err.to_string().contains("render through Migrator"));
+    assert!(err.to_string().contains("table rebuild planning failed"));
 }
 
 #[test]

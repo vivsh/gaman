@@ -1,0 +1,6 @@
+description: PostgreSQL DROP TABLE is rejected because parser input is CREATE-only.
+dialect: postgres
+sql: |
+  DROP TABLE users;
+
+expect_error: only CREATE statements for modeled schema entities are parsed

@@ -1,0 +1,6 @@
+---
+description: SQLite CREATE EXTENSION is not represented in Schema.
+dialect: sqlite
+sql: |
+  CREATE EXTENSION pgcrypto;
+expect_error: unsupported sqlite SQL statement

@@ -1,0 +1,24 @@
+---
+description: PostgreSQL generated column lowers with generated expression.
+dialect: postgres
+sql: |
+  CREATE TABLE users (
+      email text,
+      email_norm text GENERATED ALWAYS AS (lower(email)) STORED
+  );
+expect_entities:
+- kind: column
+  table: users
+  name: email_norm
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: email
+        type: text
+        nullable: true
+      - name: email_norm
+        type: text
+        nullable: true
+        generated: lower(email)

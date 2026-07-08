@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use support::{
     FeatureCatalog, OnlineCase, OnlineCheck, OnlineDialect, OnlineEvidence, OnlineFeatureResult,
     OnlineResultStatus, OnlineSupportResults, POSTGRES_DATABASE_URL_ENV, TestSupportError,
-    assert_error_contains, assert_ops_match, assert_schema_matches, case_label, case_name,
-    features_path, online_cases_root, read_case_file, scope_schema_for_compare, selected_cases,
+    assert_error_contains, assert_ops_match, case_label, case_name, features_path,
+    online_cases_root, read_case_file, selected_cases,
 };
 
 struct OnlineArgs {
@@ -507,9 +507,9 @@ async fn run_postgres_checks(
         if section.checks.contains(&OnlineCheck::Inspect) {
             let result = async {
                 let mut actual = harness.inspect_schema().await?;
-                scope_schema_for_compare(&mut actual, harness.schema_name());
+                support::scope_schema_for_compare(&mut actual, harness.schema_name());
                 let expected = expected_inspect_schema(name, section)?;
-                assert_schema_matches(name, "inspected schema", actual, expected)
+                support::assert_schema_matches(name, "inspected schema", actual, expected)
             }
             .await;
             if error_action == Some(ExpectedErrorAction::Inspect) {

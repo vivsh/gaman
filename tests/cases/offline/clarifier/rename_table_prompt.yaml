@@ -1,0 +1,36 @@
+---
+description: Table drop/create emits a structured rename-table clarification.
+group: clarifier
+features:
+- clarification.rename_table
+- group.clarifier
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: rename_users
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+current:
+  tables:
+    accounts:
+      name: accounts
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+expect_clarifications:
+- id: rename_table:users
+  severity: suggestion
+  kind:
+    type: rename_table
+    old: users
+    candidates:
+    - accounts

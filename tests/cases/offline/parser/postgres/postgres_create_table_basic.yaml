@@ -3,9 +3,9 @@ description: PostgreSQL parser and Gaman lowering handle a basic table.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.postgres.parser_postgres_create_table_basic
-kind: sql_parse
+kind: parser
 parser_dialect: postgres
 sql: |
   CREATE TABLE public.users (

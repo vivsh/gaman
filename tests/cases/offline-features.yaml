@@ -129,8 +129,8 @@ features:
 - id: group.diff
   label: group / diff
   category: group
-- id: group.disambiguator
-  label: group / disambiguator
+- id: group.clarifier
+  label: group / clarifier
   category: group
 - id: group.end_to_end
   label: group / end to end
@@ -168,8 +168,8 @@ features:
 - id: kind.schema_to_migration
   label: kind / schema to migration
   category: kind
-- id: kind.sql_parse
-  label: kind / sql parse
+- id: kind.parser
+  label: kind / parser
   category: kind
 - id: kind.sql_to_schema
   label: kind / sql to schema

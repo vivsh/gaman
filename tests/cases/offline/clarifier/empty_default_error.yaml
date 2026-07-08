@@ -1,0 +1,36 @@
+---
+description: Empty not-null default decisions fail before operation rewriting.
+group: clarifier
+features:
+- group.clarifier
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: empty_default
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+decisions:
+- clarification_id: notnull_add:users:status
+  answer:
+    type: not_null_default
+    value: " "
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: status
+        type: text
+        nullable: false
+expect_error: requires a non-empty value

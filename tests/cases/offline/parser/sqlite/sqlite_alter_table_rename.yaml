@@ -1,15 +1,15 @@
 ---
-description: SQLite parser accepts ALTER TABLE RENAME syntax.
+description: SQLite ALTER TABLE RENAME is rejected because parser input is CREATE-only.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.sqlite.parser_sqlite_alter_table_rename
-kind: sql_parse
+kind: parser
 parser_dialect: sqlite
 sql: 'ALTER TABLE users RENAME TO accounts;
 
 '
 expect_parse: ok
 expect_lowering: unsupported
-expect_error: unsupported
+expect_error: only CREATE statements for modeled schema entities are parsed

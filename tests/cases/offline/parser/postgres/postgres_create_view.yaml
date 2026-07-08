@@ -3,10 +3,10 @@ description: PostgreSQL parser and lowering preserve simple views.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - operation.create_view
 - parser.postgres.parser_postgres_create_view
-kind: sql_parse
+kind: parser
 parser_dialect: postgres
 sql: |
   CREATE TABLE users (id integer, active boolean);

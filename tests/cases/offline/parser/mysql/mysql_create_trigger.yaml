@@ -1,16 +1,16 @@
 ---
-description: MySQL parser accepts simple triggers.
+description: MySQL trigger lowering is unsupported while MySQL remains a stub dialect.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.mysql.parser_mysql_create_trigger
-kind: sql_parse
+kind: parser
 parser_dialect: mysql
 sql: |
   CREATE TRIGGER users_bi
   BEFORE INSERT ON users
   FOR EACH ROW SET NEW.created_at = NOW();
-expect_parse: ok
-expect_lowering: unsupported
-expect_error: unsupported
+expect_parse: error
+expect_lowering: error
+expect_error: unsupported SQL dialect

@@ -181,14 +181,14 @@ Notes:
 - SQLite table-rebuild planner for ALTER TABLE (mysql): SQLite rebuild planning does not apply to MySQL.
 <!-- gaman:support-matrix:end -->
 
-Offline parser, replay, diff, disambiguation, rollback, and SQL-rendering
+Offline parser, replay, diff, clarification, rollback, and SQL-rendering
 evidence is tracked separately from live product support. See `TESTING.md` for
 the checked offline evidence matrix and result-recording commands.
 
 ## Author Schema
 
 All frontends normalize into the same internal `Schema` before replay, diffing,
-disambiguation, and SQL rendering.
+clarification, and SQL rendering.
 
 YAML is explicit and reviewable:
 
@@ -269,9 +269,10 @@ manual static definition; use `from_source` for custom storage.
 use gaman::{Config, MigrationEngine};
 use gaman::core::Dialect;
 
+let schema = gaman::schema_file::load_schema_path("schema.yaml")?;
 let engine = MigrationEngine::new(Config::default(), &MIGRATIONS)
     .with_dialect(Dialect::Postgres)
-    .with_schema(|s| s.load_file("schema.yaml"))?;
+    .with_schema(|_| schema)?;
 ```
 
 Common methods:
@@ -291,7 +292,7 @@ Live actions require a database connection. Offline SQL planning does not.
 Custom storage implements `MigrationSource`; it can be file-backed, embedded,
 in-memory, or application-owned.
 
-## Disambiguation
+## Clarification
 
 Gaman does not guess through risky changes. Renames, new `NOT NULL` columns,
 type casts, and newly introduced unknown data types can require decisions before

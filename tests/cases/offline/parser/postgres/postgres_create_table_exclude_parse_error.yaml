@@ -1,11 +1,11 @@
 ---
-description: sqlparser still cannot parse PostgreSQL exclusion constraints.
+description: PostgreSQL exclusion constraints are reported as parse errors.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.postgres.parser_postgres_create_table_exclude_parse_error
-kind: sql_parse
+kind: parser
 parser_dialect: postgres
 sql: |
   CREATE TABLE room_reservations (

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `gaman-core` is now featureless and string/in-memory only. Native schema file
+  loading moved to the root `gaman::schema_file` module, which reads files and
+  delegates to core string parsers.
+- `offline-sqlite` is now a compatibility alias for `offline`; SQLite offline
+  rendering is always available in `gaman-core`.
+
+### Removed
+
+- Removed filesystem schema-loading APIs from `gaman-core`, including
+  `Schema::from_file`, `Schema::from_yaml_file`, `Schema::from_sql_file`,
+  `Schema::from_dir`, `SchemaBuilder::load_file`, and
+  `SchemaBuilder::load_dir`.
+
 ## [0.3.20] - 2026-07-07
 
 ### Added
@@ -67,7 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gaman-core` now physically owns the offline engine modules, with the root
   `gaman` crate acting as the compatibility facade for existing users.
 - Offline/WASM-oriented feature boundaries: offline replay, diffing,
-  disambiguation, schema preparation, and SQL planning can compile without the
+  clarification, schema preparation, and SQL planning can compile without the
   native DB/CLI layer.
 - `OfflinePlanner` and string-based helpers for offline schema and migration
   parsing, replay, migration generation, and SQL planning.
@@ -79,19 +94,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   canonicalization only as a fallback for diff equality.
 - Dialect type catalogs now live in separate `data_types.rs` and
   `extension_types.rs` modules for PostgreSQL and SQLite, with replay-aware
-  unknown-type disambiguation before diffing.
+  unknown-type clarification before diffing.
 
 ### Changed
 
 - `sql_migrate` is now a stricter offline SQL planner with deterministic
   selection validation, generated-migration baselines, rollback planning, and
   parity between native `Migrator` and `OfflinePlanner` rendering.
-- The disambiguator is split into focused modules for model types, analysis,
+- The clarifier is split into focused modules for model types, analysis,
   resolution, deterministic IDs, type compatibility, and editable messages.
 - Rename suggestions are ranked deterministically using structural/name/type
   similarity, and decision validation now rejects duplicate, conflicting,
   incompatible, or empty-input answers before rewriting operations.
-- Prompt copy now lives in the core disambiguator message layer so CLI and
+- Prompt copy now lives in the core clarifier message layer so CLI and
   future offline/browser callers can render the same clarification specs.
 - Unknown column types are no longer rejected solely because they are absent
   from the dialect catalog; replayed migration history and explicit keep/use
@@ -291,8 +306,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Disambiguator — detects ambiguous diff operations (e.g. rename vs drop+add) and asks the user to resolve them
-- Prompter — interactive terminal UI for disambiguation
+- Clarifier — detects ambiguous diff operations (e.g. rename vs drop+add) and asks the user to resolve them
+- Prompter — interactive terminal UI for clarification
 
 ### Fixed
 

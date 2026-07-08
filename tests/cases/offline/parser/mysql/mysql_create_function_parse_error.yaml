@@ -1,15 +1,15 @@
 ---
-description: sqlparser does not parse MySQL routine function syntax.
+description: MySQL routine lowering is unsupported while MySQL remains a stub dialect.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.mysql.parser_mysql_create_function_parse_error
-kind: sql_parse
+kind: parser
 parser_dialect: mysql
 sql: 'CREATE FUNCTION f(x INT) RETURNS INT DETERMINISTIC RETURN x + 1;
 
 '
 expect_parse: error
 expect_lowering: error
-expect_error: FUNCTION
+expect_error: unsupported SQL dialect

@@ -4,14 +4,15 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::adapters::{AdapterError, MigrationSource, YamlAdapter};
-use crate::cli::{CommandError, GamanArgs, dispatch, parse_dialect};
+use crate::cli::{CommandError, GamanArgs, dispatch};
 use crate::conf::Config;
 use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
 use crate::executor::{BoxFuture, connect_environment_executor};
 use crate::migrator::{Migrator, MigratorError};
 use crate::prompter::CliPromptEngine;
+use crate::schema_file::load_schema_path;
+use gaman_core::clarifier::{Clarification, Decision, PromptEngine, clarification_message};
 use gaman_core::dialects::Dialect;
-use gaman_core::disambiguator::{Clarification, Decision, PromptEngine, clarification_message};
 use gaman_core::migrations::Migration;
 use gaman_core::operations::Operation;
 use gaman_core::states::{IntoSchema, Schema, SchemaBuilder, SchemaLoadError};
@@ -120,7 +121,6 @@ pub struct MigrationEngine {
     config: Config,
     source: EngineSource,
     schema: Option<Schema>,
-    dialect: Option<Dialect>,
 }
 
 enum EngineSource {
@@ -135,12 +135,11 @@ enum EngineSource {
 /// MigrationEngine's native environment adapter for opening live executors.
 struct EngineEnvironment {
     config: Arc<Config>,
-    dialect: Option<Dialect>,
 }
 
 impl EngineEnvironment {
-    fn new(config: Arc<Config>, dialect: Option<Dialect>) -> Self {
-        Self { config, dialect }
+    fn new(config: Arc<Config>) -> Self {
+        Self { config }
     }
 }
 
@@ -153,11 +152,7 @@ impl Environment for EngineEnvironment {
         &'a self,
     ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor + Send>, EnvironmentError>> {
         Box::pin(async move {
-            let url = self.config.database_url.as_deref().ok_or_else(|| {
-                EnvironmentError::Config(
-                    "database_url is not set — set DATABASE_URL or pass it in Config".into(),
-                )
-            })?;
+            let url = self.config.database_url.as_str();
             connect_environment_executor(self.dialect(), url, self.config.tls)
                 .await
                 .map_err(EnvironmentError::from)
@@ -165,9 +160,7 @@ impl Environment for EngineEnvironment {
     }
 
     fn dialect(&self) -> Dialect {
-        self.dialect
-            .or_else(|| self.config.dialect())
-            .unwrap_or(Dialect::Postgres)
+        self.config.dialect
     }
 }
 
@@ -180,20 +173,14 @@ impl MigrationEngine {
                 extra: Vec::new(),
             },
             schema: None,
-            dialect: None,
         }
     }
 
-    pub(crate) fn from_cli_config(
-        config: Config,
-        dialect: Option<Dialect>,
-        schema: Option<Schema>,
-    ) -> Self {
+    pub(crate) fn from_cli_config(config: Config, schema: Option<Schema>) -> Self {
         Self {
             config,
             source: EngineSource::Directory,
             schema,
-            dialect,
         }
     }
 
@@ -217,13 +204,7 @@ impl MigrationEngine {
             config,
             source: EngineSource::Custom(source),
             schema: None,
-            dialect: None,
         }
-    }
-
-    pub fn with_dialect(mut self, dialect: Dialect) -> Self {
-        self.dialect = Some(dialect);
-        self
     }
 
     pub fn add_migrations(mut self, ns: &'static str, m: &'static EmbeddedMigrations) -> Self {
@@ -233,17 +214,16 @@ impl MigrationEngine {
         self
     }
 
-    /// Set the target schema. The closure receives a `SchemaBuilder` and can return either a
-    /// `Schema` directly (infallible) or a `Result<Schema, SchemaLoadError>` (for file loading).
-    /// Calling this more than once replaces the previous schema — last call wins.
+    /// Set the target schema.
+    ///
+    /// The closure receives a `SchemaBuilder` and can return either a `Schema`
+    /// directly or a `Result<Schema, SchemaLoadError>`. Calling this more than
+    /// once replaces the previous schema.
     pub fn with_schema<R: IntoSchema>(
         mut self,
         f: impl FnOnce(SchemaBuilder) -> R,
     ) -> Result<Self, EngineError> {
-        let dialect = self
-            .dialect
-            .or_else(|| self.config.dialect())
-            .unwrap_or(Dialect::Postgres);
+        let dialect = self.config.dialect;
         self.schema = Some(
             f(SchemaBuilder::new(dialect))
                 .into_schema()?
@@ -263,10 +243,7 @@ impl MigrationEngine {
             }),
             EngineSource::Custom(source) => Box::new(Arc::clone(source)),
         };
-        let environment = Box::new(EngineEnvironment::new(
-            Arc::new(self.config.clone()),
-            self.dialect,
-        ));
+        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone())));
         Ok(Migrator::new(source, environment)?)
     }
 
@@ -300,10 +277,7 @@ impl MigrationEngine {
             }),
             EngineSource::Custom(source) => Box::new(Arc::clone(source)),
         };
-        let environment = Box::new(EngineEnvironment::new(
-            Arc::new(self.config.clone()),
-            self.dialect,
-        ));
+        let environment = Box::new(EngineEnvironment::new(Arc::new(self.config.clone())));
         Ok(Migrator::new(source, environment)?)
     }
 
@@ -312,7 +286,7 @@ impl MigrationEngine {
             return Ok(schema.clone());
         }
         if matches!(&self.source, EngineSource::Directory) {
-            return Ok(Schema::from_file(&self.config.schema_file)?);
+            return Ok(load_schema_path(&self.config.schema_file)?);
         }
         Err(EngineError::NoSchema)
     }
@@ -539,7 +513,7 @@ impl MigrationEngine {
         )
     }
 
-    /// Generate and write a migration using caller-provided disambiguation decisions.
+    /// Generate and write a migration using caller-provided clarification decisions.
     pub fn make_migration_with_decisions(
         self,
         name: Option<&str>,
@@ -570,9 +544,8 @@ impl MigrationEngine {
         let _ = dotenvy::dotenv();
         let args: GamanArgs = argh::from_env();
         let mut config = self.config;
-        let (cmd, cli_dialect) = args.apply_to(&mut config);
-        let dialect = parse_dialect(cli_dialect)?.or(self.dialect);
-        let engine = MigrationEngine::from_cli_config(config, dialect, self.schema);
+        let cmd = args.apply_to(&mut config)?;
+        let engine = MigrationEngine::from_cli_config(config, self.schema);
         dispatch(engine, cmd).await?;
         Ok(())
     }
@@ -727,7 +700,7 @@ atomic: true
             migrations_dir: dir.path().join("migrations"),
             ..Config::default()
         };
-        MigrationEngine::from_cli_config(config, Some(Dialect::Postgres), Some(schema))
+        MigrationEngine::from_cli_config(config, Some(schema))
     }
 
     struct HandWrittenUser;
@@ -785,7 +758,6 @@ atomic: true
             .unwrap();
 
         let sql = MigrationEngine::from_source(Config::default(), source)
-            .with_dialect(Dialect::Postgres)
             .sql_migrate()
             .unwrap();
 
@@ -807,10 +779,12 @@ tables:
 "#,
         )
         .unwrap();
-        let engine = MigrationEngine::from_source(Config::default(), source.clone())
-            .with_dialect(Dialect::Postgres)
-            .with_schema(|_| schema)
-            .unwrap();
+        let engine = MigrationEngine::from_source(
+            Config::default().with_dialect(Dialect::Postgres),
+            source.clone(),
+        )
+        .with_schema(|_| schema)
+        .unwrap();
 
         let migration = engine
             .make_migration_non_interactive(Some("add_users"))
@@ -987,7 +961,7 @@ tables:
     /// Verifies caller-provided decisions can resolve public engine migration generation.
     #[test]
     fn make_migration_with_decisions_uses_caller_answers() {
-        use gaman_core::disambiguator::Answer;
+        use gaman_core::clarifier::Answer;
 
         let dir = tempfile::tempdir().unwrap();
         let schema = Schema::from_yaml_str(

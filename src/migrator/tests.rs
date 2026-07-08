@@ -1488,7 +1488,7 @@ fn make_migrations_asks_for_new_unknown_type_before_writing() {
 
     assert!(matches!(
         &clarifications[0].kind,
-        gaman_core::disambiguator::ClarificationKind::UnknownType {
+        gaman_core::clarifier::ClarificationKind::UnknownType {
             type_name,
             suggested,
             ..
@@ -1498,7 +1498,7 @@ fn make_migrations_asks_for_new_unknown_type_before_writing() {
 
 #[test]
 fn make_migrations_keeps_approved_unknown_type() {
-    use gaman_core::disambiguator::Answer;
+    use gaman_core::clarifier::Answer;
 
     let m = migrator_from(vec![]);
     let current = state_with_tables(&[simple_table("users", &["id", "code"])]);

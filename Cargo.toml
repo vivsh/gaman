@@ -37,6 +37,12 @@ path = "tests/offline_coverage.rs"
 required-features = ["native"]
 
 [[test]]
+name = "parser"
+path = "tests/parser.rs"
+harness = false
+required-features = ["native"]
+
+[[test]]
 name = "online"
 path = "tests/online.rs"
 harness = false
@@ -56,13 +62,13 @@ required-features = ["native"]
 default = ["native", "cli", "all-supported-dialects"]
 all-supported-dialects = ["postgres", "sqlite"]
 offline = ["dep:gaman-core"]
-offline-sqlite = ["offline", "gaman-core/sqlite"]
+offline-sqlite = ["offline"]
 native = ["dep:gaman-core", "dep:serde", "dep:serde_yaml", "dep:thiserror"]
-fs = ["native", "gaman-core/fs"]
+fs = ["native"]
 db = ["native", "dep:sqlx", "dep:tokio"]
 cli = ["fs", "db", "dep:argh", "dep:dotenvy"]
 postgres = ["db", "sqlx/postgres"]
-sqlite = ["db", "sqlx/sqlite", "gaman-core/sqlite"]
+sqlite = ["db", "sqlx/sqlite"]
 mysql = ["db", "sqlx/mysql"]
 
 [dependencies]
@@ -76,5 +82,4 @@ serde_yaml = { version = "0.9.34", optional = true }
 thiserror = { version = "2.0.18", optional = true }
 
 [dev-dependencies]
-sqlparser = "0.62.0"
 tempfile = "3"

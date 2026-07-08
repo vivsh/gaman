@@ -1,0 +1,26 @@
+---
+description: SQLite partial CREATE INDEX preserves predicate metadata.
+dialect: sqlite
+sql: |
+  CREATE TABLE users (email text, active integer);
+  CREATE INDEX users_active_email_idx ON users (email) WHERE active = 1;
+expect_entities:
+- kind: index
+  table: users
+  name: users_active_email_idx
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: email
+        type: text
+        nullable: true
+      - name: active
+        type: integer
+        nullable: true
+      indexes:
+      - name: users_active_email_idx
+        columns: [email]
+        unique: false
+        predicate: active = 1

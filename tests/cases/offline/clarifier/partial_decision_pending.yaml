@@ -1,0 +1,47 @@
+---
+description: Partial decisions return only the still-pending clarification set.
+group: clarifier
+features:
+- group.clarifier
+- kind.schema_to_migration
+kind: schema_to_migration
+dialect: postgres
+name: partial_decisions
+migrations:
+- id: 0001_create_users
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: username
+        type: text
+        nullable: true
+      - name: age
+        type: text
+        nullable: true
+decisions:
+- clarification_id: rename_col:users:username
+  answer:
+    type: rename_to
+    value: handle
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: handle
+        type: text
+        nullable: true
+      - name: age
+        type: integer
+        nullable: true
+expect_pending_clarifications:
+- id: typecast:users:age
+  severity: warning
+  kind:
+    type: type_cast
+    table: users
+    column: age
+    from: text
+    to: integer

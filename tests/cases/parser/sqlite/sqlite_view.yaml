@@ -1,0 +1,14 @@
+---
+description: SQLite CREATE VIEW lowers into ViewDef.
+dialect: sqlite
+sql: |
+  CREATE VIEW active_users AS SELECT id, email FROM users WHERE active = 1;
+expect_entities:
+- kind: view
+  name: active_users
+expect_schema:
+  tables: {}
+  views:
+    active_users:
+      name: active_users
+      definition: SELECT id, email FROM users WHERE active = 1

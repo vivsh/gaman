@@ -394,18 +394,6 @@ impl SchemaBuilder {
         let dialect = self.dialect;
         Ok(self.build().prepare(dialect)?)
     }
-
-    /// Load schema from a `.yaml`, `.sql`, or directory path.
-    #[cfg(feature = "fs")]
-    pub fn load_file(self, path: impl AsRef<std::path::Path>) -> Result<Schema, SchemaLoadError> {
-        Schema::from_file(path.as_ref())
-    }
-
-    /// Load schema from a directory of `.yaml` or `.sql` files (merged in alphabetical order).
-    #[cfg(feature = "fs")]
-    pub fn load_dir(self, path: impl AsRef<std::path::Path>) -> Result<Schema, SchemaLoadError> {
-        Schema::from_dir(path.as_ref())
-    }
 }
 
 /// Allows both `Schema` and `Result<Schema, E>` to be returned from the `with_schema` closure.

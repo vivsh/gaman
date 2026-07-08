@@ -107,7 +107,7 @@ impl IntoTable for PreparedUser {
 }
 
 #[test]
-fn prepare_preserves_unknown_postgres_type_for_later_disambiguation() {
+fn prepare_preserves_unknown_postgres_type_for_later_clarification() {
     let schema = Schema::from_yaml_str_for_dialect(
         r#"
 tables:
@@ -166,7 +166,6 @@ tables:
     assert!(err.to_string().contains("unknown column 'missing'"));
 }
 
-#[cfg(feature = "sqlite")]
 #[test]
 fn prepare_normalizes_sqlite_type_aliases() {
     let schema = Schema::from_yaml_str_for_dialect(
@@ -191,7 +190,6 @@ tables:
     assert_eq!(columns[2].col_type, "text");
 }
 
-#[cfg(feature = "sqlite")]
 #[test]
 fn prepare_rejects_sqlite_unsupported_features() {
     let err = Schema::from_yaml_str_for_dialect(

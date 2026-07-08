@@ -55,8 +55,8 @@ pub trait Environment: Send + Sync {
         &'a self,
     ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor + Send>, EnvironmentError>>;
 
-    /// Returns the selected SQL dialect, defaulting to Postgres when absent.
+    /// Returns the selected SQL dialect.
     fn dialect(&self) -> Dialect {
-        self.config().dialect().unwrap_or(Dialect::Postgres)
+        self.config().dialect
     }
 }

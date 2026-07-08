@@ -4,7 +4,7 @@ features:
     evidence:
     - case: unknown_type_keep_type_action
       description: KeepType preserves an explicitly approved custom type in the generated migration.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   answer.not_null_default:
@@ -12,12 +12,12 @@ features:
     evidence:
     - case: not_null_add_default_action
       description: NotNullDefault records a default for a newly added non-null column.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
     - case: not_null_change_default_action
       description: NotNullDefault for a nullability change emits a backfill statement before altering the column.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   answer.not_null_manual:
@@ -25,12 +25,12 @@ features:
     evidence:
     - case: not_null_change_manual_action
       description: NotNullManual for a nullability change acknowledges the risk and leaves the alter unchanged.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
     - case: not_null_manual_action
       description: NotNullManual acknowledges the risk and leaves the non-null add unchanged for manual handling.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   answer.not_null_nullable:
@@ -38,12 +38,12 @@ features:
     evidence:
     - case: not_null_add_nullable_action
       description: NotNullNullable keeps a newly added column nullable.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
     - case: not_null_change_nullable_action
       description: NotNullNullable for a nullability change keeps the target column nullable.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   answer.rename_no:
@@ -51,22 +51,27 @@ features:
     evidence:
     - case: rename_enum_value_no_action
       description: RenameNo for an enum value leaves enum replacement operations unchanged.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
     - case: rename_no_action
       description: RenameNo keeps a column drop/add pair instead of rewriting it to a rename.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
     - case: rename_table_no_action
       description: RenameNo for a table leaves drop/create operations unchanged.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   answer.rename_to:
     status: success
     evidence:
+    - case: rename_enum_value_action
+      description: RenameTo rewrites an enum label replacement into a rename-enum-value operation.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
     - case: rename_column_with_decision
       description: A rename-column decision rewrites drop/add into a rename operation.
       group: diff
@@ -75,11 +80,6 @@ features:
     - case: rename_table_with_decision
       description: A rename-table decision rewrites drop/create into a rename operation.
       group: diff
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_enum_value_action
-      description: RenameTo rewrites an enum label replacement into a rename-enum-value operation.
-      group: disambiguator
       kind: schema_to_migration
       dialect: postgres
   answer.type_cast:
@@ -95,7 +95,7 @@ features:
     evidence:
     - case: type_cast_implicit_action
       description: TypeCastImplicit allows a type change without an explicit cast expression.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   answer.use_type:
@@ -103,7 +103,7 @@ features:
     evidence:
     - case: unknown_type_use_type_action
       description: UseType rewrites an unknown type to a suggested canonical type before diffing.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   clarification.not_null_add:
@@ -111,7 +111,7 @@ features:
     evidence:
     - case: not_null_add_prompt
       description: Adding a non-null column without a default emits a structured not-null-add clarification.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   clarification.not_null_change:
@@ -119,7 +119,7 @@ features:
     evidence:
     - case: not_null_change_prompt
       description: Tightening nullability emits a structured not-null-change clarification.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   clarification.rename_column:
@@ -127,7 +127,7 @@ features:
     evidence:
     - case: rename_column_prompt
       description: Column drop/add emits a structured rename-column clarification.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   clarification.rename_enum_value:
@@ -135,7 +135,7 @@ features:
     evidence:
     - case: rename_enum_value_prompt
       description: Enum label replacement emits a structured rename-enum-value clarification.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   clarification.rename_table:
@@ -143,7 +143,7 @@ features:
     evidence:
     - case: rename_table_prompt
       description: Table drop/create emits a structured rename-table clarification.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   clarification.type_cast:
@@ -151,7 +151,7 @@ features:
     evidence:
     - case: type_cast_prompt
       description: Changing a column type emits a structured type-cast clarification.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   clarification.unknown_type:
@@ -159,7 +159,7 @@ features:
     evidence:
     - case: unknown_type_prompt
       description: Unknown type emits a structured type clarification with deterministic suggestions.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   diff.diff_add_non_null_column_with_default:
@@ -370,6 +370,134 @@ features:
       group: end_to_end
       kind: end_to_end
       dialect: postgres
+  group.clarifier:
+    status: success
+    evidence:
+    - case: duplicate_decision_error
+      description: Duplicate clarifier decisions fail before rewriting operations.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: empty_cast_error
+      description: Empty type-cast decisions fail before operation rewriting.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: empty_default_error
+      description: Empty not-null default decisions fail before operation rewriting.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: invalid_candidate_error
+      description: A rename decision with an invalid candidate fails deterministically.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_add_default_action
+      description: NotNullDefault records a default for a newly added non-null column.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_add_nullable_action
+      description: NotNullNullable keeps a newly added column nullable.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_add_prompt
+      description: Adding a non-null column without a default emits a structured not-null-add clarification.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_default_action
+      description: NotNullDefault for a nullability change emits a backfill statement before altering the column.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_manual_action
+      description: NotNullManual for a nullability change acknowledges the risk and leaves the alter unchanged.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_nullable_action
+      description: NotNullNullable for a nullability change keeps the target column nullable.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_prompt
+      description: Tightening nullability emits a structured not-null-change clarification.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_manual_action
+      description: NotNullManual acknowledges the risk and leaves the non-null add unchanged for manual handling.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: partial_decision_pending
+      description: Partial decisions return only the still-pending clarification set.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_column_prompt
+      description: Column drop/add emits a structured rename-column clarification.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_enum_value_action
+      description: RenameTo rewrites an enum label replacement into a rename-enum-value operation.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_enum_value_no_action
+      description: RenameNo for an enum value leaves enum replacement operations unchanged.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_enum_value_prompt
+      description: Enum label replacement emits a structured rename-enum-value clarification.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_no_action
+      description: RenameNo keeps a column drop/add pair instead of rewriting it to a rename.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_table_no_action
+      description: RenameNo for a table leaves drop/create operations unchanged.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_table_prompt
+      description: Table drop/create emits a structured rename-table clarification.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: type_cast_implicit_action
+      description: TypeCastImplicit allows a type change without an explicit cast expression.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: type_cast_prompt
+      description: Changing a column type emits a structured type-cast clarification.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_keep_type_action
+      description: KeepType preserves an explicitly approved custom type in the generated migration.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_prompt
+      description: Unknown type emits a structured type clarification with deterministic suggestions.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_use_type_action
+      description: UseType rewrites an unknown type to a suggested canonical type before diffing.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
   group.diff:
     status: success
     evidence:
@@ -498,134 +626,6 @@ features:
       group: diff
       kind: schema_to_migration
       dialect: postgres
-  group.disambiguator:
-    status: success
-    evidence:
-    - case: duplicate_decision_error
-      description: Duplicate disambiguator decisions fail before rewriting operations.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: empty_cast_error
-      description: Empty type-cast decisions fail before operation rewriting.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: empty_default_error
-      description: Empty not-null default decisions fail before operation rewriting.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: invalid_candidate_error
-      description: A rename decision with an invalid candidate fails deterministically.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_add_default_action
-      description: NotNullDefault records a default for a newly added non-null column.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_add_nullable_action
-      description: NotNullNullable keeps a newly added column nullable.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_add_prompt
-      description: Adding a non-null column without a default emits a structured not-null-add clarification.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_change_default_action
-      description: NotNullDefault for a nullability change emits a backfill statement before altering the column.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_change_manual_action
-      description: NotNullManual for a nullability change acknowledges the risk and leaves the alter unchanged.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_change_nullable_action
-      description: NotNullNullable for a nullability change keeps the target column nullable.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_change_prompt
-      description: Tightening nullability emits a structured not-null-change clarification.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_manual_action
-      description: NotNullManual acknowledges the risk and leaves the non-null add unchanged for manual handling.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: partial_decision_pending
-      description: Partial decisions return only the still-pending clarification set.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_column_prompt
-      description: Column drop/add emits a structured rename-column clarification.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_enum_value_action
-      description: RenameTo rewrites an enum label replacement into a rename-enum-value operation.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_enum_value_no_action
-      description: RenameNo for an enum value leaves enum replacement operations unchanged.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_enum_value_prompt
-      description: Enum label replacement emits a structured rename-enum-value clarification.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_no_action
-      description: RenameNo keeps a column drop/add pair instead of rewriting it to a rename.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_table_no_action
-      description: RenameNo for a table leaves drop/create operations unchanged.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_table_prompt
-      description: Table drop/create emits a structured rename-table clarification.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: type_cast_implicit_action
-      description: TypeCastImplicit allows a type change without an explicit cast expression.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: type_cast_prompt
-      description: Changing a column type emits a structured type-cast clarification.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: unknown_type_keep_type_action
-      description: KeepType preserves an explicitly approved custom type in the generated migration.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: unknown_type_prompt
-      description: Unknown type emits a structured type clarification with deterministic suggestions.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: unknown_type_use_type_action
-      description: UseType rewrites an unknown type to a suggested canonical type before diffing.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
   group.end_to_end:
     status: success
     evidence:
@@ -638,159 +638,159 @@ features:
     status: success
     evidence:
     - case: mysql_create_fulltext_index_parse_error
-      description: sqlparser does not parse MySQL FULLTEXT index creation.
+      description: MySQL fulltext index lowering is unsupported while MySQL remains a stub dialect.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: mysql
     - case: mysql_create_function_parse_error
-      description: sqlparser does not parse MySQL routine function syntax.
+      description: MySQL routine lowering is unsupported while MySQL remains a stub dialect.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: mysql
     - case: mysql_create_prefix_index
-      description: MySQL parser accepts prefix indexes as parser-only coverage.
+      description: MySQL prefix index lowering is unsupported while MySQL remains a stub dialect.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: mysql
     - case: mysql_create_table_basic
-      description: MySQL parser accepts table options and generated columns.
+      description: MySQL table lowering is unsupported while MySQL remains a stub dialect.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: mysql
     - case: mysql_create_table_composite_fk
-      description: MySQL parser accepts composite keys even though Gaman does not lower MySQL yet.
+      description: MySQL composite-key lowering is unsupported while MySQL remains a stub dialect.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: mysql
     - case: mysql_create_trigger
-      description: MySQL parser accepts simple triggers.
+      description: MySQL trigger lowering is unsupported while MySQL remains a stub dialect.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: mysql
     - case: postgres_comment_unsupported
-      description: PostgreSQL parser accepts COMMENT but Gaman does not model it.
+      description: PostgreSQL COMMENT is rejected because parser input is CREATE-only.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_create_collation_unsupported
-      description: PostgreSQL parser accepts collations but Gaman does not model them.
+      description: PostgreSQL CREATE COLLATION is rejected because Schema does not model collations.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_create_event_trigger_parse_error
-      description: sqlparser does not parse PostgreSQL event triggers.
+      description: PostgreSQL event triggers are reported as parse errors.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_create_function
       description: PostgreSQL parser and Gaman lowering handle a simple SQL function.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_create_materialized_view_tail_parse_error
-      description: sqlparser parses part of materialized views but rejects WITH DATA tail syntax.
+      description: PostgreSQL materialized view WITH DATA syntax is reported as a parse error.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_create_partial_index
       description: PostgreSQL parser and lowering preserve partial index predicates.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_create_policy_unsupported
-      description: PostgreSQL parser accepts policies but Gaman does not model them.
+      description: PostgreSQL CREATE POLICY is rejected because Schema does not model policies.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_create_publication_parse_error
-      description: sqlparser does not parse PostgreSQL logical replication publications.
+      description: PostgreSQL logical replication publications are reported as parse errors.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_create_table_basic
       description: PostgreSQL parser and Gaman lowering handle a basic table.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_create_table_composite_fk
       description: PostgreSQL parser and lowering preserve composite table-level foreign keys.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_create_table_exclude_parse_error
-      description: sqlparser still cannot parse PostgreSQL exclusion constraints.
+      description: PostgreSQL exclusion constraints are reported as parse errors.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_create_table_generated_column
-      description: PostgreSQL generated columns parse; current SQL lowering records the base column shape only.
+      description: PostgreSQL parser lowers generated columns with their expression.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_create_table_identity
       description: PostgreSQL parser accepts identity columns; lowering records the base column shape.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_create_trigger
-      description: sqlparser parses PostgreSQL CREATE TRIGGER but Gaman lowering does not model standalone trigger DDL yet.
+      description: PostgreSQL parser lowers a function-backed CREATE TRIGGER onto its table.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_create_view
       description: PostgreSQL parser and lowering preserve simple views.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: postgres_grant_unsupported
-      description: PostgreSQL parser accepts GRANT but Gaman does not model grants.
+      description: PostgreSQL GRANT is rejected because parser input is CREATE-only.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
     - case: sqlite_alter_table_drop_column
-      description: SQLite parser accepts DROP COLUMN syntax.
+      description: SQLite ALTER TABLE DROP COLUMN is rejected because parser input is CREATE-only.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
     - case: sqlite_alter_table_rename
-      description: SQLite parser accepts ALTER TABLE RENAME syntax.
+      description: SQLite ALTER TABLE RENAME is rejected because parser input is CREATE-only.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
     - case: sqlite_create_expression_index
-      description: sqlparser parses SQLite expression indexes; Gaman lowering is intentionally not enabled for SQLite parser fixtures yet.
+      description: SQLite parser lowers expression indexes into table index metadata.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
     - case: sqlite_create_generated_column
       description: SQLite parser accepts generated columns.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
     - case: sqlite_create_partial_index
       description: SQLite parser accepts partial indexes.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
     - case: sqlite_create_strict_table
-      description: SQLite parser accepts STRICT tables; Gaman SQL lowering is PostgreSQL-only.
+      description: SQLite parser lowers STRICT table definitions into schema state.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
     - case: sqlite_create_table_composite_fk
       description: SQLite parser accepts composite primary keys and composite foreign keys.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
     - case: sqlite_create_trigger
-      description: SQLite parser accepts trigger bodies.
+      description: SQLite parser lowers trigger bodies onto their target table.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
     - case: sqlite_create_without_rowid
       description: SQLite parser accepts WITHOUT ROWID tables.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
   group.replay:
     status: success
@@ -1284,9 +1284,292 @@ features:
       group: unsupported
       kind: migration_to_sql
       dialect: sqlite
+  kind.parser:
+    status: success
+    evidence:
+    - case: mysql_create_fulltext_index_parse_error
+      description: MySQL fulltext index lowering is unsupported while MySQL remains a stub dialect.
+      group: parser
+      kind: parser
+      dialect: mysql
+    - case: mysql_create_function_parse_error
+      description: MySQL routine lowering is unsupported while MySQL remains a stub dialect.
+      group: parser
+      kind: parser
+      dialect: mysql
+    - case: mysql_create_prefix_index
+      description: MySQL prefix index lowering is unsupported while MySQL remains a stub dialect.
+      group: parser
+      kind: parser
+      dialect: mysql
+    - case: mysql_create_table_basic
+      description: MySQL table lowering is unsupported while MySQL remains a stub dialect.
+      group: parser
+      kind: parser
+      dialect: mysql
+    - case: mysql_create_table_composite_fk
+      description: MySQL composite-key lowering is unsupported while MySQL remains a stub dialect.
+      group: parser
+      kind: parser
+      dialect: mysql
+    - case: mysql_create_trigger
+      description: MySQL trigger lowering is unsupported while MySQL remains a stub dialect.
+      group: parser
+      kind: parser
+      dialect: mysql
+    - case: postgres_comment_unsupported
+      description: PostgreSQL COMMENT is rejected because parser input is CREATE-only.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_create_collation_unsupported
+      description: PostgreSQL CREATE COLLATION is rejected because Schema does not model collations.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_create_event_trigger_parse_error
+      description: PostgreSQL event triggers are reported as parse errors.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_create_function
+      description: PostgreSQL parser and Gaman lowering handle a simple SQL function.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_create_materialized_view_tail_parse_error
+      description: PostgreSQL materialized view WITH DATA syntax is reported as a parse error.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_create_partial_index
+      description: PostgreSQL parser and lowering preserve partial index predicates.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_create_policy_unsupported
+      description: PostgreSQL CREATE POLICY is rejected because Schema does not model policies.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_create_publication_parse_error
+      description: PostgreSQL logical replication publications are reported as parse errors.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_create_table_basic
+      description: PostgreSQL parser and Gaman lowering handle a basic table.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_create_table_composite_fk
+      description: PostgreSQL parser and lowering preserve composite table-level foreign keys.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_create_table_exclude_parse_error
+      description: PostgreSQL exclusion constraints are reported as parse errors.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_create_table_generated_column
+      description: PostgreSQL parser lowers generated columns with their expression.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_create_table_identity
+      description: PostgreSQL parser accepts identity columns; lowering records the base column shape.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_create_trigger
+      description: PostgreSQL parser lowers a function-backed CREATE TRIGGER onto its table.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_create_view
+      description: PostgreSQL parser and lowering preserve simple views.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: postgres_grant_unsupported
+      description: PostgreSQL GRANT is rejected because parser input is CREATE-only.
+      group: parser
+      kind: parser
+      dialect: postgres
+    - case: sqlite_alter_table_drop_column
+      description: SQLite ALTER TABLE DROP COLUMN is rejected because parser input is CREATE-only.
+      group: parser
+      kind: parser
+      dialect: sqlite
+    - case: sqlite_alter_table_rename
+      description: SQLite ALTER TABLE RENAME is rejected because parser input is CREATE-only.
+      group: parser
+      kind: parser
+      dialect: sqlite
+    - case: sqlite_create_expression_index
+      description: SQLite parser lowers expression indexes into table index metadata.
+      group: parser
+      kind: parser
+      dialect: sqlite
+    - case: sqlite_create_generated_column
+      description: SQLite parser accepts generated columns.
+      group: parser
+      kind: parser
+      dialect: sqlite
+    - case: sqlite_create_partial_index
+      description: SQLite parser accepts partial indexes.
+      group: parser
+      kind: parser
+      dialect: sqlite
+    - case: sqlite_create_strict_table
+      description: SQLite parser lowers STRICT table definitions into schema state.
+      group: parser
+      kind: parser
+      dialect: sqlite
+    - case: sqlite_create_table_composite_fk
+      description: SQLite parser accepts composite primary keys and composite foreign keys.
+      group: parser
+      kind: parser
+      dialect: sqlite
+    - case: sqlite_create_trigger
+      description: SQLite parser lowers trigger bodies onto their target table.
+      group: parser
+      kind: parser
+      dialect: sqlite
+    - case: sqlite_create_without_rowid
+      description: SQLite parser accepts WITHOUT ROWID tables.
+      group: parser
+      kind: parser
+      dialect: sqlite
   kind.schema_to_migration:
     status: success
     evidence:
+    - case: duplicate_decision_error
+      description: Duplicate clarifier decisions fail before rewriting operations.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: empty_cast_error
+      description: Empty type-cast decisions fail before operation rewriting.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: empty_default_error
+      description: Empty not-null default decisions fail before operation rewriting.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: invalid_candidate_error
+      description: A rename decision with an invalid candidate fails deterministically.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_add_default_action
+      description: NotNullDefault records a default for a newly added non-null column.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_add_nullable_action
+      description: NotNullNullable keeps a newly added column nullable.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_add_prompt
+      description: Adding a non-null column without a default emits a structured not-null-add clarification.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_default_action
+      description: NotNullDefault for a nullability change emits a backfill statement before altering the column.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_manual_action
+      description: NotNullManual for a nullability change acknowledges the risk and leaves the alter unchanged.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_nullable_action
+      description: NotNullNullable for a nullability change keeps the target column nullable.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_change_prompt
+      description: Tightening nullability emits a structured not-null-change clarification.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: not_null_manual_action
+      description: NotNullManual acknowledges the risk and leaves the non-null add unchanged for manual handling.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: partial_decision_pending
+      description: Partial decisions return only the still-pending clarification set.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_column_prompt
+      description: Column drop/add emits a structured rename-column clarification.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_enum_value_action
+      description: RenameTo rewrites an enum label replacement into a rename-enum-value operation.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_enum_value_no_action
+      description: RenameNo for an enum value leaves enum replacement operations unchanged.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_enum_value_prompt
+      description: Enum label replacement emits a structured rename-enum-value clarification.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_no_action
+      description: RenameNo keeps a column drop/add pair instead of rewriting it to a rename.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_table_no_action
+      description: RenameNo for a table leaves drop/create operations unchanged.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: rename_table_prompt
+      description: Table drop/create emits a structured rename-table clarification.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: type_cast_implicit_action
+      description: TypeCastImplicit allows a type change without an explicit cast expression.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: type_cast_prompt
+      description: Changing a column type emits a structured type-cast clarification.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_keep_type_action
+      description: KeepType preserves an explicitly approved custom type in the generated migration.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_prompt
+      description: Unknown type emits a structured type clarification with deterministic suggestions.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
+    - case: unknown_type_use_type_action
+      description: UseType rewrites an unknown type to a suggested canonical type before diffing.
+      group: clarifier
+      kind: schema_to_migration
+      dialect: postgres
     - case: add_non_null_column_with_default
       description: Diff adds a non-null column safely when a default is provided.
       group: diff
@@ -1412,131 +1695,6 @@ features:
       group: diff
       kind: schema_to_migration
       dialect: postgres
-    - case: duplicate_decision_error
-      description: Duplicate disambiguator decisions fail before rewriting operations.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: empty_cast_error
-      description: Empty type-cast decisions fail before operation rewriting.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: empty_default_error
-      description: Empty not-null default decisions fail before operation rewriting.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: invalid_candidate_error
-      description: A rename decision with an invalid candidate fails deterministically.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_add_default_action
-      description: NotNullDefault records a default for a newly added non-null column.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_add_nullable_action
-      description: NotNullNullable keeps a newly added column nullable.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_add_prompt
-      description: Adding a non-null column without a default emits a structured not-null-add clarification.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_change_default_action
-      description: NotNullDefault for a nullability change emits a backfill statement before altering the column.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_change_manual_action
-      description: NotNullManual for a nullability change acknowledges the risk and leaves the alter unchanged.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_change_nullable_action
-      description: NotNullNullable for a nullability change keeps the target column nullable.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_change_prompt
-      description: Tightening nullability emits a structured not-null-change clarification.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: not_null_manual_action
-      description: NotNullManual acknowledges the risk and leaves the non-null add unchanged for manual handling.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: partial_decision_pending
-      description: Partial decisions return only the still-pending clarification set.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_column_prompt
-      description: Column drop/add emits a structured rename-column clarification.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_enum_value_action
-      description: RenameTo rewrites an enum label replacement into a rename-enum-value operation.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_enum_value_no_action
-      description: RenameNo for an enum value leaves enum replacement operations unchanged.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_enum_value_prompt
-      description: Enum label replacement emits a structured rename-enum-value clarification.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_no_action
-      description: RenameNo keeps a column drop/add pair instead of rewriting it to a rename.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_table_no_action
-      description: RenameNo for a table leaves drop/create operations unchanged.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: rename_table_prompt
-      description: Table drop/create emits a structured rename-table clarification.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: type_cast_implicit_action
-      description: TypeCastImplicit allows a type change without an explicit cast expression.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: type_cast_prompt
-      description: Changing a column type emits a structured type-cast clarification.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: unknown_type_keep_type_action
-      description: KeepType preserves an explicitly approved custom type in the generated migration.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: unknown_type_prompt
-      description: Unknown type emits a structured type clarification with deterministic suggestions.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
-    - case: unknown_type_use_type_action
-      description: UseType rewrites an unknown type to a suggested canonical type before diffing.
-      group: disambiguator
-      kind: schema_to_migration
-      dialect: postgres
     - case: replay_invalid_migration_id
       description: Migration generation rejects invalid generated migration ids.
       group: replay
@@ -1587,164 +1745,6 @@ features:
       group: validation
       kind: schema_to_migration
       dialect: postgres
-  kind.sql_parse:
-    status: success
-    evidence:
-    - case: mysql_create_fulltext_index_parse_error
-      description: sqlparser does not parse MySQL FULLTEXT index creation.
-      group: parser
-      kind: sql_parse
-      dialect: mysql
-    - case: mysql_create_function_parse_error
-      description: sqlparser does not parse MySQL routine function syntax.
-      group: parser
-      kind: sql_parse
-      dialect: mysql
-    - case: mysql_create_prefix_index
-      description: MySQL parser accepts prefix indexes as parser-only coverage.
-      group: parser
-      kind: sql_parse
-      dialect: mysql
-    - case: mysql_create_table_basic
-      description: MySQL parser accepts table options and generated columns.
-      group: parser
-      kind: sql_parse
-      dialect: mysql
-    - case: mysql_create_table_composite_fk
-      description: MySQL parser accepts composite keys even though Gaman does not lower MySQL yet.
-      group: parser
-      kind: sql_parse
-      dialect: mysql
-    - case: mysql_create_trigger
-      description: MySQL parser accepts simple triggers.
-      group: parser
-      kind: sql_parse
-      dialect: mysql
-    - case: postgres_comment_unsupported
-      description: PostgreSQL parser accepts COMMENT but Gaman does not model it.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_create_collation_unsupported
-      description: PostgreSQL parser accepts collations but Gaman does not model them.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_create_event_trigger_parse_error
-      description: sqlparser does not parse PostgreSQL event triggers.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_create_function
-      description: PostgreSQL parser and Gaman lowering handle a simple SQL function.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_create_materialized_view_tail_parse_error
-      description: sqlparser parses part of materialized views but rejects WITH DATA tail syntax.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_create_partial_index
-      description: PostgreSQL parser and lowering preserve partial index predicates.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_create_policy_unsupported
-      description: PostgreSQL parser accepts policies but Gaman does not model them.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_create_publication_parse_error
-      description: sqlparser does not parse PostgreSQL logical replication publications.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_create_table_basic
-      description: PostgreSQL parser and Gaman lowering handle a basic table.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_create_table_composite_fk
-      description: PostgreSQL parser and lowering preserve composite table-level foreign keys.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_create_table_exclude_parse_error
-      description: sqlparser still cannot parse PostgreSQL exclusion constraints.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_create_table_generated_column
-      description: PostgreSQL generated columns parse; current SQL lowering records the base column shape only.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_create_table_identity
-      description: PostgreSQL parser accepts identity columns; lowering records the base column shape.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_create_trigger
-      description: sqlparser parses PostgreSQL CREATE TRIGGER but Gaman lowering does not model standalone trigger DDL yet.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_create_view
-      description: PostgreSQL parser and lowering preserve simple views.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: postgres_grant_unsupported
-      description: PostgreSQL parser accepts GRANT but Gaman does not model grants.
-      group: parser
-      kind: sql_parse
-      dialect: postgres
-    - case: sqlite_alter_table_drop_column
-      description: SQLite parser accepts DROP COLUMN syntax.
-      group: parser
-      kind: sql_parse
-      dialect: sqlite
-    - case: sqlite_alter_table_rename
-      description: SQLite parser accepts ALTER TABLE RENAME syntax.
-      group: parser
-      kind: sql_parse
-      dialect: sqlite
-    - case: sqlite_create_expression_index
-      description: sqlparser parses SQLite expression indexes; Gaman lowering is intentionally not enabled for SQLite parser fixtures yet.
-      group: parser
-      kind: sql_parse
-      dialect: sqlite
-    - case: sqlite_create_generated_column
-      description: SQLite parser accepts generated columns.
-      group: parser
-      kind: sql_parse
-      dialect: sqlite
-    - case: sqlite_create_partial_index
-      description: SQLite parser accepts partial indexes.
-      group: parser
-      kind: sql_parse
-      dialect: sqlite
-    - case: sqlite_create_strict_table
-      description: SQLite parser accepts STRICT tables; Gaman SQL lowering is PostgreSQL-only.
-      group: parser
-      kind: sql_parse
-      dialect: sqlite
-    - case: sqlite_create_table_composite_fk
-      description: SQLite parser accepts composite primary keys and composite foreign keys.
-      group: parser
-      kind: sql_parse
-      dialect: sqlite
-    - case: sqlite_create_trigger
-      description: SQLite parser accepts trigger bodies.
-      group: parser
-      kind: sql_parse
-      dialect: sqlite
-    - case: sqlite_create_without_rowid
-      description: SQLite parser accepts WITHOUT ROWID tables.
-      group: parser
-      kind: sql_parse
-      dialect: sqlite
   kind.sql_to_schema:
     status: success
     evidence:
@@ -1859,7 +1859,7 @@ features:
     - case: postgres_create_function
       description: PostgreSQL parser and Gaman lowering handle a simple SQL function.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   operation.create_table:
     status: success
@@ -1883,7 +1883,7 @@ features:
     - case: postgres_create_view
       description: PostgreSQL parser and lowering preserve simple views.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   operation.drop_column:
     status: success
@@ -1978,7 +1978,7 @@ features:
     evidence:
     - case: rename_enum_value_action
       description: RenameTo rewrites an enum label replacement into a rename-enum-value operation.
-      group: disambiguator
+      group: clarifier
       kind: schema_to_migration
       dialect: postgres
   operation.rename_table:
@@ -2009,73 +2009,73 @@ features:
     status: success
     evidence:
     - case: mysql_create_fulltext_index_parse_error
-      description: sqlparser does not parse MySQL FULLTEXT index creation.
+      description: MySQL fulltext index lowering is unsupported while MySQL remains a stub dialect.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: mysql
   parser.mysql.parser_mysql_create_function_parse_error:
     status: success
     evidence:
     - case: mysql_create_function_parse_error
-      description: sqlparser does not parse MySQL routine function syntax.
+      description: MySQL routine lowering is unsupported while MySQL remains a stub dialect.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: mysql
   parser.mysql.parser_mysql_create_prefix_index:
     status: success
     evidence:
     - case: mysql_create_prefix_index
-      description: MySQL parser accepts prefix indexes as parser-only coverage.
+      description: MySQL prefix index lowering is unsupported while MySQL remains a stub dialect.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: mysql
   parser.mysql.parser_mysql_create_table_basic:
     status: success
     evidence:
     - case: mysql_create_table_basic
-      description: MySQL parser accepts table options and generated columns.
+      description: MySQL table lowering is unsupported while MySQL remains a stub dialect.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: mysql
   parser.mysql.parser_mysql_create_table_composite_fk:
     status: success
     evidence:
     - case: mysql_create_table_composite_fk
-      description: MySQL parser accepts composite keys even though Gaman does not lower MySQL yet.
+      description: MySQL composite-key lowering is unsupported while MySQL remains a stub dialect.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: mysql
   parser.mysql.parser_mysql_create_trigger:
     status: success
     evidence:
     - case: mysql_create_trigger
-      description: MySQL parser accepts simple triggers.
+      description: MySQL trigger lowering is unsupported while MySQL remains a stub dialect.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: mysql
   parser.postgres.parser_postgres_comment_unsupported:
     status: success
     evidence:
     - case: postgres_comment_unsupported
-      description: PostgreSQL parser accepts COMMENT but Gaman does not model it.
+      description: PostgreSQL COMMENT is rejected because parser input is CREATE-only.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_create_collation_unsupported:
     status: success
     evidence:
     - case: postgres_create_collation_unsupported
-      description: PostgreSQL parser accepts collations but Gaman does not model them.
+      description: PostgreSQL CREATE COLLATION is rejected because Schema does not model collations.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_create_event_trigger_parse_error:
     status: success
     evidence:
     - case: postgres_create_event_trigger_parse_error
-      description: sqlparser does not parse PostgreSQL event triggers.
+      description: PostgreSQL event triggers are reported as parse errors.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_create_function:
     status: success
@@ -2083,15 +2083,15 @@ features:
     - case: postgres_create_function
       description: PostgreSQL parser and Gaman lowering handle a simple SQL function.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_create_materialized_view_tail_parse_error:
     status: success
     evidence:
     - case: postgres_create_materialized_view_tail_parse_error
-      description: sqlparser parses part of materialized views but rejects WITH DATA tail syntax.
+      description: PostgreSQL materialized view WITH DATA syntax is reported as a parse error.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_create_partial_index:
     status: success
@@ -2099,23 +2099,23 @@ features:
     - case: postgres_create_partial_index
       description: PostgreSQL parser and lowering preserve partial index predicates.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_create_policy_unsupported:
     status: success
     evidence:
     - case: postgres_create_policy_unsupported
-      description: PostgreSQL parser accepts policies but Gaman does not model them.
+      description: PostgreSQL CREATE POLICY is rejected because Schema does not model policies.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_create_publication_parse_error:
     status: success
     evidence:
     - case: postgres_create_publication_parse_error
-      description: sqlparser does not parse PostgreSQL logical replication publications.
+      description: PostgreSQL logical replication publications are reported as parse errors.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_create_table_basic:
     status: success
@@ -2123,7 +2123,7 @@ features:
     - case: postgres_create_table_basic
       description: PostgreSQL parser and Gaman lowering handle a basic table.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_create_table_composite_fk:
     status: success
@@ -2131,23 +2131,23 @@ features:
     - case: postgres_create_table_composite_fk
       description: PostgreSQL parser and lowering preserve composite table-level foreign keys.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_create_table_exclude_parse_error:
     status: success
     evidence:
     - case: postgres_create_table_exclude_parse_error
-      description: sqlparser still cannot parse PostgreSQL exclusion constraints.
+      description: PostgreSQL exclusion constraints are reported as parse errors.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_create_table_generated_column:
     status: success
     evidence:
     - case: postgres_create_table_generated_column
-      description: PostgreSQL generated columns parse; current SQL lowering records the base column shape only.
+      description: PostgreSQL parser lowers generated columns with their expression.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_create_table_identity:
     status: success
@@ -2155,15 +2155,15 @@ features:
     - case: postgres_create_table_identity
       description: PostgreSQL parser accepts identity columns; lowering records the base column shape.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_create_trigger:
     status: success
     evidence:
     - case: postgres_create_trigger
-      description: sqlparser parses PostgreSQL CREATE TRIGGER but Gaman lowering does not model standalone trigger DDL yet.
+      description: PostgreSQL parser lowers a function-backed CREATE TRIGGER onto its table.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_create_view:
     status: success
@@ -2171,39 +2171,39 @@ features:
     - case: postgres_create_view
       description: PostgreSQL parser and lowering preserve simple views.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.postgres.parser_postgres_grant_unsupported:
     status: success
     evidence:
     - case: postgres_grant_unsupported
-      description: PostgreSQL parser accepts GRANT but Gaman does not model grants.
+      description: PostgreSQL GRANT is rejected because parser input is CREATE-only.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: postgres
   parser.sqlite.parser_sqlite_alter_table_drop_column:
     status: success
     evidence:
     - case: sqlite_alter_table_drop_column
-      description: SQLite parser accepts DROP COLUMN syntax.
+      description: SQLite ALTER TABLE DROP COLUMN is rejected because parser input is CREATE-only.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
   parser.sqlite.parser_sqlite_alter_table_rename:
     status: success
     evidence:
     - case: sqlite_alter_table_rename
-      description: SQLite parser accepts ALTER TABLE RENAME syntax.
+      description: SQLite ALTER TABLE RENAME is rejected because parser input is CREATE-only.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
   parser.sqlite.parser_sqlite_create_expression_index:
     status: success
     evidence:
     - case: sqlite_create_expression_index
-      description: sqlparser parses SQLite expression indexes; Gaman lowering is intentionally not enabled for SQLite parser fixtures yet.
+      description: SQLite parser lowers expression indexes into table index metadata.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
   parser.sqlite.parser_sqlite_create_generated_column:
     status: success
@@ -2211,7 +2211,7 @@ features:
     - case: sqlite_create_generated_column
       description: SQLite parser accepts generated columns.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
   parser.sqlite.parser_sqlite_create_partial_index:
     status: success
@@ -2219,15 +2219,15 @@ features:
     - case: sqlite_create_partial_index
       description: SQLite parser accepts partial indexes.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
   parser.sqlite.parser_sqlite_create_strict_table:
     status: success
     evidence:
     - case: sqlite_create_strict_table
-      description: SQLite parser accepts STRICT tables; Gaman SQL lowering is PostgreSQL-only.
+      description: SQLite parser lowers STRICT table definitions into schema state.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
   parser.sqlite.parser_sqlite_create_table_composite_fk:
     status: success
@@ -2235,15 +2235,15 @@ features:
     - case: sqlite_create_table_composite_fk
       description: SQLite parser accepts composite primary keys and composite foreign keys.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
   parser.sqlite.parser_sqlite_create_trigger:
     status: success
     evidence:
     - case: sqlite_create_trigger
-      description: SQLite parser accepts trigger bodies.
+      description: SQLite parser lowers trigger bodies onto their target table.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
   parser.sqlite.parser_sqlite_create_without_rowid:
     status: success
@@ -2251,7 +2251,7 @@ features:
     - case: sqlite_create_without_rowid
       description: SQLite parser accepts WITHOUT ROWID tables.
       group: parser
-      kind: sql_parse
+      kind: parser
       dialect: sqlite
   renderer.postgres.add_column:
     status: success

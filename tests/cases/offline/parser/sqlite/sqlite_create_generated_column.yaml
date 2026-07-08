@@ -3,9 +3,9 @@ description: SQLite parser accepts generated columns.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.sqlite.parser_sqlite_create_generated_column
-kind: sql_parse
+kind: parser
 parser_dialect: sqlite
 sql: |
   CREATE TABLE users (
@@ -13,5 +13,4 @@ sql: |
       email_norm text GENERATED ALWAYS AS (lower(email)) STORED
   );
 expect_parse: ok
-expect_lowering: unsupported
-expect_error: unsupported
+expect_lowering: ok

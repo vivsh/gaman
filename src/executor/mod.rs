@@ -125,6 +125,19 @@ pub fn connect_environment_executor<'a>(
                     .map_err(|e| ConnectError::Connect(e.to_string()))?;
                 Ok(Box::new(SqliteExecutor::new(conn)) as Box<dyn EnvironmentExecutor + Send>)
             }
+            #[cfg(not(feature = "sqlite"))]
+            (Dialect::Sqlite, TlsMode::NoTls) => {
+                let _ = url;
+                Err(ConnectError::Config(
+                    "sqlite executor is not enabled; rebuild with the 'sqlite' feature".into(),
+                ))
+            }
+            (Dialect::Mysql, _) => {
+                let _ = url;
+                Err(ConnectError::Config(
+                    "mysql executor is not implemented".into(),
+                ))
+            }
         }
     })
 }

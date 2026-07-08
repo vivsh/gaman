@@ -1,0 +1,22 @@
+---
+description: PostgreSQL CREATE INDEX lowers into Index metadata.
+dialect: postgres
+sql: |
+  CREATE TABLE users (email text);
+  CREATE INDEX users_email_idx ON users (email);
+expect_entities:
+- kind: index
+  table: users
+  name: users_email_idx
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: email
+        type: text
+        nullable: true
+      indexes:
+      - name: users_email_idx
+        columns: [email]
+        unique: false

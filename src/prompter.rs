@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, Write};
 
-use gaman_core::disambiguator::{
+use gaman_core::clarifier::{
     Answer, Clarification, Decision, OptionAction, PromptEngine, PromptError, clarification_message,
 };
 
@@ -74,7 +74,7 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use gaman_core::disambiguator::{ClarificationKind, Severity};
+    use gaman_core::clarifier::{ClarificationKind, Severity};
 
     fn rename_column_clarification() -> Clarification {
         Clarification {

@@ -27,6 +27,19 @@ All frontends produce the same internal `Schema` representation:
 - Live database introspection.
 - Replayed migration history.
 
+SQL DDL parsing is a schema-loading frontend, not a migration-history parser.
+It only accepts `CREATE` statements for entity kinds Gaman models in `Schema`:
+tables, columns, constraints, foreign keys, indexes, extensions, triggers,
+functions, views, and enums. `ALTER`, `DROP`, `DELETE`, and other lifecycle or
+DML statements are migration operations, not parser input.
+
+SQL statement segmentation is a separate parser utility. It is dialect-aware,
+tag-free, and runs before AST parsing so statement boundaries can be identified
+even when a downstream parser later rejects an unsupported statement. It supports
+PostgreSQL, SQLite, and MySQL/MariaDB syntax boundaries, but MySQL schema
+lowering and migration rendering remain unsupported until the MySQL dialect is
+implemented deliberately.
+
 For Rust schema input, `TableBuilder` is the canonical table-construction API.
 `IntoTable` is a plain trait that can be implemented manually or by external
 model crates such as Mool. Gaman does not own Rust model derive macros. Derived
@@ -55,7 +68,7 @@ Migration generation depends only on:
 - the desired schema input;
 - the committed migration files;
 - the selected dialect;
-- explicit disambiguation decisions.
+- explicit clarification decisions.
 
 It must not depend on live database state.
 
@@ -123,7 +136,7 @@ feature, Gaman must raise a clear error instead of emitting no-op SQL.
 
 ## Design Principles
 
-- Offline generation, replay, diffing, disambiguation, and SQL rendering are
+- Offline generation, replay, diffing, clarification, and SQL rendering are
   deterministic.
 - Offline features must not require SQLx, Tokio, live database drivers,
   filesystem access, environment variables, terminal I/O, TLS, or executors.
@@ -141,7 +154,7 @@ feature, Gaman must raise a clear error instead of emitting no-op SQL.
 - Migration files are engine-specific. Gaman should support native behavior for
   each dialect instead of forcing a lowest-common-denominator file format.
 - Unsupported and unimplemented features fail as early as possible.
-- Shared code owns graph ordering, replay, diff orchestration, disambiguation,
+- Shared code owns graph ordering, replay, diff orchestration, clarification,
   validation orchestration, and lifecycle.
 - Dialect-specific behavior stays inside dialect modules; executor-specific
   behavior stays inside executor modules.
@@ -272,11 +285,11 @@ prepare previous schema              prepare desired schema
               write migration file
 ```
 
-There are two disambiguation layers:
+There are two clarification layers:
 
-- Type disambiguation runs before diffing because it changes the desired schema
+- Type clarification runs before diffing because it changes the desired schema
   that all frontends share.
-- Operation disambiguation runs after diffing because it resolves ambiguous or
+- Operation clarification runs after diffing because it resolves ambiguous or
   risky operations, such as renames, type casts, and not-null backfills.
 
 Interactive CLI generation may ask for these decisions. Non-interactive
@@ -303,9 +316,10 @@ without opening a database connection.
 
 Rendering uses replayed schema state when an operation needs context. SQLite
 table rebuilds are the primary example: the renderer must know the table shape
-before and after a migration. Therefore `Dialect::operation_to_sql()` remains a
-single-operation convenience API, while context-dependent operations must render
-through `Migrator` or `OfflinePlanner`.
+before and after a migration. Rendering therefore happens at migration level:
+shared code asks the selected dialect to render a migration from a replayed
+schema state. Single-operation rendering is deliberately not part of the public
+API.
 
 If live migration would fail for an unsupported operation, offline SQL rendering
 must fail as well. Partially supported operations should not degrade into empty
@@ -394,7 +408,6 @@ Dialect modules own:
 - native and extension type catalogs;
 - operation reordering;
 - context-aware rendering such as SQLite table rebuilds;
-- tracking-table SQL;
 - unsupported-feature errors.
 
 Executor modules own:
@@ -404,6 +417,13 @@ Executor modules own:
 - transaction commands;
 - lock acquisition and release;
 - live introspection.
+
+Tracking stores own applied-migration state. The default native
+`DatabaseTrackingStore` uses a `gaman_migrations` table, but tracking is a live
+application concern rather than an offline-planning concern. Future browser or
+embedded hosts may provide stores backed by LocalStorage, IndexedDB, or another
+host-managed mechanism without changing offline replay, diffing, or SQL
+planning.
 
 Shared code may ask a dialect to validate or render a migration from a replayed
 schema state. Shared code must not branch on PostgreSQL-specific, SQLite-
@@ -418,23 +438,29 @@ specific, or future MySQL-specific syntax.
 - graph ordering;
 - replay;
 - diffing;
-- disambiguation data structures and resolution;
+- clarification data structures and resolution;
 - dialect canonicalization and SQL rendering;
 - string-based schema and migration parsing;
 - `OfflinePlanner`.
 
+`gaman-core` intentionally has no Cargo features and no filesystem access. It
+accepts strings and in-memory values only. Native file-backed schema loading is
+owned by the root `gaman` crate, which reads files and delegates contents to the
+core string parsers.
+
 The root `gaman` crate is the compatibility facade. Default features expose the
 native CLI and database layer with every currently supported live dialect:
 PostgreSQL and SQLite. `--no-default-features --features offline` exposes
-offline APIs without compiling database drivers. `offline-sqlite` enables
-SQLite rendering without linking the live SQLite executor.
+offline APIs without compiling database drivers. SQLite offline rendering is
+part of the featureless core; `offline-sqlite` is only a temporary compatibility
+alias for `offline`.
 
 Native-only concerns remain outside the offline core:
 
 - SQLx executors;
 - live `inspect_db`;
 - live `verify_db`;
-- locks and tracking installation;
+- locks and tracking stores;
 - filesystem-backed migration sources and writers;
 - CLI parsing, dotenv loading, and terminal prompting.
 
@@ -448,7 +474,6 @@ Offline acceptance targets:
 ```bash
 cargo check -p gaman-core --target wasm32-unknown-unknown
 cargo check -p gaman --no-default-features --features offline --target wasm32-unknown-unknown
-cargo check -p gaman --no-default-features --features offline-sqlite --target wasm32-unknown-unknown
 ```
 
 Offline builds must not compile SQLx, Tokio, argh, dotenvy, native TLS, or
@@ -506,7 +531,7 @@ Lower-priority work:
 Tests should match the architecture:
 
 - Shared tests cover schema preparation, replay, graph ordering, diffing,
-  disambiguation, SQL planning, embedded migrations, and public API behavior.
+  clarification, SQL planning, embedded migrations, and public API behavior.
 - Dialect catalog tests cover alias canonicalization, extension-type recognition,
   typo suggestions, and unknown-type preservation.
 - PostgreSQL tests cover SQL rendering, schema-qualified behavior, live
@@ -526,7 +551,6 @@ cargo test
 cargo test --features sqlite
 cargo test --no-default-features --features sqlite
 cargo check -p gaman --no-default-features --features offline --target wasm32-unknown-unknown
-cargo check -p gaman --no-default-features --features offline-sqlite --target wasm32-unknown-unknown
 cargo clippy --all-targets
 cargo clippy --features sqlite --all-targets
 cargo clippy --no-default-features --features sqlite --all-targets

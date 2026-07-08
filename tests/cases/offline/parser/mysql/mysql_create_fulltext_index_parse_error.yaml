@@ -1,15 +1,15 @@
 ---
-description: sqlparser does not parse MySQL FULLTEXT index creation.
+description: MySQL fulltext index lowering is unsupported while MySQL remains a stub dialect.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.mysql.parser_mysql_create_fulltext_index_parse_error
-kind: sql_parse
+kind: parser
 parser_dialect: mysql
 sql: 'CREATE FULLTEXT INDEX posts_body_ft_idx ON posts (body);
 
 '
 expect_parse: error
 expect_lowering: error
-expect_error: FULLTEXT
+expect_error: unsupported SQL dialect

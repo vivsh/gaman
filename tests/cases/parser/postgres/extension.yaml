@@ -1,0 +1,13 @@
+---
+description: PostgreSQL CREATE EXTENSION lowers into ExtensionDef.
+dialect: postgres
+sql: |
+  CREATE EXTENSION pgcrypto;
+expect_entities:
+- kind: extension
+  name: pgcrypto
+expect_schema:
+  tables: {}
+  extensions:
+    pgcrypto:
+      name: pgcrypto

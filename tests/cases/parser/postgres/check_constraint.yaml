@@ -1,0 +1,23 @@
+---
+description: PostgreSQL CHECK constraint lowers into Constraint::Check.
+dialect: postgres
+sql: |
+  CREATE TABLE users (
+      age integer CHECK (age > 0)
+  );
+expect_entities:
+- kind: constraint
+  table: users
+  name: users_age_check
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: age
+        type: integer
+        nullable: true
+      constraints:
+      - kind: check
+        name: users_age_check
+        expression: age > 0

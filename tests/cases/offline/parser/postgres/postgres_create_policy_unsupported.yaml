@@ -1,11 +1,11 @@
 ---
-description: PostgreSQL parser accepts policies but Gaman does not model them.
+description: PostgreSQL CREATE POLICY is rejected because Schema does not model policies.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.postgres.parser_postgres_create_policy_unsupported
-kind: sql_parse
+kind: parser
 parser_dialect: postgres
 sql: |
   CREATE POLICY tenant_isolation
@@ -13,4 +13,4 @@ sql: |
   USING (tenant_id = current_setting('app.tenant_id')::uuid);
 expect_parse: ok
 expect_lowering: unsupported
-expect_error: unsupported
+expect_error: only CREATE statements for modeled schema entities are parsed

@@ -1,0 +1,27 @@
+---
+description: PostgreSQL parser accepts final DDL statement without trailing semicolon.
+dialect: postgres
+sql: |
+  CREATE TABLE users (id integer);
+  CREATE TABLE posts (id integer)
+
+expect_entities:
+- kind: table
+  name: users
+- kind: table
+  name: posts
+
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        nullable: true
+    posts:
+      name: posts
+      columns:
+      - name: id
+        type: integer
+        nullable: true

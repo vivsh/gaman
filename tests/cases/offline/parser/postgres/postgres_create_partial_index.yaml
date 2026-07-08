@@ -3,9 +3,9 @@ description: PostgreSQL parser and lowering preserve partial index predicates.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.postgres.parser_postgres_create_partial_index
-kind: sql_parse
+kind: parser
 parser_dialect: postgres
 sql: |
   CREATE TABLE users (email text, active boolean);

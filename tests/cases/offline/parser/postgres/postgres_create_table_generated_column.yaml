@@ -1,12 +1,11 @@
 ---
-description: PostgreSQL generated columns parse; current SQL lowering records the
-  base column shape only.
+description: PostgreSQL parser lowers generated columns with their expression.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.postgres.parser_postgres_create_table_generated_column
-kind: sql_parse
+kind: parser
 parser_dialect: postgres
 sql: |
   CREATE TABLE users (
@@ -29,3 +28,4 @@ expect_schema:
       - name: email_norm
         type: text
         nullable: true
+        generated: lower(email)

@@ -338,8 +338,11 @@ struct PostgresHarnessEnvironment {
 #[cfg(feature = "postgres")]
 impl PostgresHarnessEnvironment {
     fn new(url: &str, schema: &str) -> Self {
-        let mut config = Config::default();
-        config.database_url = Some(url.to_string());
+        let config = Config {
+            database_url: url.to_string(),
+            dialect: Dialect::Postgres,
+            ..Config::default()
+        };
         Self {
             config: Arc::new(config),
             schema: schema.to_string(),
@@ -356,7 +359,8 @@ struct SqliteHarnessEnvironment {
 impl SqliteHarnessEnvironment {
     fn new(url: &str) -> Self {
         let config = Config {
-            database_url: Some(url.to_string()),
+            database_url: url.to_string(),
+            dialect: Dialect::Sqlite,
             ..Config::default()
         };
         Self {
@@ -376,9 +380,6 @@ impl Environment for SqliteHarnessEnvironment {
     ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor + Send>, EnvironmentError>> {
         let url = self.config.database_url.clone();
         Box::pin(async move {
-            let url = url.ok_or_else(|| {
-                EnvironmentError::Config("sqlite harness database URL is not configured".into())
-            })?;
             let opts = sqlite_connect_options(&url).map_err(EnvironmentError::Connect)?;
             let conn = opts
                 .connect()
@@ -406,11 +407,6 @@ impl Environment for PostgresHarnessEnvironment {
         let url = self.config.database_url.clone();
         let schema = self.schema.clone();
         Box::pin(async move {
-            let url = url.ok_or_else(|| {
-                EnvironmentError::Config(
-                    "POSTGRES_DATABASE_URL is not configured for the harness environment".into(),
-                )
-            })?;
             let opts = url
                 .parse::<PgConnectOptions>()
                 .map_err(|e| EnvironmentError::Connect(e.to_string()))?
@@ -481,7 +477,7 @@ impl OfflineCase {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OfflineSpec {
-    SqlParse {
+    Parser {
         parser_dialect: ParserFixtureDialect,
         sql: String,
         expect_parse: ParseExpectation,
@@ -542,7 +538,7 @@ pub enum OfflineSpec {
 impl OfflineSpec {
     fn validate(&self, case_name: &str) -> Result<(), TestSupportError> {
         match self {
-            Self::SqlParse {
+            Self::Parser {
                 expect_parse,
                 expect_lowering,
                 expect_schema,
@@ -681,10 +677,10 @@ impl OfflineSpec {
         group: &str,
         _path: &Path,
     ) -> Result<(), TestSupportError> {
-        if group == "disambiguator" && !matches!(self, Self::SchemaToMigration { .. }) {
+        if group == "clarifier" && !matches!(self, Self::SchemaToMigration { .. }) {
             return Err(invalid_fixture(
                 case_name,
-                "disambiguator fixtures must use kind: schema_to_migration",
+                "clarifier fixtures must use kind: schema_to_migration",
             ));
         }
         if group == "rollback"
@@ -1367,6 +1363,7 @@ fn canonicalize_default_for_compare(default: &str, dialect: Dialect) -> String {
         Dialect::Postgres => strip_pg_implicit_text_cast(default).to_string(),
         #[cfg(feature = "sqlite")]
         Dialect::Sqlite => default.to_string(),
+        Dialect::Mysql => default.to_string(),
     }
 }
 

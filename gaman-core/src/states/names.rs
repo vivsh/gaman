@@ -1,3 +1,5 @@
+//! Logic for name derivation throughout the crate.
+
 pub fn primary_key(table: &str) -> String {
     format!("{table}_pkey")
 }

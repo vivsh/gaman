@@ -1,0 +1,32 @@
+---
+description: SQLite CREATE TRIGGER lowers statement body into TriggerDef query.
+dialect: sqlite
+sql: |
+  CREATE TABLE users (id integer, created_at text);
+  CREATE TRIGGER users_ai
+  AFTER INSERT ON users
+  BEGIN
+      UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+  END;
+expect_entities:
+- kind: trigger
+  table: users
+  name: users_ai
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: integer
+        nullable: true
+      - name: created_at
+        type: text
+        nullable: true
+      triggers:
+      - name: users_ai
+        timing: after
+        events: [insert]
+        scope: row
+        query: BEGIN UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE id = NEW.id; END
+        language: sql

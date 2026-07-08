@@ -1,0 +1,23 @@
+---
+description: SQLite expression CREATE INDEX records expression columns.
+dialect: sqlite
+sql: |
+  CREATE TABLE users (email text);
+  CREATE INDEX users_lower_email_idx ON users (lower(email)) WHERE email IS NOT NULL;
+expect_entities:
+- kind: index
+  table: users
+  name: users_lower_email_idx
+expect_schema:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: email
+        type: text
+        nullable: true
+      indexes:
+      - name: users_lower_email_idx
+        columns: [lower(email)]
+        unique: false
+        predicate: email IS NOT NULL

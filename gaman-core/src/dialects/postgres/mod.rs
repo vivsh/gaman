@@ -2,15 +2,90 @@ use std::collections::HashSet;
 
 use crate::migrations::Migration;
 use crate::operations::Operation;
+use crate::states::types::EntityKind;
 use crate::states::{
     Column, Constraint, ForeignKey, FunctionDef, Index, Schema, SchemaValidationError, Table,
     TriggerDef, TriggerScope, ViewDef, Volatility,
 };
 
-use super::DialectError;
+use super::{DialectError, DialectProcessor};
 
 mod data_types;
 mod extension_types;
+
+pub(super) static POSTGRES: PostgresProcessor = PostgresProcessor;
+
+pub(super) struct PostgresProcessor;
+
+impl DialectProcessor for PostgresProcessor {
+    fn migration_to_sql(
+        &self,
+        migration: &Migration,
+        _start: &Schema,
+    ) -> Result<Vec<String>, DialectError> {
+        validate_migration(migration)?;
+        migration
+            .operations
+            .iter()
+            .map(operation_to_sql)
+            .collect::<Result<Vec<_>, _>>()
+            .map(|chunks| chunks.into_iter().flatten().collect())
+    }
+
+    fn finalize_diff_operations(
+        &self,
+        ops: Vec<Operation>,
+        previous: &Schema,
+        current: &Schema,
+    ) -> Vec<Operation> {
+        reorder_ops(ops, previous, current)
+    }
+
+    fn should_merge(&self, _table_name: &str, _op: &Operation) -> bool {
+        true
+    }
+
+    fn canonicalize_schema_name(&self, object: EntityKind, schema: Option<&str>) -> Option<String> {
+        match (object, schema) {
+            (_, None) => None,
+            (EntityKind::Extension, Some("public" | "pg_catalog")) => None,
+            (_, Some("public")) => None,
+            (_, Some(value)) => Some(value.to_string()),
+        }
+    }
+
+    fn normalize_type<'a>(&self, t: &'a str) -> &'a str {
+        normalize_type(t)
+    }
+
+    fn canonical_type(&self, t: &str) -> String {
+        canonical_type(t)
+    }
+
+    fn is_catalog_type(&self, t: &str) -> bool {
+        is_catalog_type(t)
+    }
+
+    fn type_suggestions(&self, t: &str) -> Vec<String> {
+        type_suggestions(t)
+    }
+
+    fn validate_schema(&self, schema: &Schema) -> Result<(), SchemaValidationError> {
+        validate_schema(schema)
+    }
+
+    fn validate_migration(&self, migration: &Migration) -> Result<(), DialectError> {
+        validate_migration(migration)
+    }
+
+    fn validate_migration_with_state(
+        &self,
+        migration: &Migration,
+        _start: &Schema,
+    ) -> Result<(), DialectError> {
+        validate_migration(migration)
+    }
+}
 
 // PostgreSQL-specific constraint: DROP FUNCTION fails when dependent triggers still exist.
 // This arises when a function's argument signature changes, because the old signature cannot
@@ -52,7 +127,7 @@ pub fn reorder_ops(ops: Vec<Operation>, previous: &Schema, current: &Schema) -> 
             if trigger
                 .function_name
                 .as_deref()
-                .map_or(false, |f| sig_changed_fns.contains(f))
+                .is_some_and(|f| sig_changed_fns.contains(f))
             {
                 if let Some(n) = &trigger.name {
                     bounced_keys.insert(format!("{}:{}", table_name, n));
@@ -69,7 +144,7 @@ pub fn reorder_ops(ops: Vec<Operation>, previous: &Schema, current: &Schema) -> 
             if trigger
                 .function_name
                 .as_deref()
-                .map_or(false, |f| sig_changed_fns.contains(f))
+                .is_some_and(|f| sig_changed_fns.contains(f))
             {
                 if let Some(n) = &trigger.name {
                     bounced_keys.insert(format!("{}:{}", table_name, n));
@@ -122,16 +197,16 @@ pub fn reorder_ops(ops: Vec<Operation>, previous: &Schema, current: &Schema) -> 
     let mut result = Vec::with_capacity(ops.len() + pre_fn_drops.len() + post_fn_creates.len());
     for (i, op) in ops.into_iter().enumerate() {
         if i == first_alter {
-            result.extend(pre_fn_drops.drain(..));
+            result.append(&mut pre_fn_drops);
         }
-        if let Some(key) = trigger_key(&op) {
-            if bounced_keys.contains(&key) {
-                continue; // already handled via pre/post
-            }
+        if let Some(key) = trigger_key(&op)
+            && bounced_keys.contains(&key)
+        {
+            continue; // already handled via pre/post
         }
         result.push(op);
         if i == last_alter {
-            result.extend(post_fn_creates.drain(..));
+            result.append(&mut post_fn_creates);
         }
     }
     result
@@ -336,7 +411,7 @@ fn drop_index_sql(table_name: &str, index_name: &str, concurrent: bool) -> Strin
     format!("DROP INDEX{} {}", concurrent, index)
 }
 
-pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
+fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
     let stmts = match op {
         Operation::CreateTable { table } => {
             let render_inline_pk = table.primary_key.is_none();
@@ -659,13 +734,6 @@ pub fn validate_migration(m: &Migration) -> Result<(), super::DialectError> {
         }
     }
     Ok(())
-}
-
-pub fn create_tracking_table_sql() -> Vec<String> {
-    vec![
-        r#"CREATE TABLE IF NOT EXISTS "gaman_migrations" ("id" text NOT NULL, "applied_at" timestamptz NOT NULL DEFAULT now(), CONSTRAINT "gaman_migrations_id_key" UNIQUE ("id"))"#.to_string(),
-        r#"CREATE INDEX IF NOT EXISTS "gaman_migrations_id_idx" ON "gaman_migrations" ("id")"#.to_string(),
-    ]
 }
 
 pub fn col_def(c: &Column) -> String {

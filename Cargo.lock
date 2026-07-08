@@ -448,7 +448,6 @@ dependencies = [
  "gaman-core",
  "serde",
  "serde_yaml",
- "sqlparser",
  "sqlx",
  "tempfile",
  "thiserror",
@@ -464,7 +463,6 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sqlparser",
- "tempfile",
  "thiserror",
 ]
 

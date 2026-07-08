@@ -1,15 +1,15 @@
 ---
-description: SQLite parser accepts DROP COLUMN syntax.
+description: SQLite ALTER TABLE DROP COLUMN is rejected because parser input is CREATE-only.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.sqlite.parser_sqlite_alter_table_drop_column
-kind: sql_parse
+kind: parser
 parser_dialect: sqlite
 sql: 'ALTER TABLE users DROP COLUMN age;
 
 '
 expect_parse: ok
 expect_lowering: unsupported
-expect_error: unsupported
+expect_error: only CREATE statements for modeled schema entities are parsed

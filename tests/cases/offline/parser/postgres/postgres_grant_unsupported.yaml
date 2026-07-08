@@ -1,15 +1,15 @@
 ---
-description: PostgreSQL parser accepts GRANT but Gaman does not model grants.
+description: PostgreSQL GRANT is rejected because parser input is CREATE-only.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.postgres.parser_postgres_grant_unsupported
-kind: sql_parse
+kind: parser
 parser_dialect: postgres
 sql: 'GRANT SELECT ON TABLE users TO app_reader;
 
 '
 expect_parse: ok
 expect_lowering: unsupported
-expect_error: unsupported
+expect_error: only CREATE statements for modeled schema entities are parsed

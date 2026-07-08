@@ -6,11 +6,11 @@ pub use gaman_core::*;
 
 #[cfg(all(feature = "offline", not(feature = "native")))]
 pub mod core {
-    pub use gaman_core::dialects::{Dialect, DialectError};
-    pub use gaman_core::disambiguator::{
+    pub use gaman_core::clarifier::{
         Answer, Clarification, ClarificationKind, ClarificationMessage, ClarificationOption,
         Decision, OptionAction, PromptEngine, Severity, clarification_message,
     };
+    pub use gaman_core::dialects::{Dialect, DialectError};
     pub use gaman_core::graphs::{GraphError, MigrationGraph, MigrationNode};
     pub use gaman_core::{EmbeddedMigrations, Migration, OfflineError, OfflinePlanner};
 }
@@ -31,15 +31,19 @@ pub(crate) mod executor;
 pub(crate) mod migrator;
 #[cfg(feature = "cli")]
 pub(crate) mod prompter;
+#[cfg(feature = "native")]
+pub mod schema_file;
+#[cfg(feature = "db")]
+pub(crate) mod tracking;
 
 #[cfg(feature = "native")]
-pub mod sql {
-    pub use gaman_core::sql::*;
+pub mod parsers {
+    pub use gaman_core::parsers::*;
 }
 
 // Everyday API.
 #[cfg(feature = "native")]
-pub use conf::{Config, TlsMode};
+pub use conf::{Config, ConfigError, TlsMode};
 #[cfg(feature = "cli")]
 pub use engine::{EmbeddedMigrations, EngineError, MigrationEngine};
 #[cfg(feature = "native")]
@@ -50,7 +54,7 @@ pub use gaman_core::Migration;
 pub mod schema {
     pub use gaman_core::column_type::{ColumnDesc, ColumnType};
     pub use gaman_core::operations::Operation;
-    pub use gaman_core::sql::SqlParseError;
+    pub use gaman_core::parsers::ParseError;
     pub use gaman_core::states::{
         Column, ColumnBuilder, ColumnRef, Constraint, EnumDef, ExtensionDef, ForeignKey,
         FunctionDef, Index, IntoSchema, IntoTable, PrimaryKey, ReplayError, Schema, SchemaBuilder,
@@ -75,10 +79,12 @@ pub mod core {
     pub use crate::migrator::{Migrator, MigratorError};
     #[cfg(feature = "cli")]
     pub use crate::prompter::CliPromptEngine;
-    pub use gaman_core::dialects::{Dialect, DialectError};
-    pub use gaman_core::disambiguator::{
+    #[cfg(feature = "db")]
+    pub use crate::tracking::{DatabaseTrackingStore, TrackingError, TrackingStore};
+    pub use gaman_core::clarifier::{
         Answer, Clarification, ClarificationKind, ClarificationMessage, ClarificationOption,
         Decision, OptionAction, PromptEngine, Severity, clarification_message,
     };
+    pub use gaman_core::dialects::{Dialect, DialectError};
     pub use gaman_core::graphs::{GraphError, MigrationGraph, MigrationNode};
 }

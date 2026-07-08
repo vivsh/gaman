@@ -1,0 +1,44 @@
+---
+description: PostgreSQL table FOREIGN KEY lowers into named ForeignKey metadata.
+dialect: postgres
+sql: |
+  CREATE TABLE users (id integer PRIMARY KEY);
+  CREATE TABLE posts (
+      id integer PRIMARY KEY,
+      user_id integer,
+      CONSTRAINT fk_posts_user FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+expect_entities:
+- kind: foreign_key
+  table: posts
+  name: fk_posts_user
+expect_schema:
+  tables:
+    posts:
+      name: posts
+      primary_key:
+        name: posts_pkey
+        columns: [id]
+      columns:
+      - name: id
+        type: integer
+        nullable: false
+        primary_key: true
+      - name: user_id
+        type: integer
+        nullable: true
+      foreign_keys:
+      - name: fk_posts_user
+        columns: [user_id]
+        to_table: users
+        to_columns: [id]
+    users:
+      name: users
+      primary_key:
+        name: users_pkey
+        columns: [id]
+      columns:
+      - name: id
+        type: integer
+        nullable: false
+        primary_key: true

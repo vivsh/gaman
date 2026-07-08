@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::dialects::Dialect;
+use crate::states::types::EntityKind;
 
 use super::normalize::normalize_table_primary_key;
 use super::*;
@@ -16,26 +17,10 @@ impl Schema {
             }
             normalize_table_primary_key(table);
         }
-        self.normalize_schemas();
+        self.normalize_schemas(dialect);
     }
 
-    fn normalize_schemas(&mut self) {
-        fn normalize_schema(schema: &mut Option<String>) {
-            if let Some(s) = schema {
-                if s == "public" {
-                    *schema = None;
-                }
-            }
-        }
-
-        fn normalize_extension_schema(schema: &mut Option<String>) {
-            if let Some(s) = schema {
-                if s == "public" || s == "pg_catalog" {
-                    *schema = None;
-                }
-            }
-        }
-
+    fn normalize_schemas(&mut self, dialect: &Dialect) {
         fn rekey<T>(map: &mut BTreeMap<String, T>, key_fn: impl Fn(&T) -> String) {
             let stale: Vec<String> = map
                 .iter()
@@ -51,27 +36,31 @@ impl Schema {
         }
 
         for table in self.tables.values_mut() {
-            normalize_schema(&mut table.schema);
+            table.schema =
+                dialect.canonicalize_schema_name(EntityKind::Table, table.schema.as_deref());
         }
         rekey(&mut self.tables, |t| t.qualified_name());
 
         for func in self.functions.values_mut() {
-            normalize_schema(&mut func.schema);
+            func.schema =
+                dialect.canonicalize_schema_name(EntityKind::Function, func.schema.as_deref());
         }
         rekey(&mut self.functions, |f| f.qualified_name());
 
         for view in self.views.values_mut() {
-            normalize_schema(&mut view.schema);
+            view.schema =
+                dialect.canonicalize_schema_name(EntityKind::View, view.schema.as_deref());
         }
         rekey(&mut self.views, |v| v.qualified_name());
 
         for ext in self.extensions.values_mut() {
-            normalize_extension_schema(&mut ext.schema);
+            ext.schema =
+                dialect.canonicalize_schema_name(EntityKind::Extension, ext.schema.as_deref());
         }
         rekey(&mut self.extensions, |e| e.qualified_name());
 
         for en in self.enums.values_mut() {
-            normalize_schema(&mut en.schema);
+            en.schema = dialect.canonicalize_schema_name(EntityKind::Enum, en.schema.as_deref());
         }
         rekey(&mut self.enums, |e| e.qualified_name());
     }

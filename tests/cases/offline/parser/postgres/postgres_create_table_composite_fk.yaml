@@ -4,9 +4,9 @@ description: PostgreSQL parser and lowering preserve composite table-level forei
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.postgres.parser_postgres_create_table_composite_fk
-kind: sql_parse
+kind: parser
 parser_dialect: postgres
 sql: |
   CREATE TABLE tenants (

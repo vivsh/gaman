@@ -1,8 +1,26 @@
 use super::*;
+use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::states::{
-    Column, Constraint, EnumDef, ExtensionDef, ForeignKey, Index, PrimaryKey, Table, ViewDef,
+    Column, Constraint, EnumDef, ExtensionDef, ForeignKey, Index, PrimaryKey, Schema, Table,
+    ViewDef,
 };
+
+fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
+    let atomic = match op {
+        Operation::AddIndex { concurrent, .. } | Operation::DropIndex { concurrent, .. } => {
+            !concurrent
+        }
+        _ => true,
+    };
+    let migration = Migration {
+        id: "test_render".to_string(),
+        dependencies: vec![],
+        operations: vec![op.clone()],
+        atomic,
+    };
+    POSTGRES.migration_to_sql(&migration, &Schema::default())
+}
 
 fn col(name: &str, t: &str) -> Column {
     Column {
@@ -625,27 +643,6 @@ fn drop_enum_sql() {
     let sql = operation_to_sql(&Operation::DropEnum { enum_def }).unwrap();
 
     assert_eq!(sql, vec!["DROP TYPE \"app\".\"status\""]);
-}
-
-#[test]
-fn tracking_table_has_two_statements() {
-    let sqls = create_tracking_table_sql();
-    assert_eq!(sqls.len(), 2);
-    assert!(
-        sqls[0].contains("CREATE TABLE IF NOT EXISTS"),
-        "got: {}",
-        sqls[0]
-    );
-    assert!(
-        sqls[1].contains("CREATE INDEX IF NOT EXISTS"),
-        "got: {}",
-        sqls[1]
-    );
-    assert!(
-        sqls[1].contains("gaman_migrations_id_idx"),
-        "got: {}",
-        sqls[1]
-    );
 }
 
 #[test]

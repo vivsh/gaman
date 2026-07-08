@@ -6,12 +6,11 @@ use crate::adapters::{AdapterError, MigrationSource};
 use crate::conf::Config;
 use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
 use crate::executor::{Executor, ExecutorError};
+use crate::tracking::{DatabaseTrackingStore, TrackingError, TrackingStore};
+use gaman_core::clarifier::{Clarification, Clarifier, ClarifyError, ClarifyResult, Decision};
+use gaman_core::clarifier::{TypeResolution, non_type_decisions, resolve_unknown_types};
 use gaman_core::dialects::{Dialect, DialectError};
 use gaman_core::diff::{DiffEngine, DiffError};
-use gaman_core::disambiguator::{
-    Clarification, Decision, DisambiguationResult, Disambiguator, DisambiguatorError,
-};
-use gaman_core::disambiguator::{TypeResolution, non_type_decisions, resolve_unknown_types};
 use gaman_core::graphs::{GraphError, MigrationGraph};
 use gaman_core::migrations::Migration;
 use gaman_core::operations::Operation;
@@ -37,10 +36,12 @@ pub enum MigratorError {
     SqlPlan(#[from] SqlPlanError),
     #[error("{0}")]
     Environment(#[from] EnvironmentError),
+    #[error("migration tracking failed: {0}")]
+    Tracking(#[from] TrackingError),
     #[error("configuration error: {0}")]
     Config(String),
-    #[error("disambiguation error: {0}")]
-    Disambiguator(#[from] DisambiguatorError),
+    #[error("clarification error: {0}")]
+    Clarifier(#[from] ClarifyError),
     #[error("clarification needed")]
     NeedsInput(Vec<Clarification>),
 }
@@ -54,6 +55,7 @@ pub struct Migrator {
     pub graph: MigrationGraph,
     ordered_ids: Vec<String>,
     sql_renderer: SqlPlanRenderer,
+    tracking: Box<dyn TrackingStore + Send + Sync>,
     pub diff: DiffEngine,
 }
 
@@ -61,6 +63,19 @@ impl Migrator {
     pub fn new(
         source: Box<dyn MigrationSource + Send + Sync>,
         environment: Box<dyn Environment + Send + Sync>,
+    ) -> Result<Self, MigratorError> {
+        Self::new_with_tracking(source, environment, Box::new(DatabaseTrackingStore))
+    }
+
+    /// Create a migrator with a caller-provided migration tracking store.
+    ///
+    /// Native database migrations normally use `DatabaseTrackingStore`. Custom
+    /// stores are intended for hosts that track applied migration ids outside
+    /// the target database, such as future browser or embedded runtimes.
+    pub fn new_with_tracking(
+        source: Box<dyn MigrationSource + Send + Sync>,
+        environment: Box<dyn Environment + Send + Sync>,
+        tracking: Box<dyn TrackingStore + Send + Sync>,
     ) -> Result<Self, MigratorError> {
         let mut graph = MigrationGraph::new();
         let migrations = source.load_all()?;
@@ -80,6 +95,7 @@ impl Migrator {
             graph,
             ordered_ids,
             sql_renderer,
+            tracking,
             diff: DiffEngine::new(),
         })
     }
@@ -102,7 +118,7 @@ impl Migrator {
     /// Generate a new migration by diffing `current` against the replayed previous state.
     /// Refuses if there are multiple heads — resolve with `make_merge_migration` first.
     /// Returns `None` when there are no changes.
-    /// Pass previously collected `decisions` to resolve any disambiguation clarifications.
+    /// Pass previously collected `decisions` to resolve any clarification clarifications.
     /// Returns `Err(MigratorError::NeedsInput(clars))` when clarifications are still outstanding.
     pub fn make_migrations(
         &self,
@@ -131,11 +147,11 @@ impl Migrator {
             return Ok(None);
         }
         let op_decisions = non_type_decisions(decisions);
-        let ops = match Disambiguator.process(&raw_ops, &op_decisions)? {
-            DisambiguationResult::NeedsInput(clars) => {
+        let ops = match Clarifier.process(&raw_ops, &op_decisions)? {
+            ClarifyResult::NeedsInput(clars) => {
                 return Err(MigratorError::NeedsInput(clars));
             }
-            DisambiguationResult::Resolved(ops) => ops,
+            ClarifyResult::Resolved(ops) => ops,
         };
         let ops = dialect.reorder(ops, &previous, &current);
         let name = name.unwrap_or_else(|| name_from_ops(&ops));
@@ -400,9 +416,7 @@ impl Migrator {
     /// Create the migration tracking table if it does not already exist.
     /// Safe to call repeatedly — uses CREATE TABLE IF NOT EXISTS internally.
     pub async fn install(&self, executor: &mut dyn Executor) -> Result<(), MigratorError> {
-        for sql in self.dialect().create_tracking_table_sql() {
-            executor.execute(&sql).await?;
-        }
+        self.tracking.install(self.dialect(), executor).await?;
         Ok(())
     }
 
@@ -421,11 +435,7 @@ impl Migrator {
         &self,
         executor: &mut dyn Executor,
     ) -> Result<HashSet<String>, MigratorError> {
-        Ok(executor
-            .fetch_strings(self.dialect().applied_migrations_sql())
-            .await?
-            .into_iter()
-            .collect())
+        Ok(self.tracking.applied_ids(executor).await?)
     }
 
     async fn apply_one(
@@ -451,10 +461,7 @@ impl Migrator {
             }
             return Err(e);
         }
-        if let Err(e) = executor
-            .execute(&self.dialect().record_sql(&migration.id))
-            .await
-        {
+        if let Err(e) = self.tracking.record(&migration.id, executor).await {
             if migration.atomic {
                 let _ = executor.rollback().await;
             }
@@ -579,7 +586,7 @@ impl Migrator {
                     }
                     return Err(e);
                 }
-                if let Err(e) = executor.execute(&self.dialect().unrecord_sql(id)).await {
+                if let Err(e) = self.tracking.unrecord(id, executor).await {
                     if migration.atomic {
                         let _ = executor.rollback().await;
                     }
@@ -727,8 +734,8 @@ impl Migrator {
         replay
             .prepare_mut(&dialect)
             .map_err(|err| MigratorError::Config(err.to_string()))?;
-        scope_tables_for_verify(&mut replay, schema);
-        scope_opaque_objects_for_verify(&mut replay, schema);
+        scope_tables_for_verify(&mut replay, schema, dialect);
+        scope_opaque_objects_for_verify(&mut replay, schema, dialect);
         normalize_state_types(&mut replay, &dialect);
 
         let mut live = executor
@@ -737,8 +744,8 @@ impl Migrator {
             .map_err(MigratorError::Executor)?;
         live.prepare_mut(&dialect)
             .map_err(|err| MigratorError::Config(err.to_string()))?;
-        scope_tables_for_verify(&mut live, schema);
-        scope_opaque_objects_for_verify(&mut live, schema);
+        scope_tables_for_verify(&mut live, schema, dialect);
+        scope_opaque_objects_for_verify(&mut live, schema, dialect);
         normalize_state_types(&mut live, &dialect);
         project_live_schema_to_replay_ownership(&mut live, &replay);
 
@@ -808,10 +815,10 @@ fn op_entity_label(op: &Operation) -> Option<&str> {
 fn name_from_ops(ops: &[Operation]) -> String {
     let mut unique: Vec<&str> = Vec::new();
     for op in ops {
-        if let Some(label) = op_entity_label(op) {
-            if !unique.contains(&label) {
-                unique.push(label);
-            }
+        if let Some(label) = op_entity_label(op)
+            && !unique.contains(&label)
+        {
+            unique.push(label);
         }
     }
     match unique.as_slice() {
@@ -941,7 +948,7 @@ fn compute_deps(
     deps
 }
 
-fn scope_tables_for_verify(state: &mut Schema, schema: &str) {
+fn scope_tables_for_verify(state: &mut Schema, schema: &str, dialect: Dialect) {
     let tables = std::mem::take(&mut state.tables);
     state.tables = tables
         .into_values()
@@ -950,7 +957,9 @@ fn scope_tables_for_verify(state: &mut Schema, schema: &str) {
                 scope_table_references(&mut table, schema);
                 Some(table)
             }
-            Some(current) if current == schema || (schema == "public" && current == "public") => {
+            Some(current)
+                if schema_matches_verify_scope(dialect, EntityKind::Table, current, schema) =>
+            {
                 table.schema = None;
                 scope_table_references(&mut table, schema);
                 Some(table)
@@ -961,13 +970,15 @@ fn scope_tables_for_verify(state: &mut Schema, schema: &str) {
         .collect();
 }
 
-fn scope_opaque_objects_for_verify(state: &mut Schema, schema: &str) {
+fn scope_opaque_objects_for_verify(state: &mut Schema, schema: &str, dialect: Dialect) {
     let views = std::mem::take(&mut state.views);
     state.views = views
         .into_values()
         .filter_map(|mut view| match view.schema.as_deref() {
             None => Some(view),
-            Some(current) if current == schema || (schema == "public" && current == "public") => {
+            Some(current)
+                if schema_matches_verify_scope(dialect, EntityKind::View, current, schema) =>
+            {
                 view.schema = None;
                 Some(view)
             }
@@ -981,7 +992,9 @@ fn scope_opaque_objects_for_verify(state: &mut Schema, schema: &str) {
         .into_values()
         .filter_map(|mut function| match function.schema.as_deref() {
             None => Some(function),
-            Some(current) if current == schema || (schema == "public" && current == "public") => {
+            Some(current)
+                if schema_matches_verify_scope(dialect, EntityKind::Function, current, schema) =>
+            {
                 function.schema = None;
                 Some(function)
             }
@@ -998,7 +1011,9 @@ fn scope_opaque_objects_for_verify(state: &mut Schema, schema: &str) {
         .into_values()
         .filter_map(|mut extension| match extension.schema.as_deref() {
             None => Some(extension),
-            Some(current) if current == schema || (schema == "public" && current == "public") => {
+            Some(current)
+                if schema_matches_verify_scope(dialect, EntityKind::Extension, current, schema) =>
+            {
                 extension.schema = None;
                 Some(extension)
             }
@@ -1012,7 +1027,9 @@ fn scope_opaque_objects_for_verify(state: &mut Schema, schema: &str) {
         .into_values()
         .filter_map(|mut enum_def| match enum_def.schema.as_deref() {
             None => Some(enum_def),
-            Some(current) if current == schema || (schema == "public" && current == "public") => {
+            Some(current)
+                if schema_matches_verify_scope(dialect, EntityKind::Enum, current, schema) =>
+            {
                 enum_def.schema = None;
                 Some(enum_def)
             }
@@ -1020,6 +1037,17 @@ fn scope_opaque_objects_for_verify(state: &mut Schema, schema: &str) {
         })
         .map(|enum_def| (enum_def.qualified_name(), enum_def))
         .collect();
+}
+
+fn schema_matches_verify_scope(
+    dialect: Dialect,
+    kind: EntityKind,
+    current: &str,
+    requested: &str,
+) -> bool {
+    let current = dialect.canonicalize_schema_name(kind, Some(current));
+    let requested = dialect.canonicalize_schema_name(kind, Some(requested));
+    current == requested
 }
 
 fn function_verify_key(function: &gaman_core::states::FunctionDef) -> String {
@@ -1119,6 +1147,7 @@ fn normalize_default_for_compare(default: &str, dialect: &gaman_core::dialects::
             .to_string(),
         #[cfg(feature = "sqlite")]
         gaman_core::dialects::Dialect::Sqlite => default.to_string(),
+        gaman_core::dialects::Dialect::Mysql => default.to_string(),
     }
 }
 

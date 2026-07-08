@@ -1,0 +1,27 @@
+---
+description: SQLite PRIMARY KEY lowers into primary key metadata.
+dialect: sqlite
+sql: |
+  CREATE TABLE users (
+      id integer PRIMARY KEY,
+      email text
+  );
+expect_entities:
+- kind: constraint
+  table: users
+  name: users_pkey
+expect_schema:
+  tables:
+    users:
+      name: users
+      primary_key:
+        name: users_pkey
+        columns: [id]
+      columns:
+      - name: id
+        type: integer
+        nullable: false
+        primary_key: true
+      - name: email
+        type: text
+        nullable: true

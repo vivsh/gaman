@@ -1,0 +1,43 @@
+---
+description: PostgreSQL column REFERENCES lowers into ForeignKey metadata.
+dialect: postgres
+sql: |
+  CREATE TABLE users (id integer PRIMARY KEY);
+  CREATE TABLE posts (
+      id integer PRIMARY KEY,
+      user_id integer REFERENCES users(id)
+  );
+expect_entities:
+- kind: foreign_key
+  table: posts
+  name: posts_user_id_fkey
+expect_schema:
+  tables:
+    posts:
+      name: posts
+      primary_key:
+        name: posts_pkey
+        columns: [id]
+      columns:
+      - name: id
+        type: integer
+        nullable: false
+        primary_key: true
+      - name: user_id
+        type: integer
+        nullable: true
+      foreign_keys:
+      - name: posts_user_id_fkey
+        columns: [user_id]
+        to_table: users
+        to_columns: [id]
+    users:
+      name: users
+      primary_key:
+        name: users_pkey
+        columns: [id]
+      columns:
+      - name: id
+        type: integer
+        nullable: false
+        primary_key: true

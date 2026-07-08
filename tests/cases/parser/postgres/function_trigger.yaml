@@ -1,0 +1,41 @@
+---
+description: PostgreSQL function-backed CREATE TRIGGER lowers into table trigger metadata.
+dialect: postgres
+sql: |
+  CREATE TABLE users (id integer PRIMARY KEY);
+  CREATE FUNCTION audit_users() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+  CREATE TRIGGER users_audit_trg
+  AFTER INSERT ON users
+  FOR EACH ROW
+  EXECUTE FUNCTION audit_users();
+expect_entities:
+- kind: function
+  name: audit_users
+- kind: trigger
+  table: users
+  name: users_audit_trg
+expect_schema:
+  tables:
+    users:
+      name: users
+      primary_key:
+        name: users_pkey
+        columns: [id]
+      columns:
+      - name: id
+        type: integer
+        nullable: false
+        primary_key: true
+      triggers:
+      - name: users_audit_trg
+        timing: after
+        events: [insert]
+        scope: row
+        function_name: audit_users()
+  functions:
+    audit_users:
+      name: audit_users
+      arguments: ""
+      returns: trigger
+      language: plpgsql
+      body: " BEGIN RETURN NEW; END; "

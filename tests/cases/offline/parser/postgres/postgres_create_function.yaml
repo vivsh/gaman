@@ -3,10 +3,10 @@ description: PostgreSQL parser and Gaman lowering handle a simple SQL function.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - operation.create_function
 - parser.postgres.parser_postgres_create_function
-kind: sql_parse
+kind: parser
 parser_dialect: postgres
 sql: |
   CREATE FUNCTION add_one(integer)

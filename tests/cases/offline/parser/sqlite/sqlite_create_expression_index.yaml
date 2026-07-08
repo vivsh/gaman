@@ -1,17 +1,14 @@
 ---
-description: sqlparser parses SQLite expression indexes; Gaman lowering is intentionally
-  not enabled for SQLite parser fixtures yet.
+description: SQLite parser lowers expression indexes into table index metadata.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.sqlite.parser_sqlite_create_expression_index
-kind: sql_parse
+kind: parser
 parser_dialect: sqlite
-sql: 'CREATE INDEX users_lower_email_idx ON users (lower(email)) WHERE email IS NOT
-  NULL;
-
-'
+sql: |
+  CREATE TABLE users (email text);
+  CREATE INDEX users_lower_email_idx ON users (lower(email)) WHERE email IS NOT NULL;
 expect_parse: ok
-expect_lowering: unsupported
-expect_error: unsupported SQL lowering for sqlite parser fixtures
+expect_lowering: ok

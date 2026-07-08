@@ -1,0 +1,281 @@
+cases:
+  check_constraint:
+    description: PostgreSQL CHECK constraint lowers into Constraint::Check.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: constraint
+      name: users_age_check
+      table: users
+  column_foreign_key:
+    description: PostgreSQL column REFERENCES lowers into ForeignKey metadata.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: foreign_key
+      name: posts_user_id_fkey
+      table: posts
+  enum:
+    description: PostgreSQL CREATE TYPE enum lowers into EnumDef.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: enum
+      name: mood
+  event_trigger_parse_error:
+    description: PostgreSQL event triggers are reported as parser errors.
+    dialect: postgres
+    status: success
+    entities: []
+  extension:
+    description: PostgreSQL CREATE EXTENSION lowers into ExtensionDef.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: extension
+      name: pgcrypto
+  final_statement_without_semicolon:
+    description: PostgreSQL parser accepts final DDL statement without trailing semicolon.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: table
+      name: users
+    - kind: table
+      name: posts
+  function:
+    description: PostgreSQL CREATE FUNCTION lowers into FunctionDef.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: function
+      name: add_numbers
+  function_trigger:
+    description: PostgreSQL function-backed CREATE TRIGGER lowers into table trigger metadata.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: function
+      name: audit_users
+    - kind: trigger
+      name: users_audit_trg
+      table: users
+  generated_column:
+    description: PostgreSQL generated column lowers with generated expression.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: column
+      name: email_norm
+      table: users
+  materialized_view_tail_parse_error:
+    description: PostgreSQL materialized view WITH DATA tail is reported as parser error.
+    dialect: postgres
+    status: success
+    entities: []
+  non_create_alter_table:
+    description: PostgreSQL ALTER TABLE is rejected because parser input is CREATE-only.
+    dialect: postgres
+    status: success
+    entities: []
+  non_create_delete:
+    description: PostgreSQL DELETE is rejected because parser input is CREATE-only.
+    dialect: postgres
+    status: success
+    entities: []
+  non_create_drop_table:
+    description: PostgreSQL DROP TABLE is rejected because parser input is CREATE-only.
+    dialect: postgres
+    status: success
+    entities: []
+  partial_index:
+    description: PostgreSQL partial CREATE INDEX preserves predicate metadata.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: index
+      name: users_active_email_idx
+      table: users
+  primary_key:
+    description: PostgreSQL PRIMARY KEY lowers into primary key metadata.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: table
+      name: users
+    - kind: constraint
+      name: users_pkey
+      table: users
+  sqlite_check_constraint:
+    description: SQLite CHECK constraint lowers into Constraint::Check.
+    dialect: sqlite
+    status: success
+    entities:
+    - kind: constraint
+      name: users_age_check
+      table: users
+  sqlite_expression_index:
+    description: SQLite expression CREATE INDEX records expression columns.
+    dialect: sqlite
+    status: success
+    entities:
+    - kind: index
+      name: users_lower_email_idx
+      table: users
+  sqlite_foreign_key:
+    description: SQLite FOREIGN KEY lowers into ForeignKey metadata.
+    dialect: sqlite
+    status: success
+    entities:
+    - kind: foreign_key
+      name: posts_user_id_fkey
+      table: posts
+  sqlite_generated_column:
+    description: SQLite generated column lowers with generated expression.
+    dialect: sqlite
+    status: success
+    entities:
+    - kind: column
+      name: email_norm
+      table: users
+  sqlite_non_create_alter_table:
+    description: SQLite ALTER TABLE is rejected because parser input is CREATE-only.
+    dialect: sqlite
+    status: success
+    entities: []
+  sqlite_non_create_delete:
+    description: SQLite DELETE is rejected because parser input is CREATE-only.
+    dialect: sqlite
+    status: success
+    entities: []
+  sqlite_non_create_drop_table:
+    description: SQLite DROP TABLE is rejected because parser input is CREATE-only.
+    dialect: sqlite
+    status: success
+    entities: []
+  sqlite_partial_index:
+    description: SQLite partial CREATE INDEX preserves predicate metadata.
+    dialect: sqlite
+    status: success
+    entities:
+    - kind: index
+      name: users_active_email_idx
+      table: users
+  sqlite_primary_key:
+    description: SQLite PRIMARY KEY lowers into primary key metadata.
+    dialect: sqlite
+    status: success
+    entities:
+    - kind: constraint
+      name: users_pkey
+      table: users
+  sqlite_standalone_index:
+    description: SQLite CREATE INDEX lowers into Index metadata.
+    dialect: sqlite
+    status: success
+    entities:
+    - kind: index
+      name: users_email_idx
+      table: users
+  sqlite_table_columns:
+    description: SQLite CREATE TABLE lowers table and column entities.
+    dialect: sqlite
+    status: success
+    entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: email
+      table: users
+  sqlite_trigger_body:
+    description: SQLite CREATE TRIGGER lowers statement body into TriggerDef query.
+    dialect: sqlite
+    status: success
+    entities:
+    - kind: trigger
+      name: users_ai
+      table: users
+  sqlite_unique_constraint:
+    description: SQLite UNIQUE constraint lowers into Constraint::Unique.
+    dialect: sqlite
+    status: success
+    entities:
+    - kind: constraint
+      name: users_email_key
+      table: users
+  sqlite_unsupported_enum:
+    description: SQLite CREATE TYPE enum is not represented in Schema.
+    dialect: sqlite
+    status: success
+    entities: []
+  sqlite_unsupported_extension:
+    description: SQLite CREATE EXTENSION is not represented in Schema.
+    dialect: sqlite
+    status: success
+    entities: []
+  sqlite_unsupported_function:
+    description: SQLite CREATE FUNCTION is not represented in Schema.
+    dialect: sqlite
+    status: success
+    entities: []
+  sqlite_view:
+    description: SQLite CREATE VIEW lowers into ViewDef.
+    dialect: sqlite
+    status: success
+    entities:
+    - kind: view
+      name: active_users
+  standalone_index:
+    description: PostgreSQL CREATE INDEX lowers into Index metadata.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: index
+      name: users_email_idx
+      table: users
+  table_columns:
+    description: PostgreSQL CREATE TABLE lowers table and column entities.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: id
+      table: users
+    - kind: column
+      name: email
+      table: users
+  table_foreign_key:
+    description: PostgreSQL table FOREIGN KEY lowers into named ForeignKey metadata.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: foreign_key
+      name: fk_posts_user
+      table: posts
+  unique_constraint:
+    description: PostgreSQL UNIQUE constraint lowers into Constraint::Unique.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: constraint
+      name: users_email_key
+      table: users
+  unsupported_grant:
+    description: PostgreSQL GRANT is rejected because parser input is CREATE-only.
+    dialect: postgres
+    status: success
+    entities: []
+  unsupported_policy:
+    description: PostgreSQL CREATE POLICY is rejected because Schema does not model policies.
+    dialect: postgres
+    status: success
+    entities: []
+  view:
+    description: PostgreSQL CREATE VIEW lowers into ViewDef.
+    dialect: postgres
+    status: success
+    entities:
+    - kind: view
+      name: active_users

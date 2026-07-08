@@ -1,13 +1,86 @@
 use crate::dialects::DialectError;
 use crate::migrations::Migration;
 use crate::operations::Operation;
+use crate::states::types::EntityKind;
 use crate::states::{
     Column, Constraint, Index, Schema, SchemaValidationError, Table, TriggerDef, TriggerEvent,
     TriggerScope, TriggerTiming, ViewDef,
 };
 
+use super::DialectProcessor;
+
 mod data_types;
 mod extension_types;
+
+pub(super) static SQLITE: SqliteProcessor = SqliteProcessor;
+
+pub(super) struct SqliteProcessor;
+
+impl DialectProcessor for SqliteProcessor {
+    fn migration_to_sql(
+        &self,
+        migration: &Migration,
+        start: &Schema,
+    ) -> Result<Vec<String>, DialectError> {
+        migration_to_sql(migration, start)
+    }
+
+    fn finalize_diff_operations(
+        &self,
+        ops: Vec<Operation>,
+        _previous: &Schema,
+        _current: &Schema,
+    ) -> Vec<Operation> {
+        ops
+    }
+
+    fn should_merge(&self, _table_name: &str, op: &Operation) -> bool {
+        matches!(
+            op,
+            Operation::AddForeignKey { .. } | Operation::AddConstraint { .. }
+        )
+    }
+
+    fn canonicalize_schema_name(
+        &self,
+        _object: EntityKind,
+        schema: Option<&str>,
+    ) -> Option<String> {
+        schema.map(str::to_string)
+    }
+
+    fn normalize_type<'a>(&self, t: &'a str) -> &'a str {
+        normalize_type(t)
+    }
+
+    fn canonical_type(&self, t: &str) -> String {
+        canonical_type(t)
+    }
+
+    fn is_catalog_type(&self, t: &str) -> bool {
+        is_catalog_type(t)
+    }
+
+    fn type_suggestions(&self, t: &str) -> Vec<String> {
+        type_suggestions(t)
+    }
+
+    fn validate_schema(&self, schema: &Schema) -> Result<(), SchemaValidationError> {
+        validate_schema(schema)
+    }
+
+    fn validate_migration(&self, migration: &Migration) -> Result<(), DialectError> {
+        validate_migration(migration)
+    }
+
+    fn validate_migration_with_state(
+        &self,
+        migration: &Migration,
+        start: &Schema,
+    ) -> Result<(), DialectError> {
+        migration_to_sql(migration, start).map(|_| ())
+    }
+}
 
 fn unsupported(op: &str, reason: impl Into<String>) -> DialectError {
     DialectError::Unsupported(op.to_string(), reason.into())
@@ -640,7 +713,7 @@ fn validate_target_references(state: &Schema, table: &Table) -> Result<(), Diale
     Ok(())
 }
 
-pub fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
+fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
     match op {
         Operation::CreateTable { table } => {
             qualified_table(table)?;
@@ -860,13 +933,6 @@ pub fn validate_migration(m: &Migration) -> Result<(), DialectError> {
     Ok(())
 }
 
-pub fn create_tracking_table_sql() -> Vec<String> {
-    vec![
-        r#"CREATE TABLE IF NOT EXISTS "gaman_migrations" ("id" text NOT NULL UNIQUE, "applied_at" text NOT NULL DEFAULT CURRENT_TIMESTAMP)"#.to_string(),
-        r#"CREATE INDEX IF NOT EXISTS "gaman_migrations_id_idx" ON "gaman_migrations" ("id")"#.to_string(),
-    ]
-}
-
 pub fn normalize_type(t: &str) -> &str {
     data_types::normalize_type(t)
 }
@@ -938,11 +1004,7 @@ fn validate_sqlite_trigger(
             "SQLite trigger {table_name}.{name} must not set `language`"
         )));
     }
-    if trigger
-        .events
-        .iter()
-        .any(|event| *event == TriggerEvent::Truncate)
-    {
+    if trigger.events.contains(&TriggerEvent::Truncate) {
         return Err(SchemaValidationError::Invalid(format!(
             "SQLite trigger {table_name}.{name} does not support truncate events"
         )));

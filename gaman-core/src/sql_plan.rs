@@ -6,6 +6,7 @@ use crate::dialects::{Dialect, DialectError};
 use crate::graphs::{GraphError, MigrationGraph};
 use crate::migrations::Migration;
 use crate::operations::Operation;
+use crate::replay::ReplayEngine;
 use crate::states::{
     Constraint, ForeignKey, Index, ReplayError, Schema, SchemaValidationError, Table, TriggerDef,
 };
@@ -230,12 +231,7 @@ impl SqlPlanRenderer {
     }
 
     fn replay_ids(&self, ids: &[String]) -> Result<Schema, SqlPlanError> {
-        let mut state = Schema::default();
-        for id in ids {
-            let migration = self.graph.get(id).expect("ordered id must exist in graph");
-            apply_migration_to_state(&mut state, migration)?;
-        }
-        Ok(state)
+        Ok(ReplayEngine::new(&self.graph).replay_ids(ids)?)
     }
 
     fn position_map(&self) -> HashMap<&str, usize> {
@@ -310,7 +306,7 @@ pub fn render_migration_sql(
 
     let normalized = normalized_migration_for_rendering(migration, &target);
     dialect
-        .plan_migration_sql(&normalized, &start)
+        .migration_to_sql(&normalized, &start)
         .map_err(|source| SqlPlanError::Dialect {
             migration: migration.id.clone(),
             source,
@@ -591,14 +587,7 @@ pub fn apply_migration_to_state(
     state: &mut Schema,
     migration: &Migration,
 ) -> Result<(), SqlPlanError> {
-    for (i, op) in migration.operations.iter().enumerate() {
-        state.apply(op).map_err(|e| ReplayError::WithContext {
-            migration: migration.id.clone(),
-            op_num: i + 1,
-            inner: Box::new(e),
-        })?;
-    }
-    Ok(())
+    Ok(ReplayEngine::apply_migration(state, migration)?)
 }
 
 fn validate_unique_requested_ids(migrations: &[Migration]) -> Result<(), SqlPlanError> {
@@ -958,7 +947,6 @@ mod tests {
         assert!(sql.contains("CREATE OR REPLACE TRIGGER \"users_insert_after_trg\""));
     }
 
-    #[cfg(feature = "sqlite")]
     #[test]
     fn sqlite_rebuild_forward_starts_from_dependency_replay_state() {
         let create = migration(
@@ -985,7 +973,6 @@ mod tests {
         assert!(!sql.contains("\"name\") SELECT"));
     }
 
-    #[cfg(feature = "sqlite")]
     #[test]
     fn sqlite_generated_rebuild_uses_dependency_closure_baseline() {
         let create_users = migration(
@@ -1020,7 +1007,6 @@ mod tests {
         assert!(!sql.contains("\"age\""));
     }
 
-    #[cfg(feature = "sqlite")]
     #[test]
     fn sqlite_rollback_starts_after_last_selected_migration_not_graph_tip() {
         let create = migration(
@@ -1181,16 +1167,20 @@ mod tests {
                 );
             }
 
-            #[cfg(feature = "sqlite")]
             #[test]
-            #[doc = "SQLite rebuild-only operations continue to require migration context from the planner."]
+            #[doc = "SQLite rebuild-only operations fail clearly without the required table state."]
             fn sqlite_rebuild_operations_require_context(column_name in "[a-z][a-z0-9_]{0,8}") {
                 let column = column(&column_name, "text");
-                let result = Dialect::Sqlite.operation_to_sql(&Operation::DropColumn {
-                    table_name: "users".to_string(),
-                    column,
-                    cascade: false,
-                });
+                let migration = migration(
+                    "0001_drop_column",
+                    &[],
+                    vec![Operation::DropColumn {
+                        table_name: "users".to_string(),
+                        column,
+                        cascade: false,
+                    }],
+                );
+                let result = render_migration_sql(Dialect::Sqlite, &migration, &Schema::default());
                 prop_assert!(result.is_err());
             }
         }

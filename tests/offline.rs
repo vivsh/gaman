@@ -5,8 +5,6 @@ use std::path::PathBuf;
 
 use gaman::core::MigratorError;
 use gaman::schema::Schema;
-use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect, SQLiteDialect};
-use sqlparser::parser::Parser;
 
 use support::{
     LoweringExpectation, OfflineCase, OfflineEvidence, OfflineFeatureCatalog, OfflineFeatureResult,
@@ -208,7 +206,7 @@ fn offline_evidence(name: &str, case: &OfflineCase) -> OfflineEvidence {
 
 fn offline_kind(spec: &OfflineSpec) -> &'static str {
     match spec {
-        OfflineSpec::SqlParse { .. } => "sql_parse",
+        OfflineSpec::Parser { .. } => "parser",
         OfflineSpec::SqlToSchema { .. } => "sql_to_schema",
         OfflineSpec::SchemaToMigration { .. } => "schema_to_migration",
         OfflineSpec::MigrationToReplay { .. } => "migration_to_replay",
@@ -219,7 +217,7 @@ fn offline_kind(spec: &OfflineSpec) -> &'static str {
 
 fn offline_dialect(case: &OfflineCase) -> Option<String> {
     match &case.spec {
-        OfflineSpec::SqlParse { parser_dialect, .. } => Some(parser_dialect_name(*parser_dialect)),
+        OfflineSpec::Parser { parser_dialect, .. } => Some(parser_dialect_name(*parser_dialect)),
         _ => Some(fixture_dialect_name(case.dialect)),
     }
 }
@@ -260,14 +258,14 @@ fn write_results(path: &PathBuf, results: &OfflineSupportResults) -> Result<(), 
 fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportError> {
     let dialect = case.dialect.to_dialect()?;
     match &case.spec {
-        OfflineSpec::SqlParse {
+        OfflineSpec::Parser {
             parser_dialect,
             sql,
             expect_parse,
             expect_lowering,
             expect_schema,
             expect_error,
-        } => run_sql_parse_case(
+        } => run_parser_case(
             name,
             *parser_dialect,
             sql,
@@ -578,7 +576,7 @@ fn assert_schema_to_migration_clarifications(
     }
 }
 
-fn run_sql_parse_case(
+fn run_parser_case(
     name: &str,
     dialect: ParserFixtureDialect,
     sql: &str,
@@ -587,22 +585,26 @@ fn run_sql_parse_case(
     expect_schema: &Option<Schema>,
     expect_error: Option<&str>,
 ) -> Result<(), TestSupportError> {
-    let parse = parse_sql_only(dialect, sql);
-    match (expect_parse, parse) {
-        (ParseExpectation::Ok, Ok(_)) => {}
-        (ParseExpectation::Ok, Err(error)) => {
+    let lowering = lower_sql_to_schema(dialect, sql);
+    let parse_failed = lowering.as_ref().err().is_some_and(|error| {
+        error.contains("SQL parse error") || error.contains("unsupported SQL dialect")
+    });
+    match (expect_parse, parse_failed) {
+        (ParseExpectation::Ok, false) => {}
+        (ParseExpectation::Ok, true) => {
             return Err(TestSupportError::message(format!(
-                "{name}: expected parser success but got {error}"
+                "{name}: expected parser success but got {}",
+                lowering.err().unwrap()
             )));
         }
-        (ParseExpectation::Error, Ok(_)) => {
+        (ParseExpectation::Error, false) => {
             return Err(TestSupportError::message(format!(
                 "{name}: expected parser failure but parse succeeded"
             )));
         }
-        (ParseExpectation::Error, Err(error)) => {
+        (ParseExpectation::Error, true) => {
             if let Some(expected) = expect_error {
-                let actual = error.to_string();
+                let actual = lowering.err().unwrap();
                 if !actual.contains(expected) {
                     return Err(TestSupportError::message(format!(
                         "{name}: expected parse error containing '{expected}' but got '{actual}'"
@@ -613,7 +615,6 @@ fn run_sql_parse_case(
         }
     }
 
-    let lowering = lower_sql_to_schema(dialect, sql);
     match expect_lowering {
         LoweringExpectation::Ok => {
             let actual = lowering.map_err(|error| {
@@ -627,7 +628,7 @@ fn run_sql_parse_case(
                     "lowered schema",
                     actual,
                     expected,
-                    gaman::core::Dialect::Postgres,
+                    parser_dialect_to_schema_dialect(dialect)?,
                 )?;
             }
         }
@@ -660,26 +661,29 @@ fn run_sql_parse_case(
     Ok(())
 }
 
-fn parse_sql_only(dialect: ParserFixtureDialect, sql: &str) -> Result<usize, String> {
-    match dialect {
-        ParserFixtureDialect::Postgres => Parser::parse_sql(&PostgreSqlDialect {}, sql),
-        ParserFixtureDialect::Sqlite => Parser::parse_sql(&SQLiteDialect {}, sql),
-        ParserFixtureDialect::Mysql => Parser::parse_sql(&MySqlDialect {}, sql),
-    }
-    .map(|statements| statements.len())
-    .map_err(|error| error.to_string())
-}
-
 fn lower_sql_to_schema(dialect: ParserFixtureDialect, sql: &str) -> Result<Schema, String> {
     match dialect {
         ParserFixtureDialect::Postgres => {
-            Schema::from_sql_str(sql).map_err(|error| error.to_string())
+            gaman::parsers::parse_sql_for_dialect(sql, gaman::core::Dialect::Postgres)
         }
         ParserFixtureDialect::Sqlite => {
-            Err("unsupported SQL lowering for sqlite parser fixtures".to_string())
+            gaman::parsers::parse_sql_for_dialect(sql, gaman::core::Dialect::Sqlite)
         }
-        ParserFixtureDialect::Mysql => {
-            Err("unsupported SQL lowering for mysql parser fixtures".to_string())
-        }
+        ParserFixtureDialect::Mysql => Err(gaman::parsers::ParseError::UnsupportedDialect(
+            "mysql".to_string(),
+        )),
+    }
+    .map_err(|error| error.to_string())
+}
+
+fn parser_dialect_to_schema_dialect(
+    dialect: ParserFixtureDialect,
+) -> Result<gaman::core::Dialect, TestSupportError> {
+    match dialect {
+        ParserFixtureDialect::Postgres => Ok(gaman::core::Dialect::Postgres),
+        ParserFixtureDialect::Sqlite => Ok(gaman::core::Dialect::Sqlite),
+        ParserFixtureDialect::Mysql => Err(TestSupportError::message(
+            "mysql parser fixtures cannot compare schema because MySQL schema lowering is unsupported",
+        )),
     }
 }

@@ -11,15 +11,17 @@ deterministically.
 Testing hierarchy:
 
 1. Rust unit tests verify implementation details and deterministic invariants.
-2. Offline YAML fixtures verify deterministic migration behavior.
-3. Online YAML fixtures verify real database behavior.
-4. Accepted evidence generates the public support matrix.
+2. Parser YAML fixtures verify SQL DDL lowering into Gaman schema entities.
+3. Offline YAML fixtures verify deterministic migration behavior.
+4. Online YAML fixtures verify real database behavior.
+5. Accepted evidence generates the public support matrix.
 
 ## Policy
 
 - All new migration behavior must first be covered by YAML fixtures.
-- Add offline YAML fixtures for deterministic behavior: parsing, normalization,
-  replay, diffing, disambiguation, rollback planning, and SQL rendering.
+- Add parser YAML fixtures for `CREATE`-only SQL DDL lowering into `Schema`.
+- Add offline YAML fixtures for deterministic behavior: normalization, replay,
+  diffing, clarification, rollback planning, and SQL rendering.
 - Add online YAML fixtures for behavior that needs a real database: migration
   application, catalog introspection, `verify_db`, constraints, locks,
   transactions, data preservation, and dialect quirks.
@@ -27,7 +29,7 @@ Testing hierarchy:
   Rust unit test around the responsible module, then fix the implementation.
 - Use property-based tests only for deterministic `gaman-core` invariants. They
   complement YAML fixtures; they do not create support evidence.
-- Keep message copy out of migration behavior tests. Disambiguator fixtures
+- Keep message copy out of migration behavior tests. Clarifier fixtures
   assert structured `Clarification` and `Decision` values, not prompt wording.
 - Do not hand-edit support claims. Accepted result files and generated README
   tables are the source of truth.
@@ -35,9 +37,11 @@ Testing hierarchy:
 ## Test Layers
 
 - `gaman-core`: offline schema IR, normalization, canonicalization, validation,
-  replay, diff, disambiguation, SQL parsing, and dialect SQL planning.
-- `tests/offline.rs`: YAML fixtures for offline parser, replay, diff,
-  disambiguation, rollback, SQL rendering, and end-to-end planning.
+  replay, diff, clarification, SQL segmentation/parsing, and dialect SQL planning.
+- `tests/parser.rs`: YAML fixtures for parser support by dialect and entity
+  kind. These track SQL statements that lower into Gaman schema structs.
+- `tests/offline.rs`: YAML fixtures for offline parser smoke coverage, replay,
+  diff, clarification, rollback, SQL rendering, and end-to-end planning.
 - `tests/online.rs`: YAML fixtures for live PostgreSQL and SQLite migration,
   inspect, verify, data, and expected-error checks.
 - `tests/offline_coverage.rs`: validates offline and online evidence matrices
@@ -113,6 +117,7 @@ Coverage policy:
 
 ```bash
 cargo test -p gaman-core
+cargo test -p gaman --test parser
 cargo test -p gaman
 cargo test -p gaman --features sqlite
 cargo test -p gaman --no-default-features --features offline
@@ -122,7 +127,6 @@ Offline/WASM boundaries:
 
 ```bash
 cargo check -p gaman --no-default-features --features offline --target wasm32-unknown-unknown
-cargo check -p gaman --no-default-features --features offline-sqlite --target wasm32-unknown-unknown
 ```
 
 Local non-live gate:
@@ -145,6 +149,7 @@ Checked-in accepted evidence:
 
 - `results/offline-results.yaml`
 - `results/online-results.yaml`
+- `results/parser-results.yaml`
 
 Local/ad-hoc outputs should use ignored paths such as:
 
@@ -163,6 +168,11 @@ cargo test --test offline -- tests/cases/offline/parser/postgres
 cargo test --test offline -- tests/cases/offline/diff/add_nullable_email.yaml
 cargo test --test offline -- 'tests/cases/offline/parser/postgres/*.yaml'
 
+cargo test --test parser
+cargo test --test parser -- tests/cases/parser/postgres
+cargo test --test parser -- tests/cases/parser/sqlite/sqlite_trigger_body.yaml
+cargo test --test parser -- 'tests/cases/parser/postgres/*.yaml'
+
 cargo test --features sqlite --test online -- --dialect sqlite
 cargo test --features sqlite --test online -- tests/cases/online/sqlite_rebuild_drop_column.yaml
 ```
@@ -175,12 +185,84 @@ Selection rules:
 - quoted glob: expanded by the harness inside the harness root;
 - missing, non-YAML, metadata-only, and outside-root paths fail early.
 
+## Parser Fixtures
+
+Parser cases live under `tests/cases/parser/` and are grouped by SQL dialect:
+
+- `postgres/`
+- `sqlite/`
+
+The parser harness is independent from offline migration planning. It records
+which `CREATE` SQL DDL statements successfully lower into Gaman `Schema`
+entities through the public parser API:
+
+```rust
+gaman::parsers::parse_sql_for_dialect(sql, dialect)
+```
+
+Parser fixtures assert two levels of evidence:
+
+- `expect_entities`: compact `EntityKind` coverage such as table, column, index,
+  trigger, function, enum, or extension.
+- `expect_schema`: exact normalized Gaman `Schema` expected after parsing.
+
+Unsupported parser cases use `expect_error` instead of entity/schema assertions.
+`ALTER`, `DROP`, `DELETE`, and other non-`CREATE` statements must be error
+fixtures because the parser is a schema loader, not a migration parser.
+
+Statement segmentation happens before AST parsing and is tested in `gaman-core`.
+It is dialect-aware and tag-free: semicolon boundaries, final statements without
+trailing semicolons, PostgreSQL dollar-quoted bodies, SQLite trigger bodies, and
+MySQL delimiter-driven routines are covered by unit tests. MySQL segmentation is
+available through parser utilities, but MySQL schema lowering remains explicitly
+unsupported.
+
+Example:
+
+```yaml
+description: PostgreSQL CREATE TYPE enum lowers into EnumDef
+dialect: postgres
+sql: |
+  CREATE TYPE mood AS ENUM ('happy', 'sad');
+
+expect_entities:
+- kind: enum
+  name: mood
+
+expect_schema:
+  enums:
+    mood:
+      name: mood
+      values: [happy, sad]
+```
+
+Record accepted parser evidence:
+
+```bash
+cargo test --test parser -- --record results/parser-results.yaml
+```
+
+Current parser support:
+
+| Entity | PostgreSQL | SQLite |
+|---|---:|---:|
+| table | supported | supported |
+| column | supported | supported |
+| constraint | supported | supported |
+| foreign key | supported | supported |
+| index | supported | supported |
+| trigger | function-backed | body-backed |
+| function | supported | unsupported |
+| view | supported | supported |
+| enum | supported | unsupported |
+| extension | supported | unsupported |
+
 ## Offline Fixtures
 
 Offline cases live under `tests/cases/offline/` and are grouped by intent:
 
 - `diff/`
-- `disambiguator/`
+- `clarifier/`
 - `end_to_end/`
 - `parser/postgres/`
 - `parser/sqlite/`
@@ -206,7 +288,7 @@ Current offline fixture count: 132.
 Current offline case distribution:
 
 - diff: 25
-- disambiguator: 25
+- clarifier: 25
 - end-to-end: 1
 - parser: 33
 - replay: 8
@@ -370,7 +452,6 @@ cargo test -p gaman
 cargo test -p gaman --features sqlite
 cargo test -p gaman --no-default-features --features offline
 cargo check -p gaman --no-default-features --features offline --target wasm32-unknown-unknown
-cargo check -p gaman --no-default-features --features offline-sqlite --target wasm32-unknown-unknown
 cargo test --test offline_coverage
 set -a; source .env; set +a; cargo test --features sqlite --test online -- --record results/online-results.yaml
 cargo run --bin gaman-support-matrix -- --update-readme

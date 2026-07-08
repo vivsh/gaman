@@ -33,11 +33,11 @@ macro_rules! impl_column_type {
     };
 }
 
-impl_column_type!(i16,     Dialect::Postgres => "smallint", #[cfg(feature = "sqlite")] Dialect::Sqlite => "integer");
-impl_column_type!(i32,     Dialect::Postgres => "integer", #[cfg(feature = "sqlite")] Dialect::Sqlite => "integer");
-impl_column_type!(i64,     Dialect::Postgres => "bigint", #[cfg(feature = "sqlite")] Dialect::Sqlite => "integer");
-impl_column_type!(f32,     Dialect::Postgres => "real", #[cfg(feature = "sqlite")] Dialect::Sqlite => "real");
-impl_column_type!(f64,     Dialect::Postgres => "double precision", #[cfg(feature = "sqlite")] Dialect::Sqlite => "real");
-impl_column_type!(bool,    Dialect::Postgres => "boolean", #[cfg(feature = "sqlite")] Dialect::Sqlite => "integer");
-impl_column_type!(String,  Dialect::Postgres => "text", #[cfg(feature = "sqlite")] Dialect::Sqlite => "text");
-impl_column_type!(Vec<u8>, Dialect::Postgres => "bytea", #[cfg(feature = "sqlite")] Dialect::Sqlite => "blob");
+impl_column_type!(i16,     Dialect::Postgres => "smallint", Dialect::Sqlite => "integer", Dialect::Mysql => "smallint");
+impl_column_type!(i32,     Dialect::Postgres => "integer", Dialect::Sqlite => "integer", Dialect::Mysql => "int");
+impl_column_type!(i64,     Dialect::Postgres => "bigint", Dialect::Sqlite => "integer", Dialect::Mysql => "bigint");
+impl_column_type!(f32,     Dialect::Postgres => "real", Dialect::Sqlite => "real", Dialect::Mysql => "float");
+impl_column_type!(f64,     Dialect::Postgres => "double precision", Dialect::Sqlite => "real", Dialect::Mysql => "double");
+impl_column_type!(bool,    Dialect::Postgres => "boolean", Dialect::Sqlite => "integer", Dialect::Mysql => "boolean");
+impl_column_type!(String,  Dialect::Postgres => "text", Dialect::Sqlite => "text", Dialect::Mysql => "text");
+impl_column_type!(Vec<u8>, Dialect::Postgres => "bytea", Dialect::Sqlite => "blob", Dialect::Mysql => "blob");

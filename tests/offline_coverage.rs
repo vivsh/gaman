@@ -393,7 +393,7 @@ fn assert_offline_results_evidence(
 }
 
 fn offline_case_dialect(case: &OfflineCaseSummary) -> Option<String> {
-    if case.kind == "sql_parse" {
+    if case.kind == "parser" {
         return case.parser_dialect.clone();
     }
     Some(

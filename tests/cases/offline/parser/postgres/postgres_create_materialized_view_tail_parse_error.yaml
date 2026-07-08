@@ -1,12 +1,11 @@
 ---
-description: sqlparser parses part of materialized views but rejects WITH DATA tail
-  syntax.
+description: PostgreSQL materialized view WITH DATA syntax is reported as a parse error.
 group: parser
 features:
 - group.parser
-- kind.sql_parse
+- kind.parser
 - parser.postgres.parser_postgres_create_materialized_view_tail_parse_error
-kind: sql_parse
+kind: parser
 parser_dialect: postgres
 sql: |
   CREATE MATERIALIZED VIEW active_users
