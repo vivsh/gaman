@@ -1,0 +1,66 @@
+description: SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together.
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - sqlite_rebuild_planner
+  - composite_primary_keys
+  - foreign_key_actions
+  - indexes_constraints
+  - partial_indexes
+  - generated_columns
+  - data_preservation
+migrations:
+  - id: 0001_combined_schema
+    operations:
+      - type: create_table
+        table:
+          name: parents
+          primary_key: {columns: [tenant_id, parent_id]}
+          columns:
+            - {name: tenant_id, type: integer}
+            - {name: parent_id, type: integer}
+      - type: create_table
+        table:
+          name: items
+          primary_key: {columns: [tenant_id, item_id]}
+          columns:
+            - {name: tenant_id, type: integer}
+            - {name: item_id, type: integer}
+            - {name: parent_id, type: integer}
+            - {name: price, type: integer}
+            - {name: qty, type: integer}
+            - {name: total, type: integer, nullable: true, generated: 'price * qty'}
+            - {name: code, type: text}
+            - {name: legacy, type: text, nullable: true}
+          foreign_keys:
+            - columns: [tenant_id, parent_id]
+              to_table: parents
+              to_columns: [tenant_id, parent_id]
+              on_update: cascade
+              on_delete: restrict
+          constraints:
+            - {kind: unique, name: items_tenant_code_key, columns: [tenant_id, code]}
+            - {kind: check, name: items_qty_check, expression: 'qty > 0'}
+          indexes:
+            - name: items_positive_total_idx
+              columns: [total]
+              predicate: total > 0
+      - {type: statement, up: 'INSERT INTO parents (tenant_id, parent_id) VALUES (1, 10)'}
+      - {type: statement, up: "INSERT INTO items (tenant_id, item_id, parent_id, price, qty, code, legacy) VALUES (1, 5, 10, 8, 3, 'A', 'old')"}
+  - id: 0002_drop_legacy
+    dependencies: [0001_combined_schema]
+    operations:
+      - type: drop_column
+        table_name: items
+        column: {name: legacy, type: text, nullable: true}
+dialects:
+  sqlite:
+    checks: [migrate, verify, data]
+    expect_verify: []
+    data:
+      - sql: SELECT CAST(total AS text) FROM items WHERE tenant_id = 1 AND item_id = 5
+        expect: ['24']
+      - sql: "INSERT INTO items (tenant_id, item_id, parent_id, price, qty, code) VALUES (1, 6, 10, 1, 1, 'A')"
+        expect_error: UNIQUE constraint failed
+      - sql: "INSERT INTO items (tenant_id, item_id, parent_id, price, qty, code) VALUES (1, 7, 10, 1, 0, 'B')"
+        expect_error: CHECK constraint failed

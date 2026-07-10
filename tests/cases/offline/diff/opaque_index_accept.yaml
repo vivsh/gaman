@@ -1,0 +1,15 @@
+description: AcceptRisk stores and renders an advanced opaque index from SQL input.
+group: diff
+features: [opaque_lifecycle, group.diff, kind.sql_schema_to_migration]
+kind: sql_schema_to_migration
+dialect: postgres
+name: add_expression_index
+sql: |
+  CREATE TABLE users (id integer PRIMARY KEY, name text NOT NULL);
+  CREATE INDEX users_lower_name_idx ON users ((lower(name)));
+decisions:
+- clarification_id: opaque_entity:index:users.users_lower_name_idx
+  answer: {type: accept_risk}
+expect_sql: |
+  CREATE TABLE "users" ("id" integer NOT NULL, "name" text NOT NULL, CONSTRAINT "users_pkey" PRIMARY KEY ("id"))
+  CREATE INDEX users_lower_name_idx ON users ((lower(name)))

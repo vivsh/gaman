@@ -1,0 +1,32 @@
+description: PostgreSQL verify detects a missing owned opaque expression index.
+features: [live_inspect_verify, ownership_scoped_verify, opaque_presence_verify, opaque_index_metadata]
+migrations:
+  - id: 0001_owned_opaque_index
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - {name: id, type: integer, primary_key: true}
+            - {name: email, type: text}
+      - type: add_index
+        table_name: users
+        index:
+          name: users_lower_email_idx
+          columns: []
+          opaque:
+            raw: CREATE INDEX users_lower_email_idx ON users ((lower(email)))
+            trusted: true
+mutate_sql: DROP INDEX users_lower_email_idx
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify:
+      - type: add_index
+        table_name: users
+        index:
+          name: users_lower_email_idx
+          columns: []
+          opaque:
+            raw: CREATE INDEX users_lower_email_idx ON users ((lower(email)))
+            trusted: true

@@ -1,0 +1,18 @@
+description: Accepted SQLite STRICT and WITHOUT ROWID options render in the table tail.
+group: diff
+features: [unmanaged_table_options, group.diff, kind.sql_schema_to_migration]
+kind: sql_schema_to_migration
+dialect: sqlite
+name: create_strict_settings
+sql: |
+  CREATE TABLE settings (
+    tenant_id integer NOT NULL,
+    key text NOT NULL,
+    value text,
+    PRIMARY KEY (tenant_id, key)
+  ) STRICT, WITHOUT ROWID;
+decisions:
+- clarification_id: unmanaged_table_options:settings
+  answer: {type: accept_risk}
+expect_sql: |
+  CREATE TABLE "settings" ("tenant_id" integer NOT NULL, "key" text NOT NULL, "value" text, CONSTRAINT "settings_pkey" PRIMARY KEY ("tenant_id", "key")) STRICT, WITHOUT ROWID

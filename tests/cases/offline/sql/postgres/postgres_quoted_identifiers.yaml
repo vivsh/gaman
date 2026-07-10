@@ -1,0 +1,15 @@
+description: PostgreSQL renders reserved mixed-case and spaced identifiers safely.
+group: sql_rendering
+features: [quoted_identifiers, group.sql_rendering, kind.migration_to_sql]
+kind: migration_to_sql
+dialect: postgres
+migrations:
+- id: 0001_quoted_order
+  operations:
+  - type: create_table
+    table:
+      name: Order
+      columns:
+      - {name: ID, type: integer, primary_key: true}
+      - {name: Line Item, type: text}
+expect_sql: 'CREATE TABLE "Order" ("ID" integer NOT NULL, "Line Item" text NOT NULL, CONSTRAINT "Order_pkey" PRIMARY KEY ("ID"))'

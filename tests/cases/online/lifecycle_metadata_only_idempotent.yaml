@@ -1,0 +1,25 @@
+description: Metadata-only table option acknowledgements apply idempotently without SQL.
+features: [live_migration_application, idempotent_migrations, migration_tracking, unmanaged_table_options]
+migrations:
+  - id: 0001_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns: [{name: id, type: integer, primary_key: true}]
+  - id: 0002_acknowledge_options
+    dependencies: [0001_users]
+    operations:
+      - type: acknowledge_table_options
+        table_name: users
+        old: {}
+        new:
+          header_raw: [UNLOGGED]
+          trusted: true
+dialects:
+  postgres:
+    checks: [migrate_twice, migration_records]
+    expect_records: [0001_users, 0002_acknowledge_options]
+  sqlite:
+    checks: [migrate_twice, migration_records]
+    expect_records: [0001_users, 0002_acknowledge_options]

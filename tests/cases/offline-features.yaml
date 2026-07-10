@@ -1,5 +1,20 @@
 ---
 features:
+- id: foreign_key_actions
+  label: Foreign key actions
+  category: lifecycle
+- id: opaque_lifecycle
+  label: Opaque entity lifecycle
+  category: lifecycle
+- id: unmanaged_table_options
+  label: Unmanaged table options
+  category: lifecycle
+- id: quoted_identifiers
+  label: Quoted and qualified identifiers
+  category: lifecycle
+- id: canonical_values
+  label: Canonical defaults and expressions
+  category: lifecycle
 - id: answer.keep_type
   label: answer / keep type
   category: answer
@@ -176,6 +191,9 @@ features:
   category: kind
 - id: kind.sql_to_schema
   label: kind / sql to schema
+  category: kind
+- id: kind.sql_schema_to_migration
+  label: kind / SQL schema to migration
   category: kind
 - id: operation.add_column
   label: operation / add column

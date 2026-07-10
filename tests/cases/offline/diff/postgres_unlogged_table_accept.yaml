@@ -1,0 +1,13 @@
+description: Accepted PostgreSQL UNLOGGED metadata renders in the table header.
+group: diff
+features: [unmanaged_table_options, group.diff, kind.sql_schema_to_migration]
+kind: sql_schema_to_migration
+dialect: postgres
+name: create_unlogged_events
+sql: |
+  CREATE UNLOGGED TABLE events (id integer PRIMARY KEY, payload text);
+decisions:
+- clarification_id: unmanaged_table_options:events
+  answer: {type: accept_risk}
+expect_sql: |
+  CREATE UNLOGGED TABLE "events" ("id" integer NOT NULL, "payload" text, CONSTRAINT "events_pkey" PRIMARY KEY ("id"))

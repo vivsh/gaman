@@ -160,6 +160,8 @@ fn expected_verify_ops<'a>(
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ExpectedErrorAction {
     Migrate,
+    MigrateTo,
+    Rollback,
     Inspect,
     Verify,
 }
@@ -170,6 +172,10 @@ fn expected_error_action(section: &support::OnlineDialectCase) -> Option<Expecte
     }
     if section.checks.contains(&OnlineCheck::Migrate) {
         Some(ExpectedErrorAction::Migrate)
+    } else if section.checks.contains(&OnlineCheck::MigrateTo) {
+        Some(ExpectedErrorAction::MigrateTo)
+    } else if section.checks.contains(&OnlineCheck::Rollback) {
+        Some(ExpectedErrorAction::Rollback)
     } else if section.checks.contains(&OnlineCheck::Inspect) {
         Some(ExpectedErrorAction::Inspect)
     } else if section.checks.contains(&OnlineCheck::Verify) {
@@ -277,7 +283,7 @@ fn validate_online_case(
         if section.checks.contains(&OnlineCheck::Error) && expected_error_action(section).is_none()
         {
             return Err(TestSupportError::message(format!(
-                "{name}: {} error checks must pair with migrate, inspect, or verify",
+                "{name}: {} error checks must pair with migrate, migrate_to, rollback, inspect, or verify",
                 dialect.as_str()
             )));
         }
@@ -461,21 +467,26 @@ async fn run_postgres_checks(
             let second = migrator.apply(None, false).await.map_err(|error| {
                 TestSupportError::message(format!("{name}: second migrate failed: {error}"))
             })?;
-            if second != 0 {
+            if second.applied != 0 || second.reverted != 0 {
                 return Err(TestSupportError::message(format!(
-                    "{name}: second migrate should be idempotent but applied {second} migrations"
+                    "{name}: second migrate should be idempotent but changed {second:?}"
                 )));
             }
             migration_attempted = true;
-            migrated = first > 0 || migrated;
+            migrated = first.applied > 0 || first.reverted > 0 || migrated;
         }
         if section.checks.contains(&OnlineCheck::MigrateTo) {
             let target = required_target(name, section, "migrate_to")?;
-            migrator.apply(Some(target), false).await.map_err(|error| {
+            let result = migrator.apply(Some(target), false).await.map_err(|error| {
                 TestSupportError::message(format!("{name}: migrate_to failed: {error}"))
-            })?;
+            });
             migration_attempted = true;
-            migrated = true;
+            if error_action == Some(ExpectedErrorAction::MigrateTo) {
+                assert_error_contains(name, result.map(|_| ()), expected_error(name, section)?)?;
+            } else {
+                result?;
+                migrated = true;
+            }
         }
         if section.checks.contains(&OnlineCheck::Rollback) {
             if !migrated && !migration_attempted && !migrations.is_empty() {
@@ -486,10 +497,15 @@ async fn run_postgres_checks(
                 })?;
             }
             let target = required_target(name, section, "rollback")?;
-            migrator.apply(Some(target), false).await.map_err(|error| {
+            let result = migrator.apply(Some(target), false).await.map_err(|error| {
                 TestSupportError::message(format!("{name}: rollback failed: {error}"))
-            })?;
-            migrated = true;
+            });
+            if error_action == Some(ExpectedErrorAction::Rollback) {
+                assert_error_contains(name, result.map(|_| ()), expected_error(name, section)?)?;
+            } else {
+                result?;
+                migrated = true;
+            }
         }
         if section.checks.contains(&OnlineCheck::LockBehavior) {
             harness.assert_lock_released().await?;
@@ -601,21 +617,26 @@ async fn run_sqlite_online_case(
             let second = migrator.apply(None, false).await.map_err(|error| {
                 TestSupportError::message(format!("{name}: second migrate failed: {error}"))
             })?;
-            if second != 0 {
+            if second.applied != 0 || second.reverted != 0 {
                 return Err(TestSupportError::message(format!(
-                    "{name}: second migrate should be idempotent but applied {second} migrations"
+                    "{name}: second migrate should be idempotent but changed {second:?}"
                 )));
             }
             migration_attempted = true;
-            migrated = first > 0 || migrated;
+            migrated = first.applied > 0 || first.reverted > 0 || migrated;
         }
         if section.checks.contains(&OnlineCheck::MigrateTo) {
             let target = required_target(name, section, "migrate_to")?;
-            migrator.apply(Some(target), false).await.map_err(|error| {
+            let result = migrator.apply(Some(target), false).await.map_err(|error| {
                 TestSupportError::message(format!("{name}: migrate_to failed: {error}"))
-            })?;
+            });
             migration_attempted = true;
-            migrated = true;
+            if error_action == Some(ExpectedErrorAction::MigrateTo) {
+                assert_error_contains(name, result.map(|_| ()), expected_error(name, section)?)?;
+            } else {
+                result?;
+                migrated = true;
+            }
         }
         if section.checks.contains(&OnlineCheck::Rollback) {
             if !migrated && !migration_attempted && !migrations.is_empty() {
@@ -626,10 +647,15 @@ async fn run_sqlite_online_case(
                 })?;
             }
             let target = required_target(name, section, "rollback")?;
-            migrator.apply(Some(target), false).await.map_err(|error| {
+            let result = migrator.apply(Some(target), false).await.map_err(|error| {
                 TestSupportError::message(format!("{name}: rollback failed: {error}"))
-            })?;
-            migrated = true;
+            });
+            if error_action == Some(ExpectedErrorAction::Rollback) {
+                assert_error_contains(name, result.map(|_| ()), expected_error(name, section)?)?;
+            } else {
+                result?;
+                migrated = true;
+            }
         }
         if section.checks.contains(&OnlineCheck::LockBehavior) {
             harness.assert_lock_released().await?;

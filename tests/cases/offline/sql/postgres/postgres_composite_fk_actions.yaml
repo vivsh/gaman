@@ -1,0 +1,31 @@
+description: PostgreSQL renders ordered composite foreign keys with both referential actions.
+group: sql_rendering
+features: [foreign_key_actions, group.sql_rendering, kind.migration_to_sql]
+kind: migration_to_sql
+dialect: postgres
+migrations:
+- id: 0001_composite_actions
+  operations:
+  - type: create_table
+    table:
+      name: tenants
+      primary_key: {columns: [tenant_id, region_id]}
+      columns:
+      - {name: tenant_id, type: integer}
+      - {name: region_id, type: integer}
+  - type: create_table
+    table:
+      name: accounts
+      columns:
+      - {name: tenant_id, type: integer}
+      - {name: region_id, type: integer}
+      foreign_keys:
+      - name: accounts_tenant_region_fkey
+        columns: [tenant_id, region_id]
+        to_table: tenants
+        to_columns: [tenant_id, region_id]
+        on_delete: restrict
+        on_update: cascade
+expect_sql: |
+  CREATE TABLE "tenants" ("tenant_id" integer NOT NULL, "region_id" integer NOT NULL, CONSTRAINT "tenants_pkey" PRIMARY KEY ("tenant_id", "region_id"))
+  CREATE TABLE "accounts" ("tenant_id" integer NOT NULL, "region_id" integer NOT NULL, CONSTRAINT "accounts_tenant_region_fkey" FOREIGN KEY ("tenant_id", "region_id") REFERENCES "tenants" ("tenant_id", "region_id") ON DELETE RESTRICT ON UPDATE CASCADE)

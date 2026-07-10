@@ -1,0 +1,27 @@
+description: Opaque index formatting and comments do not create a migration.
+group: diff
+features: [opaque_lifecycle, group.diff, kind.sql_schema_to_migration]
+kind: sql_schema_to_migration
+dialect: postgres
+name: reformat_expression_index
+migrations:
+- id: 0001_schema
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - {name: id, type: integer, primary_key: true}
+      - {name: name, type: text}
+      indexes:
+      - name: users_lower_name_idx
+        columns: []
+        opaque:
+          raw: CREATE INDEX users_lower_name_idx ON users ((lower(name)))
+          trusted: true
+sql: |
+  CREATE TABLE users (id integer PRIMARY KEY, name text NOT NULL);
+  -- formatting metadata belongs to this statement
+  CREATE   INDEX users_lower_name_idx
+    ON users ( ( lower(name) ) );
+expect_no_changes: true

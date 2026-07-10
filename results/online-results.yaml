@@ -205,6 +205,12 @@ features:
         checks:
         - migrate
         - inspect
+      - case: sqlite_rebuild_combined_features
+        description: SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together.
+        checks:
+        - migrate
+        - verify
+        - data
       - case: verify_composite_pk_missing
         description: verify reports missing owned composite primary keys as manual drift
         checks:
@@ -250,6 +256,25 @@ features:
         checks:
         - migrate
         - data
+      - case: fk_on_delete_set_default_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET DEFAULT with a valid parent default.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_delete_set_null_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET NULL.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_update_cascade_shared
+        description: PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: generated_column_create_shared
         description: generated columns compute values during live migration
         checks:
@@ -283,6 +308,13 @@ features:
         checks:
         - migrate
         - inspect
+        - data
+      - case: quoted_identifiers_shared
+        description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
+        checks:
+        - migrate
+        - inspect
+        - verify
         - data
       - case: raw_statement_data
         description: raw SQL statements run during live migration and can seed deterministic data
@@ -329,6 +361,25 @@ features:
         checks:
         - migrate
         - data
+      - case: fk_on_delete_set_default_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET DEFAULT with a valid parent default.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_delete_set_null_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET NULL.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_update_cascade_shared
+        description: PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: generated_column_create_shared
         description: generated columns compute values during live migration
         checks:
@@ -356,6 +407,13 @@ features:
         description: linear migration chains apply in dependency order
         checks:
         - migrate
+        - data
+      - case: quoted_identifiers_shared
+        description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
+        checks:
+        - migrate
+        - inspect
+        - verify
         - data
       - case: raw_statement_data
         description: raw SQL statements run during live migration and can seed deterministic data
@@ -392,6 +450,12 @@ features:
         description: SQLite rebuild alter type with cast preserves converted values
         checks:
         - migrate
+        - data
+      - case: sqlite_rebuild_combined_features
+        description: SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together.
+        checks:
+        - migrate
+        - verify
         - data
       - case: sqlite_rebuild_default_nullability
         description: SQLite rebuild changes default and nullability while preserving rows
@@ -451,6 +515,60 @@ features:
     sqlite:
       status: unimplemented
       reason: no online evidence recorded
+  foreign_key_actions:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: fk_on_delete_set_default_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET DEFAULT with a valid parent default.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_delete_set_null_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET NULL.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_update_cascade_shared
+        description: PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: fk_on_delete_set_default_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET DEFAULT with a valid parent default.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_delete_set_null_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET NULL.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_update_cascade_shared
+        description: PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
+      - case: sqlite_rebuild_combined_features
+        description: SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together.
+        checks:
+        - migrate
+        - verify
+        - data
   functions_opaque:
     mysql:
       status: unimplemented
@@ -525,6 +643,12 @@ features:
         checks:
         - migrate
         - data
+      - case: sqlite_rebuild_combined_features
+        description: SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together.
+        checks:
+        - migrate
+        - verify
+        - data
       - case: verify_generated_column_expression_drift
         description: verify reports owned generated column expression drift
         checks:
@@ -546,6 +670,11 @@ features:
         - migrate_twice
         - migration_records
         - data
+      - case: lifecycle_metadata_only_idempotent
+        description: Metadata-only table option acknowledgements apply idempotently without SQL.
+        checks:
+        - migrate_twice
+        - migration_records
     sqlite:
       status: success
       evidence:
@@ -555,6 +684,11 @@ features:
         - migrate_twice
         - migration_records
         - data
+      - case: lifecycle_metadata_only_idempotent
+        description: Metadata-only table option acknowledgements apply idempotently without SQL.
+        checks:
+        - migrate_twice
+        - migration_records
   indexes:
     mysql:
       status: unimplemented
@@ -667,6 +801,12 @@ features:
         checks:
         - migrate
         - data
+      - case: sqlite_rebuild_combined_features
+        description: SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together.
+        checks:
+        - migrate
+        - verify
+        - data
       - case: sqlite_rebuild_constraints
         description: SQLite rebuild adds unique and check constraints that reject invalid data
         checks:
@@ -717,6 +857,13 @@ features:
         checks:
         - migrate
         - inspect
+      - case: fk_on_update_cascade_shared
+        description: PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: linear_chain_order
         description: linear migration chains apply in dependency order
         checks:
@@ -726,6 +873,11 @@ features:
         description: PostgreSQL inspect preserves advanced index metadata without making it verified drift input
         checks:
         - inspect
+      - case: postgres_default_canonical_forms
+        description: PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift.
+        checks:
+        - migrate
+        - verify
       - case: postgres_enum_append_inspect
         description: PostgreSQL enum append preserves ordered labels during inspect
         checks:
@@ -746,6 +898,10 @@ features:
         - migrate
         - inspect
         - data
+      - case: postgres_opaque_index_with_modeled_drift
+        description: PostgreSQL modeled column drift remains visible beside an owned opaque index.
+        checks:
+        - verify
       - case: postgres_opaque_objects
         description: PostgreSQL migrates and inspects enums functions views and query triggers
         checks:
@@ -792,6 +948,14 @@ features:
         description: PostgreSQL verify reports a missing owned trigger
         checks:
         - verify
+      - case: postgres_verify_opaque_index_definition_ignored
+        description: PostgreSQL verify treats changed owned opaque index definitions as present.
+        checks:
+        - verify
+      - case: postgres_verify_opaque_index_presence
+        description: PostgreSQL verify detects a missing owned opaque expression index.
+        checks:
+        - verify
       - case: postgres_verify_schema_qualified_no_drift
         description: PostgreSQL verify accepts explicitly schema-qualified owned objects
         checks:
@@ -805,6 +969,13 @@ features:
         checks:
         - migrate
         - inspect
+      - case: quoted_identifiers_shared
+        description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: rename_table_column
         description: live migrations rename tables and columns while preserving data
         checks:
@@ -891,10 +1062,24 @@ features:
         checks:
         - migrate
         - inspect
+      - case: fk_on_update_cascade_shared
+        description: PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: linear_chain_order
         description: linear migration chains apply in dependency order
         checks:
         - migrate
+        - data
+      - case: quoted_identifiers_shared
+        description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
+        checks:
+        - migrate
+        - inspect
+        - verify
         - data
       - case: rename_table_column
         description: live migrations rename tables and columns while preserving data
@@ -908,6 +1093,12 @@ features:
         - migrate
         - inspect
         - verify
+      - case: sqlite_rebuild_combined_features
+        description: SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together.
+        checks:
+        - migrate
+        - verify
+        - data
       - case: sqlite_rebuild_drop_column
         description: SQLite rebuild drops a column while preserving data and remaining schema
         checks:
@@ -1023,6 +1214,25 @@ features:
         checks:
         - migrate
         - data
+      - case: fk_on_delete_set_default_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET DEFAULT with a valid parent default.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_delete_set_null_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET NULL.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_update_cascade_shared
+        description: PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: generated_column_create_shared
         description: generated columns compute values during live migration
         checks:
@@ -1055,6 +1265,11 @@ features:
         - migrate_twice
         - migration_records
         - data
+      - case: lifecycle_metadata_only_idempotent
+        description: Metadata-only table option acknowledgements apply idempotently without SQL.
+        checks:
+        - migrate_twice
+        - migration_records
       - case: lifecycle_rollback_to_target
         description: migrate target rollback removes later migration effects and records
         checks:
@@ -1073,6 +1288,11 @@ features:
         checks:
         - migrate
         - data
+      - case: postgres_default_canonical_forms
+        description: PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift.
+        checks:
+        - migrate
+        - verify
       - case: postgres_enum_append_inspect
         description: PostgreSQL enum append preserves ordered labels during inspect
         checks:
@@ -1110,6 +1330,13 @@ features:
         checks:
         - migrate
         - inspect
+      - case: quoted_identifiers_shared
+        description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: raw_statement_data
         description: raw SQL statements run during live migration and can seed deterministic data
         checks:
@@ -1175,6 +1402,25 @@ features:
         checks:
         - migrate
         - inspect
+      - case: fk_on_delete_set_default_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET DEFAULT with a valid parent default.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_delete_set_null_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET NULL.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_update_cascade_shared
+        description: PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: generated_column_create_shared
         description: generated columns compute values during live migration
         checks:
@@ -1207,6 +1453,11 @@ features:
         - migrate_twice
         - migration_records
         - data
+      - case: lifecycle_metadata_only_idempotent
+        description: Metadata-only table option acknowledgements apply idempotently without SQL.
+        checks:
+        - migrate_twice
+        - migration_records
       - case: lifecycle_rollback_to_target
         description: migrate target rollback removes later migration effects and records
         checks:
@@ -1224,6 +1475,13 @@ features:
         description: linear migration chains apply in dependency order
         checks:
         - migrate
+        - data
+      - case: quoted_identifiers_shared
+        description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
+        checks:
+        - migrate
+        - inspect
+        - verify
         - data
       - case: raw_statement_data
         description: raw SQL statements run during live migration and can seed deterministic data
@@ -1266,6 +1524,12 @@ features:
         description: SQLite rebuild alter type with cast preserves converted values
         checks:
         - migrate
+        - data
+      - case: sqlite_rebuild_combined_features
+        description: SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together.
+        checks:
+        - migrate
+        - verify
         - data
       - case: sqlite_rebuild_constraints
         description: SQLite rebuild adds unique and check constraints that reject invalid data
@@ -1333,6 +1597,11 @@ features:
         - migrate_twice
         - migration_records
         - data
+      - case: lifecycle_metadata_only_idempotent
+        description: Metadata-only table option acknowledgements apply idempotently without SQL.
+        checks:
+        - migrate_twice
+        - migration_records
       - case: lifecycle_rollback_to_target
         description: migrate target rollback removes later migration effects and records
         checks:
@@ -1371,6 +1640,11 @@ features:
         - migrate_twice
         - migration_records
         - data
+      - case: lifecycle_metadata_only_idempotent
+        description: Metadata-only table option acknowledgements apply idempotently without SQL.
+        checks:
+        - migrate_twice
+        - migration_records
       - case: lifecycle_rollback_to_target
         description: migrate target rollback removes later migration effects and records
         checks:
@@ -1399,8 +1673,42 @@ features:
         description: PostgreSQL inspect preserves expression index metadata without failing
         checks:
         - inspect
+      - case: postgres_opaque_index_with_modeled_drift
+        description: PostgreSQL modeled column drift remains visible beside an owned opaque index.
+        checks:
+        - verify
       - case: postgres_verify_ignores_opaque_index_metadata
         description: PostgreSQL verify ignores unregistered opaque metadata on advanced live indexes
+        checks:
+        - verify
+      - case: postgres_verify_opaque_index_definition_ignored
+        description: PostgreSQL verify treats changed owned opaque index definitions as present.
+        checks:
+        - verify
+      - case: postgres_verify_opaque_index_presence
+        description: PostgreSQL verify detects a missing owned opaque expression index.
+        checks:
+        - verify
+    sqlite:
+      status: unimplemented
+      reason: dialect section missing
+  opaque_presence_verify:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: postgres_opaque_index_with_modeled_drift
+        description: PostgreSQL modeled column drift remains visible beside an owned opaque index.
+        checks:
+        - verify
+      - case: postgres_verify_opaque_index_definition_ignored
+        description: PostgreSQL verify treats changed owned opaque index definitions as present.
+        checks:
+        - verify
+      - case: postgres_verify_opaque_index_presence
+        description: PostgreSQL verify detects a missing owned opaque expression index.
         checks:
         - verify
     sqlite:
@@ -1413,6 +1721,10 @@ features:
     postgres:
       status: success
       evidence:
+      - case: postgres_opaque_index_with_modeled_drift
+        description: PostgreSQL modeled column drift remains visible beside an owned opaque index.
+        checks:
+        - verify
       - case: postgres_verify_enum_drift
         description: PostgreSQL verify reports owned enum label order drift
         checks:
@@ -1447,6 +1759,14 @@ features:
         - verify
       - case: postgres_verify_missing_owned_trigger
         description: PostgreSQL verify reports a missing owned trigger
+        checks:
+        - verify
+      - case: postgres_verify_opaque_index_definition_ignored
+        description: PostgreSQL verify treats changed owned opaque index definitions as present.
+        checks:
+        - verify
+      - case: postgres_verify_opaque_index_presence
+        description: PostgreSQL verify detects a missing owned opaque expression index.
         checks:
         - verify
       - case: postgres_verify_schema_qualified_no_drift
@@ -1585,8 +1905,38 @@ features:
         - migrate
         - inspect
     sqlite:
+      status: success
+      evidence:
+      - case: sqlite_rebuild_combined_features
+        description: SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together.
+        checks:
+        - migrate
+        - verify
+        - data
+  quoted_identifiers:
+    mysql:
       status: unimplemented
       reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: quoted_identifiers_shared
+        description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: quoted_identifiers_shared
+        description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
   raw_sql_statements:
     mysql:
       status: unimplemented
@@ -1652,6 +2002,25 @@ features:
     postgres:
       status: success
       evidence:
+      - case: fk_on_delete_set_default_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET DEFAULT with a valid parent default.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_delete_set_null_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET NULL.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_update_cascade_shared
+        description: PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: postgres_fk_on_delete_inspect
         description: PostgreSQL inspect reflects foreign key on_delete action
         checks:
@@ -1673,6 +2042,25 @@ features:
     sqlite:
       status: success
       evidence:
+      - case: fk_on_delete_set_default_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET DEFAULT with a valid parent default.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_delete_set_null_shared
+        description: PostgreSQL and SQLite enforce ON DELETE SET NULL.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: fk_on_update_cascade_shared
+        description: PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: single_fk_enforcement
         description: single-column foreign keys are enforced by live databases
         checks:
@@ -1707,6 +2095,11 @@ features:
         - migrate
         - inspect
         - data
+      - case: postgres_default_canonical_forms
+        description: PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift.
+        checks:
+        - migrate
+        - verify
       - case: rename_table_column
         description: live migrations rename tables and columns while preserving data
         checks:
@@ -1773,6 +2166,12 @@ features:
         checks:
         - migrate
         - error
+      - case: sqlite_rebuild_combined_features
+        description: SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together.
+        checks:
+        - migrate
+        - verify
+        - data
       - case: sqlite_rebuild_constraints
         description: SQLite rebuild adds unique and check constraints that reject invalid data
         checks:
@@ -1908,6 +2307,13 @@ features:
         checks:
         - migrate
         - data
+      - case: quoted_identifiers_shared
+        description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: rename_table_column
         description: live migrations rename tables and columns while preserving data
         checks:
@@ -1988,6 +2394,13 @@ features:
         description: linear migration chains apply in dependency order
         checks:
         - migrate
+        - data
+      - case: quoted_identifiers_shared
+        description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
+        checks:
+        - migrate
+        - inspect
+        - verify
         - data
       - case: rename_table_column
         description: live migrations rename tables and columns while preserving data
@@ -2141,6 +2554,15 @@ features:
         - migrate
         - inspect
         - data
+      - case: postgres_default_canonical_forms
+        description: PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift.
+        checks:
+        - migrate
+        - verify
+      - case: postgres_opaque_index_with_modeled_drift
+        description: PostgreSQL modeled column drift remains visible beside an owned opaque index.
+        checks:
+        - verify
       - case: verify_detects_changed_column_metadata
         description: verify reports changed metadata for owned columns
         checks:
@@ -2215,6 +2637,26 @@ features:
         checks:
         - migrate
         - data
+  unmanaged_table_options:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: lifecycle_metadata_only_idempotent
+        description: Metadata-only table option acknowledgements apply idempotently without SQL.
+        checks:
+        - migrate_twice
+        - migration_records
+    sqlite:
+      status: success
+      evidence:
+      - case: lifecycle_metadata_only_idempotent
+        description: Metadata-only table option acknowledgements apply idempotently without SQL.
+        checks:
+        - migrate_twice
+        - migration_records
   unsupported_feature_errors:
     mysql:
       status: unimplemented
@@ -2222,6 +2664,11 @@ features:
     postgres:
       status: success
       evidence:
+      - case: lifecycle_branched_target
+        description: Target migration rejects an unresolved graph with multiple heads.
+        checks:
+        - migrate_to
+        - error
       - case: verify_composite_pk_missing
         description: verify reports missing owned composite primary keys as manual drift
         checks:
@@ -2233,6 +2680,11 @@ features:
     sqlite:
       status: success
       evidence:
+      - case: lifecycle_branched_target
+        description: Target migration rejects an unresolved graph with multiple heads.
+        checks:
+        - migrate_to
+        - error
       - case: sqlite_rebuild_atomic_false_error
         description: SQLite rebuild migrations fail clearly when atomic is false
         checks:

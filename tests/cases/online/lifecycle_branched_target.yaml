@@ -1,0 +1,32 @@
+description: Target migration rejects an unresolved graph with multiple heads.
+features: [unsupported_feature_errors]
+migrations:
+  - id: 0001_root
+    operations:
+      - type: create_table
+        table:
+          name: root_table
+          columns: [{name: id, type: integer, primary_key: true}]
+  - id: 0002_left
+    dependencies: [0001_root]
+    operations:
+      - type: create_table
+        table:
+          name: left_table
+          columns: [{name: id, type: integer, primary_key: true}]
+  - id: 0003_right
+    dependencies: [0001_root]
+    operations:
+      - type: create_table
+        table:
+          name: right_table
+          columns: [{name: id, type: integer, primary_key: true}]
+dialects:
+  postgres:
+    checks: [migrate_to, error]
+    target: 0002_left
+    expect_error: multiple heads detected
+  sqlite:
+    checks: [migrate_to, error]
+    target: 0002_left
+    expect_error: multiple heads detected

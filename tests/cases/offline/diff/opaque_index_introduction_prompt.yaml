@@ -1,0 +1,16 @@
+description: SQL input asks before managing an advanced index as opaque SQL.
+group: diff
+features: [opaque_lifecycle, group.diff, kind.sql_schema_to_migration]
+kind: sql_schema_to_migration
+dialect: postgres
+name: add_expression_index
+sql: |
+  CREATE TABLE users (id integer PRIMARY KEY, name text NOT NULL);
+  CREATE INDEX users_lower_name_idx ON users ((lower(name)));
+expect_clarifications:
+- id: opaque_entity:index:users.users_lower_name_idx
+  severity: warning
+  kind:
+    type: opaque_entity
+    kind: index
+    name: users.users_lower_name_idx

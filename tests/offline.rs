@@ -209,6 +209,7 @@ fn offline_kind(spec: &OfflineSpec) -> &'static str {
     match spec {
         OfflineSpec::Parser { .. } => "parser",
         OfflineSpec::SqlToSchema { .. } => "sql_to_schema",
+        OfflineSpec::SqlSchemaToMigration { .. } => "sql_schema_to_migration",
         OfflineSpec::SchemaToMigration { .. } => "schema_to_migration",
         OfflineSpec::MigrationToReplay { .. } => "migration_to_replay",
         OfflineSpec::MigrationToSql { .. } => "migration_to_sql",
@@ -281,7 +282,7 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
             expect_schema,
             expect_error,
         } => {
-            let result = Schema::from_sql_str(sql, gaman::core::Dialect::Postgres);
+            let result = Schema::from_sql_str(sql, dialect);
             if let Some(expected) = expect_error {
                 return assert_error_contains(name, result.map(|_| ()), expected);
             }
@@ -297,6 +298,46 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
                 ))
             })?;
             assert_schema_matches_with_dialect(name, "parsed schema", actual, expected, dialect)
+        }
+        OfflineSpec::SqlSchemaToMigration {
+            name: migration_name,
+            sql,
+            migrations,
+            decisions,
+            expect_no_changes,
+            expect_clarifications,
+            expect_pending_clarifications,
+            expect_operations,
+            expect_schema,
+            expect_sql,
+            expect_error,
+        } => {
+            let current = match Schema::from_sql_str(sql, dialect) {
+                Ok(current) => current,
+                Err(error) => {
+                    if let Some(expected) = expect_error {
+                        return assert_error_contains(name, Err::<(), _>(error), expected);
+                    }
+                    return Err(TestSupportError::message(format!(
+                        "{name}: sql_schema_to_migration failed to load SQL: {error}"
+                    )));
+                }
+            };
+            run_schema_to_migration_case(
+                name,
+                case.dialect,
+                migration_name,
+                migrations,
+                &current,
+                decisions,
+                *expect_no_changes,
+                expect_clarifications,
+                expect_pending_clarifications,
+                expect_operations,
+                expect_schema,
+                expect_sql,
+                expect_error.as_deref(),
+            )
         }
         OfflineSpec::SchemaToMigration {
             name: migration_name,
@@ -633,6 +674,89 @@ fn run_end_to_end_case(
             ))
         })?;
 
+    if let Some(expected) = expect_operations {
+        assert_ops_match(
+            name,
+            "generated operations",
+            &generated.operations,
+            expected,
+        )?;
+    }
+    if let Some(expected) = expect_schema {
+        let final_schema = replay_with_generated(name, &migrator, &generated)?;
+        assert_schema_matches_with_dialect(
+            name,
+            "final schema",
+            final_schema,
+            expected.clone(),
+            dialect,
+        )?;
+    }
+    if let Some(expected) = expect_sql {
+        let actual = migrator
+            .sql_migrate(std::slice::from_ref(&generated))
+            .map_err(|error| {
+                TestSupportError::message(format!(
+                    "{name}: failed to render generated SQL: {error}"
+                ))
+            })?;
+        assert_sql_matches(name, &actual, expected)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_schema_to_migration_case(
+    name: &str,
+    fixture_dialect: support::FixtureDialect,
+    migration_name: &str,
+    migrations: &[support::InlineMigration],
+    current: &Schema,
+    decisions: &[gaman::core::Decision],
+    expect_no_changes: bool,
+    expect_clarifications: &Option<Vec<gaman::core::Clarification>>,
+    expect_pending_clarifications: &Option<Vec<gaman::core::Clarification>>,
+    expect_operations: &Option<Vec<gaman::schema::Operation>>,
+    expect_schema: &Option<Schema>,
+    expect_sql: &Option<String>,
+    expect_error: Option<&str>,
+) -> Result<(), TestSupportError> {
+    let dialect = fixture_dialect.to_dialect()?;
+    let migrator = build_migrator(name, fixture_dialect, migrations)?;
+    let result = migrator.make_migrations(
+        Some(migration_name.to_string()),
+        current.clone(),
+        true,
+        decisions,
+    );
+    if let Some(expected) = expect_clarifications
+        .as_ref()
+        .or(expect_pending_clarifications.as_ref())
+    {
+        return assert_schema_to_migration_clarifications(name, result, expected);
+    }
+    if let Some(expected) = expect_error {
+        return assert_error_contains(name, result.map(|_| ()), expected);
+    }
+    let generated = result.map_err(|error| {
+        TestSupportError::message(format!(
+            "{name}: sql_schema_to_migration failed unexpectedly: {error}"
+        ))
+    })?;
+    if expect_no_changes {
+        return if generated.is_none() {
+            Ok(())
+        } else {
+            Err(TestSupportError::message(format!(
+                "{name}: expected no migration, but one was generated"
+            )))
+        };
+    }
+    let generated = generated.ok_or_else(|| {
+        TestSupportError::message(format!(
+            "{name}: expected a generated migration, but diff returned no changes"
+        ))
+    })?;
     if let Some(expected) = expect_operations {
         assert_ops_match(
             name,

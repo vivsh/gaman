@@ -82,6 +82,27 @@ Important fields:
 - `expect_sql`: generated SQL.
 - `expect_error`: expected error substring.
 
+### `sql_schema_to_migration`
+
+Loads the desired schema through the public SQL ingestion path, then runs the
+same migration planning lifecycle as `schema_to_migration`. Use this kind for
+opaque SQL entities and unmanaged table options, which structured authored
+schemas cannot represent.
+
+Important fields:
+
+- `sql`: desired SQL schema input.
+- `name`: migration name.
+- `migrations`: existing migration graph.
+- `decisions`: optional clarification decisions.
+- `expect_no_changes`: no-op expectation.
+- `expect_clarifications`: completed clarification output.
+- `expect_pending_clarifications`: pending clarification output.
+- `expect_operations`: generated operations.
+- `expect_schema`: replayed schema after the generated migration.
+- `expect_sql`: generated SQL.
+- `expect_error`: expected loading or planning error.
+
 ### `migration_to_replay`
 
 Replays migrations into schema state.

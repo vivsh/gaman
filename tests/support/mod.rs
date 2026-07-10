@@ -338,11 +338,12 @@ struct PostgresHarnessEnvironment {
 #[cfg(feature = "postgres")]
 impl PostgresHarnessEnvironment {
     fn new(url: &str, schema: &str) -> Self {
-        let config = Config {
-            database_url: url.to_string(),
-            dialect: Dialect::Postgres,
-            ..Config::default()
-        };
+        let config = Config::new(
+            url.to_string(),
+            PathBuf::from("migrations"),
+            PathBuf::from("schema.yaml"),
+            Dialect::Postgres,
+        );
         Self {
             config: Arc::new(config),
             schema: schema.to_string(),
@@ -358,11 +359,12 @@ struct SqliteHarnessEnvironment {
 #[cfg(feature = "sqlite")]
 impl SqliteHarnessEnvironment {
     fn new(url: &str) -> Self {
-        let config = Config {
-            database_url: url.to_string(),
-            dialect: Dialect::Sqlite,
-            ..Config::default()
-        };
+        let config = Config::new(
+            url.to_string(),
+            PathBuf::from("migrations"),
+            PathBuf::from("schema.yaml"),
+            Dialect::Sqlite,
+        );
         Self {
             config: Arc::new(config),
         }
@@ -500,6 +502,22 @@ pub enum OfflineSpec {
     SqlToSchema {
         sql: String,
         expect_schema: Option<Schema>,
+        expect_error: Option<String>,
+    },
+    SqlSchemaToMigration {
+        name: String,
+        sql: String,
+        #[serde(default)]
+        migrations: Vec<InlineMigration>,
+        #[serde(default)]
+        decisions: Vec<Decision>,
+        #[serde(default)]
+        expect_no_changes: bool,
+        expect_clarifications: Option<Vec<Clarification>>,
+        expect_pending_clarifications: Option<Vec<Clarification>>,
+        expect_operations: Option<Vec<Operation>>,
+        expect_schema: Option<Schema>,
+        expect_sql: Option<String>,
         expect_error: Option<String>,
     },
     SchemaToMigration {
@@ -648,6 +666,27 @@ impl OfflineSpec {
                     ));
                 }
             }
+            Self::SqlSchemaToMigration {
+                expect_no_changes,
+                expect_clarifications,
+                expect_pending_clarifications,
+                expect_operations,
+                expect_schema,
+                expect_sql,
+                expect_error,
+                ..
+            } => {
+                validate_migration_expectations(
+                    case_name,
+                    *expect_no_changes,
+                    expect_clarifications,
+                    expect_pending_clarifications,
+                    expect_operations,
+                    expect_schema,
+                    expect_sql,
+                    expect_error,
+                )?;
+            }
             Self::MigrationToSql {
                 expect_sql,
                 expect_error,
@@ -749,6 +788,55 @@ impl OfflineSpec {
         }
         Ok(())
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_migration_expectations(
+    case_name: &str,
+    expect_no_changes: bool,
+    expect_clarifications: &Option<Vec<Clarification>>,
+    expect_pending_clarifications: &Option<Vec<Clarification>>,
+    expect_operations: &Option<Vec<Operation>>,
+    expect_schema: &Option<Schema>,
+    expect_sql: &Option<String>,
+    expect_error: &Option<String>,
+) -> Result<(), TestSupportError> {
+    if expect_clarifications.is_some() && expect_pending_clarifications.is_some() {
+        return Err(invalid_fixture(
+            case_name,
+            "use either expect_clarifications or expect_pending_clarifications, not both",
+        ));
+    }
+    let expects_generated =
+        expect_operations.is_some() || expect_schema.is_some() || expect_sql.is_some();
+    let expects_clarification =
+        expect_clarifications.is_some() || expect_pending_clarifications.is_some();
+    if expect_no_changes && (expects_generated || expects_clarification || expect_error.is_some()) {
+        return Err(invalid_fixture(
+            case_name,
+            "expect_no_changes cannot be combined with generated, clarification, or error expectations",
+        ));
+    }
+    if expect_error.is_some() && (expects_generated || expects_clarification) {
+        return Err(invalid_fixture(
+            case_name,
+            "expect_error cannot be combined with generated or clarification expectations",
+        ));
+    }
+    if expects_clarification && (expect_schema.is_some() || expect_sql.is_some()) {
+        return Err(invalid_fixture(
+            case_name,
+            "clarification fixtures cannot also expect schema or SQL",
+        ));
+    }
+    if !expect_no_changes && !expects_generated && !expects_clarification && expect_error.is_none()
+    {
+        return Err(invalid_fixture(
+            case_name,
+            "migration fixture requires a generated, clarification, no-change, or error expectation",
+        ));
+    }
+    Ok(())
 }
 
 fn invalid_fixture(case_name: &str, reason: &str) -> TestSupportError {
@@ -1092,9 +1180,15 @@ pub fn build_migrator(
     dialect: FixtureDialect,
     migrations: &[InlineMigration],
 ) -> Result<Migrator, TestSupportError> {
-    let config = Arc::new(Config::default());
+    let dialect = dialect.to_dialect()?;
+    let config = Arc::new(Config::new(
+        "postgres:///".to_string(),
+        PathBuf::from("migrations"),
+        PathBuf::from("schema.yaml"),
+        dialect,
+    ));
     let source = Box::new(VecAdapter::new(to_migrations(migrations)));
-    let environment = Box::new(FixtureEnvironment::new(config, dialect.to_dialect()?));
+    let environment = Box::new(FixtureEnvironment::new(config, dialect));
     Migrator::new(source, environment).map_err(|error| {
         TestSupportError::message(format!(
             "{case_name}: failed to construct migrator: {error}"

@@ -5,7 +5,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 fn print_header() {
     eprintln!();
     eprintln!("  Gaman v{VERSION}");
-    eprintln!("  PostgreSQL-first, offline migration tool");
+    eprintln!("  Offline-first migration tool");
     eprintln!();
     eprintln!("  Type 'gaman --help' for usage.");
     eprintln!("  Type 'gaman <command> --help' for help on a specific command.");
@@ -23,24 +23,20 @@ async fn main() {
         print_header();
         std::process::exit(1);
     }
-    if raw_args
-        .iter()
-        .skip(1)
-        .any(|arg| arg == "--version" || arg == "-V")
-    {
+    if raw_args.len() == 2 && matches!(raw_args[1].as_str(), "--version" | "-V") {
         print_version();
         return;
     }
-    if raw_args
-        .iter()
-        .skip(1)
-        .any(|arg| arg == "--help" || arg == "help")
-    {
+    if raw_args.len() == 2 && matches!(raw_args[1].as_str(), "--help" | "help") {
         println!("gaman {VERSION}");
         println!();
     }
 
     let args: GamanArgs = argh::from_env();
+    if args.version {
+        print_version();
+        return;
+    }
     let verbose = args.verbose || gaman_debug_enabled();
 
     if let Err(e) = handle_cmd(args).await {

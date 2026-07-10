@@ -20,6 +20,10 @@ pub enum GraphError {
         "invalid migration id '{0}': only lowercase letters, digits, and underscores are allowed (namespaced ids like 'auth/0001_init' are set automatically by embedded children)"
     )]
     InvalidId(String),
+    #[error("unknown migration id or prefix '{0}'")]
+    UnknownId(String),
+    #[error("migration id prefix '{prefix}' is ambiguous: {matches}")]
+    AmbiguousId { prefix: String, matches: String },
 }
 
 /// A single node in the migration DAG.
@@ -211,6 +215,30 @@ impl MigrationGraph {
 
     pub fn get(&self, id: &str) -> Option<&Migration> {
         self.nodes.get(id).map(|n| &n.migration)
+    }
+
+    /// Resolves an exact migration id or an unambiguous prefix in graph order.
+    ///
+    /// Exact ids take precedence over prefixes. Ambiguous prefixes return all
+    /// matching ids in deterministic topological order.
+    pub fn resolve_id(&self, input: &str) -> Result<String, GraphError> {
+        if self.nodes.contains_key(input) {
+            return Ok(input.to_string());
+        }
+
+        let matches: Vec<&str> = self
+            .topological_order()?
+            .into_iter()
+            .filter(|id| id.starts_with(input))
+            .collect();
+        match matches.as_slice() {
+            [] => Err(GraphError::UnknownId(input.to_string())),
+            [id] => Ok((*id).to_string()),
+            _ => Err(GraphError::AmbiguousId {
+                prefix: input.to_string(),
+                matches: matches.join(", "),
+            }),
+        }
     }
 }
 
@@ -519,6 +547,37 @@ mod tests {
         assert!(MigrationGraph::validate_id("has-dash").is_err());
         assert!(MigrationGraph::validate_id("0001_ok").is_ok());
         assert!(MigrationGraph::validate_id("abc123").is_ok());
+    }
+
+    /// Resolves a unique migration id prefix using deterministic graph order.
+    #[test]
+    fn resolve_id_accepts_unique_prefix() {
+        let graph = linear_graph();
+
+        assert_eq!(graph.resolve_id("0002").unwrap(), "0002_add_users");
+    }
+
+    /// Prefers a full id even when another id begins with the same text.
+    #[test]
+    fn resolve_id_prefers_exact_match() {
+        let mut graph = MigrationGraph::new();
+        graph.add(migration("0001_users", &[])).unwrap();
+        graph.add(migration("0001_users_index", &[])).unwrap();
+
+        assert_eq!(graph.resolve_id("0001_users").unwrap(), "0001_users");
+    }
+
+    /// Reports all deterministic candidates when a prefix is ambiguous.
+    #[test]
+    fn resolve_id_rejects_ambiguous_prefix() {
+        let graph = linear_graph();
+
+        let error = graph.resolve_id("000").unwrap_err();
+        assert!(matches!(
+            error,
+            GraphError::AmbiguousId { prefix, matches }
+                if prefix == "000" && matches == "0001_initial, 0002_add_users, 0003_add_posts"
+        ));
     }
 
     /// next_number ignores namespaced ids (containing '/') and only counts primary ones.

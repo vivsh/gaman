@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The CLI now requires `DATABASE_URL` or `--database-url` to select a dialect;
+  offline commands do not open that connection.
+- Removed `Config::default()` to prevent silently selecting PostgreSQL when a
+  caller has not supplied a database URL.
+- `gaman show` is offline artifact inspection and no longer reports live
+  applied/pending state; use `gaman status` for tracking state.
+- `gaman config` redacts database passwords by default. Use
+  `--show-database-url` to print the full URL.
+- CLI migration ID arguments accept exact IDs or unique prefixes.
+- Removed `MigrationEngine::handle_args()` and terminal-driven engine migration
+  generation. The CLI owns argument parsing and interactive prompting.
+- Targeted apply and rollback now return `MigrationMovement`, reporting both
+  forward applications and backward reversions accurately.
+- `gaman apply [id]` now uses Django-style convergence semantics. The duplicate
+  `gaman rollback` CLI command was removed; programmatic backward-only methods
+  remain available for integrations.
+- `make --dry-run` prints canonical migration YAML, and `inspect --table`
+  rejects unknown or ambiguous names while accepting unique bare names.
+- Read-only CLI commands no longer require writable migration storage, and the
+  CLI rejects unimplemented or disabled dialects during configuration.
+- `verify` and `repair` accept repeated `--schema` scopes for migration history
+  spanning multiple PostgreSQL schemas.
+
 - `gaman-core` is now featureless and string/in-memory only. Native schema file
   loading moved to the root `gaman::schema_file` module, which reads files and
   delegates to core string parsers.

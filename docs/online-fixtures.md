@@ -58,6 +58,9 @@ Supported online checks:
 - `data`: run SQL assertions against live data.
 - `error`: assert an expected live error.
 
+`error` may be paired with `migrate`, `migrate_to`, `rollback`, `inspect`, or
+`verify` to identify which lifecycle action must fail.
+
 Important expectation fields:
 
 - `expect_schema`: expected reflected schema for `inspect` checks.

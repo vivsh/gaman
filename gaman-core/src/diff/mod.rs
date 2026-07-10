@@ -3,7 +3,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use thiserror::Error;
 
 use crate::dialects::Dialect;
-use crate::opaque::{opaque_option_sources_equal, opaque_sources_equal};
+use crate::opaque::{
+    opaque_option_sources_equal, opaque_sources_equal, table_option_sources_equal,
+};
 use crate::operations::Operation;
 use crate::states::{
     Column, Constraint, EnumDef, ExtensionDef, FunctionDef, Schema, Table, TriggerDef, ViewDef,
@@ -197,7 +199,12 @@ fn diff_table(curr: Option<&Table>, prev: Option<&Table>, ops: &mut Vec<Operatio
 
 fn diff_table_children(prev: &Table, curr: &Table, ops: &mut Vec<Operation>) {
     let table_name = curr.qualified_name();
-    if prev.unmanaged_options_fingerprint() != curr.unmanaged_options_fingerprint() {
+    if !table_option_sources_equal(
+        &prev.options.header_raw,
+        &prev.options.tail_raw,
+        &curr.options.header_raw,
+        &curr.options.tail_raw,
+    ) {
         ops.push(Operation::AcknowledgeTableOptions {
             table_name: table_name.clone(),
             old: prev.options.clone(),

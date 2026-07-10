@@ -106,6 +106,19 @@ features:
       group: clarifier
       kind: schema_to_migration
       dialect: postgres
+  canonical_values:
+    status: success
+    evidence:
+    - case: postgres_default_forms_no_drift
+      description: PostgreSQL semantic defaults equate catalog casts booleans signed numerics and escaped text.
+      group: verify
+      kind: verify
+      dialect: postgres
+    - case: sqlite_literal_defaults_no_drift
+      description: SQLite semantic drift accepts identical stable literal defaults.
+      group: verify
+      kind: verify
+      dialect: sqlite
   clarification.not_null_add:
     status: success
     evidence:
@@ -202,6 +215,11 @@ features:
       group: diff
       kind: schema_to_migration
       dialect: postgres
+    - case: nested_generated_and_check_expressions
+      description: Nested generated and check expressions remain intact in granular operations.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
   diff.diff_composite_fk_change:
     status: success
     evidence:
@@ -263,6 +281,11 @@ features:
     evidence:
     - case: generated_column_added
       description: Diff adds a generated column and renders the generated expression.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: nested_generated_and_check_expressions
+      description: Nested generated and check expressions remain intact in granular operations.
       group: diff
       kind: schema_to_migration
       dialect: postgres
@@ -370,6 +393,44 @@ features:
       group: end_to_end
       kind: end_to_end
       dialect: postgres
+  foreign_key_actions:
+    status: success
+    evidence:
+    - case: fk_on_update_change
+      description: Changing only a foreign key on_update action replaces the foreign key.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: fk_actions_normalize
+      description: Replay canonicalizes foreign key action spelling and omits empty actions.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
+    - case: postgres_composite_fk_actions
+      description: PostgreSQL renders ordered composite foreign keys with both referential actions.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_fk_set_actions
+      description: PostgreSQL renders uncommon foreign key delete and update actions.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: sqlite_fk_set_actions
+      description: SQLite renders uncommon foreign key delete and update actions.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: postgres_fk_on_update_drift
+      description: PostgreSQL semantic drift reports the expected and observed on_update actions.
+      group: verify
+      kind: verify
+      dialect: postgres
+    - case: sqlite_fk_on_update_drift
+      description: SQLite semantic drift reports the expected and observed on_update actions.
+      group: verify
+      kind: verify
+      dialect: sqlite
   group.clarifier:
     status: success
     evidence:
@@ -551,6 +612,11 @@ features:
       group: diff
       kind: schema_to_migration
       dialect: postgres
+    - case: fk_on_update_change
+      description: Changing only a foreign key on_update action replaces the foreign key.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
     - case: function_body_changed
       description: Real function body changes produce AlterFunction.
       group: diff
@@ -581,10 +647,50 @@ features:
       group: diff
       kind: schema_to_migration
       dialect: postgres
+    - case: nested_generated_and_check_expressions
+      description: Nested generated and check expressions remain intact in granular operations.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
     - case: no_changes
       description: No migration is generated when the schema matches the current state.
       group: diff
       kind: schema_to_migration
+      dialect: postgres
+    - case: opaque_index_accept
+      description: AcceptRisk stores and renders an advanced opaque index from SQL input.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: opaque_index_change_prompt
+      description: Changing an owned opaque index definition requires coarse replacement clarification.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: opaque_index_drop_prompt
+      description: Removing an owned opaque index requires destructive clarification.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: opaque_index_formatting_noop
+      description: Opaque index formatting and comments do not create a migration.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: opaque_index_introduction_prompt
+      description: SQL input asks before managing an advanced index as opaque SQL.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: postgres_unlogged_table_accept
+      description: Accepted PostgreSQL UNLOGGED metadata renders in the table header.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: postgres_unlogged_table_prompt
+      description: PostgreSQL unmanaged UNLOGGED table syntax requires clarification.
+      group: diff
+      kind: sql_schema_to_migration
       dialect: postgres
     - case: primary_key_mutation_error
       description: Primary-key shape changes are not generated automatically.
@@ -601,6 +707,11 @@ features:
       group: diff
       kind: schema_to_migration
       dialect: postgres
+    - case: sqlite_strict_without_rowid_accept
+      description: Accepted SQLite STRICT and WITHOUT ROWID options render in the table tail.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: sqlite
     - case: trigger_query_changed
       description: Real trigger query changes produce AlterTrigger.
       group: diff
@@ -615,6 +726,16 @@ features:
       description: Diff adds a table-level unique constraint.
       group: diff
       kind: schema_to_migration
+      dialect: postgres
+    - case: unmanaged_options_change_ack
+      description: Accepted unmanaged table option changes record metadata without emitting SQL.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: unmanaged_options_formatting_noop
+      description: Unmanaged table option whitespace does not create a migration.
+      group: diff
+      kind: sql_schema_to_migration
       dialect: postgres
     - case: view_definition_changed
       description: Real view definition changes produce ReplaceView.
@@ -795,6 +916,11 @@ features:
   group.replay:
     status: success
     evidence:
+    - case: fk_actions_normalize
+      description: Replay canonicalizes foreign key action spelling and omits empty actions.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
     - case: replay_branching_merge
       description: Replay independent branches joined by an explicit merge migration.
       group: replay
@@ -871,6 +997,11 @@ features:
       group: sql_rendering
       kind: migration_to_sql
       dialect: postgres
+    - case: postgres_composite_fk_actions
+      description: PostgreSQL renders ordered composite foreign keys with both referential actions.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
     - case: postgres_composite_pk_fk_create_table
       description: PostgreSQL renders composite primary keys and composite foreign keys in CREATE TABLE.
       group: sql_rendering
@@ -883,6 +1014,11 @@ features:
       dialect: postgres
     - case: postgres_enum_insert_before
       description: PostgreSQL renders enum value insertion with BEFORE when order requires it.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_fk_set_actions
+      description: PostgreSQL renders uncommon foreign key delete and update actions.
       group: sql_rendering
       kind: migration_to_sql
       dialect: postgres
@@ -903,6 +1039,16 @@ features:
       dialect: postgres
     - case: postgres_query_trigger_row
       description: PostgreSQL wraps a row-level query trigger and appends RETURN NEW.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_quoted_enum_labels
+      description: PostgreSQL escapes uncommon enum labels without changing their order.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_quoted_identifiers
+      description: PostgreSQL renders reserved mixed-case and spaced identifiers safely.
       group: sql_rendering
       kind: migration_to_sql
       dialect: postgres
@@ -933,6 +1079,11 @@ features:
       dialect: sqlite
     - case: sqlite_create_table_composite_pk_fk
       description: SQLite renders composite primary keys and foreign keys during CREATE TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_fk_set_actions
+      description: SQLite renders uncommon foreign key delete and update actions.
       group: sql_rendering
       kind: migration_to_sql
       dialect: sqlite
@@ -1081,6 +1232,11 @@ features:
   kind.migration_to_replay:
     status: success
     evidence:
+    - case: fk_actions_normalize
+      description: Replay canonicalizes foreign key action spelling and omits empty actions.
+      group: replay
+      kind: migration_to_replay
+      dialect: postgres
     - case: replay_branching_merge
       description: Replay independent branches joined by an explicit merge migration.
       group: replay
@@ -1149,6 +1305,11 @@ features:
       group: sql_rendering
       kind: migration_to_sql
       dialect: postgres
+    - case: postgres_composite_fk_actions
+      description: PostgreSQL renders ordered composite foreign keys with both referential actions.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
     - case: postgres_composite_pk_fk_create_table
       description: PostgreSQL renders composite primary keys and composite foreign keys in CREATE TABLE.
       group: sql_rendering
@@ -1161,6 +1322,11 @@ features:
       dialect: postgres
     - case: postgres_enum_insert_before
       description: PostgreSQL renders enum value insertion with BEFORE when order requires it.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_fk_set_actions
+      description: PostgreSQL renders uncommon foreign key delete and update actions.
       group: sql_rendering
       kind: migration_to_sql
       dialect: postgres
@@ -1181,6 +1347,16 @@ features:
       dialect: postgres
     - case: postgres_query_trigger_row
       description: PostgreSQL wraps a row-level query trigger and appends RETURN NEW.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_quoted_enum_labels
+      description: PostgreSQL escapes uncommon enum labels without changing their order.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_quoted_identifiers
+      description: PostgreSQL renders reserved mixed-case and spaced identifiers safely.
       group: sql_rendering
       kind: migration_to_sql
       dialect: postgres
@@ -1211,6 +1387,11 @@ features:
       dialect: sqlite
     - case: sqlite_create_table_composite_pk_fk
       description: SQLite renders composite primary keys and foreign keys during CREATE TABLE.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: sqlite
+    - case: sqlite_fk_set_actions
+      description: SQLite renders uncommon foreign key delete and update actions.
       group: sql_rendering
       kind: migration_to_sql
       dialect: sqlite
@@ -1620,6 +1801,11 @@ features:
       group: diff
       kind: schema_to_migration
       dialect: postgres
+    - case: fk_on_update_change
+      description: Changing only a foreign key on_update action replaces the foreign key.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
     - case: function_body_changed
       description: Real function body changes produce AlterFunction.
       group: diff
@@ -1647,6 +1833,11 @@ features:
       dialect: postgres
     - case: index_dropped
       description: Diff drops an index removed from the desired schema.
+      group: diff
+      kind: schema_to_migration
+      dialect: postgres
+    - case: nested_generated_and_check_expressions
+      description: Nested generated and check expressions remain intact in granular operations.
       group: diff
       kind: schema_to_migration
       dialect: postgres
@@ -1745,6 +1936,59 @@ features:
       group: validation
       kind: schema_to_migration
       dialect: postgres
+  kind.sql_schema_to_migration:
+    status: success
+    evidence:
+    - case: opaque_index_accept
+      description: AcceptRisk stores and renders an advanced opaque index from SQL input.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: opaque_index_change_prompt
+      description: Changing an owned opaque index definition requires coarse replacement clarification.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: opaque_index_drop_prompt
+      description: Removing an owned opaque index requires destructive clarification.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: opaque_index_formatting_noop
+      description: Opaque index formatting and comments do not create a migration.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: opaque_index_introduction_prompt
+      description: SQL input asks before managing an advanced index as opaque SQL.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: postgres_unlogged_table_accept
+      description: Accepted PostgreSQL UNLOGGED metadata renders in the table header.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: postgres_unlogged_table_prompt
+      description: PostgreSQL unmanaged UNLOGGED table syntax requires clarification.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: sqlite_strict_without_rowid_accept
+      description: Accepted SQLite STRICT and WITHOUT ROWID options render in the table tail.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: sqlite
+    - case: unmanaged_options_change_ack
+      description: Accepted unmanaged table option changes record metadata without emitting SQL.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: unmanaged_options_formatting_noop
+      description: Unmanaged table option whitespace does not create a migration.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
   kind.sql_to_schema:
     status: success
     evidence:
@@ -1757,6 +2001,39 @@ features:
       description: Invalid SQL is rejected with a parse error.
       group: sql_to_schema
       kind: sql_to_schema
+      dialect: postgres
+  opaque_lifecycle:
+    status: success
+    evidence:
+    - case: opaque_index_accept
+      description: AcceptRisk stores and renders an advanced opaque index from SQL input.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: opaque_index_change_prompt
+      description: Changing an owned opaque index definition requires coarse replacement clarification.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: opaque_index_drop_prompt
+      description: Removing an owned opaque index requires destructive clarification.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: opaque_index_formatting_noop
+      description: Opaque index formatting and comments do not create a migration.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: opaque_index_introduction_prompt
+      description: SQL input asks before managing an advanced index as opaque SQL.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: opaque_definition_ignored
+      description: Semantic drift ignores source changes when an owned opaque index remains present.
+      group: verify
+      kind: verify
       dialect: postgres
   operation.add_column:
     status: success
@@ -1842,6 +2119,11 @@ features:
     evidence:
     - case: postgres_migration_to_sql_features
       description: Render SQL for richer PostgreSQL-only features.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_quoted_enum_labels
+      description: PostgreSQL escapes uncommon enum labels without changing their order.
       group: sql_rendering
       kind: migration_to_sql
       dialect: postgres
@@ -2253,6 +2535,14 @@ features:
       group: parser
       kind: parser
       dialect: sqlite
+  quoted_identifiers:
+    status: success
+    evidence:
+    - case: postgres_quoted_identifiers
+      description: PostgreSQL renders reserved mixed-case and spaced identifiers safely.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
   renderer.postgres.add_column:
     status: success
     evidence:
@@ -3280,6 +3570,34 @@ features:
       group: sql_rendering
       kind: migration_to_sql
       dialect: sqlite
+  unmanaged_table_options:
+    status: success
+    evidence:
+    - case: postgres_unlogged_table_accept
+      description: Accepted PostgreSQL UNLOGGED metadata renders in the table header.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: postgres_unlogged_table_prompt
+      description: PostgreSQL unmanaged UNLOGGED table syntax requires clarification.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: sqlite_strict_without_rowid_accept
+      description: Accepted SQLite STRICT and WITHOUT ROWID options render in the table tail.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: sqlite
+    - case: unmanaged_options_change_ack
+      description: Accepted unmanaged table option changes record metadata without emitting SQL.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
+    - case: unmanaged_options_formatting_noop
+      description: Unmanaged table option whitespace does not create a migration.
+      group: diff
+      kind: sql_schema_to_migration
+      dialect: postgres
   unsupported.primary_key_mutation:
     status: success
     evidence:

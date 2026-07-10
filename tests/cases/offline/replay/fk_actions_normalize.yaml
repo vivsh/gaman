@@ -1,0 +1,37 @@
+description: Replay canonicalizes foreign key action spelling and omits empty actions.
+group: replay
+features: [foreign_key_actions, group.replay, kind.migration_to_replay]
+kind: migration_to_replay
+dialect: postgres
+migrations:
+- id: 0001_schema
+  operations:
+  - type: create_table
+    table:
+      name: parents
+      columns: [{name: id, type: integer, primary_key: true}]
+  - type: create_table
+    table:
+      name: children
+      columns: [{name: parent_id, type: integer}]
+      foreign_keys:
+      - name: children_parent_id_fkey
+        columns: [parent_id]
+        to_table: parents
+        to_columns: [id]
+        on_delete: CASCADE
+        on_update: ''
+expect_schema:
+  tables:
+    parents:
+      name: parents
+      columns: [{name: id, type: integer, primary_key: true}]
+    children:
+      name: children
+      columns: [{name: parent_id, type: integer}]
+      foreign_keys:
+      - name: children_parent_id_fkey
+        columns: [parent_id]
+        to_table: parents
+        to_columns: [id]
+        on_delete: cascade

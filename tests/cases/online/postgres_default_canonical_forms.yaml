@@ -1,0 +1,17 @@
+description: PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift.
+features: [live_migration_application, live_inspect_verify, type_null_default_changes, single_primary_keys]
+migrations:
+  - id: 0001_default_forms
+    operations:
+      - type: create_table
+        table:
+          name: defaults_lab
+          columns:
+            - {name: id, type: serial, primary_key: true}
+            - {name: enabled, type: boolean, default: 'TRUE'}
+            - {name: debt, type: numeric, default: '-12.50'}
+            - {name: label, type: text, default: "'O''Reilly'"}
+dialects:
+  postgres:
+    checks: [migrate, verify]
+    expect_verify: []

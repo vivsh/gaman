@@ -1,0 +1,38 @@
+description: PostgreSQL modeled column drift remains visible beside an owned opaque index.
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - opaque_presence_verify
+  - opaque_index_metadata
+  - type_null_default_changes
+migrations:
+  - id: 0001_users_and_index
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - {name: id, type: integer, primary_key: true}
+            - {name: email, type: text}
+      - type: add_index
+        table_name: users
+        index:
+          name: users_lower_email_idx
+          columns: []
+          opaque:
+            raw: CREATE INDEX users_lower_email_idx ON users ((lower(email)))
+            trusted: true
+mutate_sql: ALTER TABLE users ALTER COLUMN email SET DEFAULT 'changed'
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify:
+      - type: alter_column
+        table_name: users
+        old:
+          name: email
+          type: text
+          default: "'changed'"
+        new:
+          name: email
+          type: text

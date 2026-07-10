@@ -198,14 +198,22 @@ where
 }
 
 /// Verifies replayed migration state against live inspected state.
-pub fn diff(
+pub fn diff(replay: Schema, live: Schema, schema: &str, dialect: Dialect) -> VerificationReport {
+    diff_schemas(replay, live, &[schema], dialect)
+}
+
+/// Verifies replayed state across multiple inspected schemas.
+///
+/// Unqualified migration objects belong to the first schema. Objects explicitly
+/// qualified with later schemas retain their qualification during comparison.
+pub fn diff_schemas(
     mut replay: Schema,
     mut live: Schema,
-    schema: &str,
+    schemas: &[&str],
     dialect: Dialect,
 ) -> VerificationReport {
-    scope_schema(&mut replay, schema, dialect);
-    scope_schema(&mut live, schema, dialect);
+    scope_schemas(&mut replay, schemas, dialect);
+    scope_schemas(&mut live, schemas, dialect);
 
     let registry = registry_for(dialect);
     let mut report = VerificationReport::default();
@@ -1044,67 +1052,55 @@ where
         .collect()
 }
 
-fn scope_schema(state: &mut Schema, schema: &str, dialect: Dialect) {
-    scope_tables(state, schema, dialect);
-    scope_views(state, schema, dialect);
-    scope_functions(state, schema, dialect);
-    scope_extensions(state, schema, dialect);
-    scope_enums(state, schema, dialect);
+fn scope_schemas(state: &mut Schema, schemas: &[&str], dialect: Dialect) {
+    scope_tables(state, schemas, dialect);
+    scope_views(state, schemas, dialect);
+    scope_functions(state, schemas, dialect);
+    scope_extensions(state, schemas, dialect);
+    scope_enums(state, schemas, dialect);
 }
 
-fn scope_tables(state: &mut Schema, schema: &str, dialect: Dialect) {
+fn scope_tables(state: &mut Schema, schemas: &[&str], dialect: Dialect) {
     let tables = std::mem::take(&mut state.tables);
     state.tables = tables
         .into_values()
-        .filter_map(|mut table| match table.schema.as_deref() {
-            None => {
-                scope_table_references(&mut table, schema);
-                Some(table)
+        .filter_map(|mut table| {
+            table.schema =
+                scoped_schema(dialect, EntityKind::Table, table.schema.as_deref(), schemas)?;
+            if let Some(default_schema) = schemas.first() {
+                scope_table_references(&mut table, default_schema);
             }
-            Some(current)
-                if schema_matches_verify_scope(dialect, EntityKind::Table, current, schema) =>
-            {
-                table.schema = None;
-                scope_table_references(&mut table, schema);
-                Some(table)
-            }
-            _ => None,
+            Some(table)
         })
         .map(|table| (table.qualified_name(), table))
         .collect();
 }
 
-fn scope_views(state: &mut Schema, schema: &str, dialect: Dialect) {
+fn scope_views(state: &mut Schema, schemas: &[&str], dialect: Dialect) {
     let views = std::mem::take(&mut state.views);
     state.views = views
         .into_values()
-        .filter_map(|mut view| match view.schema.as_deref() {
-            None => Some(view),
-            Some(current)
-                if schema_matches_verify_scope(dialect, EntityKind::View, current, schema) =>
-            {
-                view.schema = None;
-                Some(view)
-            }
-            _ => None,
+        .filter_map(|mut view| {
+            view.schema =
+                scoped_schema(dialect, EntityKind::View, view.schema.as_deref(), schemas)?;
+            Some(view)
         })
         .map(|view| (view.qualified_name(), view))
         .collect();
 }
 
-fn scope_functions(state: &mut Schema, schema: &str, dialect: Dialect) {
+fn scope_functions(state: &mut Schema, schemas: &[&str], dialect: Dialect) {
     let functions = std::mem::take(&mut state.functions);
     state.functions = functions
         .into_values()
-        .filter_map(|mut function| match function.schema.as_deref() {
-            None => Some(function),
-            Some(current)
-                if schema_matches_verify_scope(dialect, EntityKind::Function, current, schema) =>
-            {
-                function.schema = None;
-                Some(function)
-            }
-            _ => None,
+        .filter_map(|mut function| {
+            function.schema = scoped_schema(
+                dialect,
+                EntityKind::Function,
+                function.schema.as_deref(),
+                schemas,
+            )?;
+            Some(function)
         })
         .map(|function| {
             let key = function_verify_key(&function);
@@ -1113,51 +1109,62 @@ fn scope_functions(state: &mut Schema, schema: &str, dialect: Dialect) {
         .collect();
 }
 
-fn scope_extensions(state: &mut Schema, schema: &str, dialect: Dialect) {
+fn scope_extensions(state: &mut Schema, schemas: &[&str], dialect: Dialect) {
     let extensions = std::mem::take(&mut state.extensions);
     state.extensions = extensions
         .into_values()
-        .filter_map(|mut extension| match extension.schema.as_deref() {
-            None => Some(extension),
-            Some(current)
-                if schema_matches_verify_scope(dialect, EntityKind::Extension, current, schema) =>
-            {
-                extension.schema = None;
-                Some(extension)
-            }
-            _ => None,
+        .filter_map(|mut extension| {
+            extension.schema = scoped_schema(
+                dialect,
+                EntityKind::Extension,
+                extension.schema.as_deref(),
+                schemas,
+            )?;
+            Some(extension)
         })
         .map(|extension| (extension.qualified_name(), extension))
         .collect();
 }
 
-fn scope_enums(state: &mut Schema, schema: &str, dialect: Dialect) {
+fn scope_enums(state: &mut Schema, schemas: &[&str], dialect: Dialect) {
     let enums = std::mem::take(&mut state.enums);
     state.enums = enums
         .into_values()
-        .filter_map(|mut enum_def| match enum_def.schema.as_deref() {
-            None => Some(enum_def),
-            Some(current)
-                if schema_matches_verify_scope(dialect, EntityKind::Enum, current, schema) =>
-            {
-                enum_def.schema = None;
-                Some(enum_def)
-            }
-            _ => None,
+        .filter_map(|mut enum_def| {
+            enum_def.schema = scoped_schema(
+                dialect,
+                EntityKind::Enum,
+                enum_def.schema.as_deref(),
+                schemas,
+            )?;
+            Some(enum_def)
         })
         .map(|enum_def| (enum_def.qualified_name(), enum_def))
         .collect();
 }
 
-fn schema_matches_verify_scope(
+fn scoped_schema(
     dialect: Dialect,
     kind: EntityKind,
-    current: &str,
-    requested: &str,
-) -> bool {
+    current: Option<&str>,
+    schemas: &[&str],
+) -> Option<Option<String>> {
+    let Some(current) = current else {
+        return Some(None);
+    };
+    if schemas.is_empty() {
+        return Some(dialect.canonicalize_schema_name(kind, Some(current)));
+    }
+
     let current = dialect.canonicalize_schema_name(kind, Some(current));
-    let requested = dialect.canonicalize_schema_name(kind, Some(requested));
-    current == requested
+    schemas.iter().enumerate().find_map(|(index, requested)| {
+        let requested = dialect.canonicalize_schema_name(kind, Some(requested));
+        if current == requested {
+            Some(if index == 0 { None } else { current.clone() })
+        } else {
+            None
+        }
+    })
 }
 
 fn scope_table_references(table: &mut Table, schema: &str) {
@@ -1342,7 +1349,7 @@ mod tests {
     use crate::dialects::Dialect;
     use crate::states::{Column, FunctionDef, Schema, Table, Volatility};
 
-    use super::{diff, format_report};
+    use super::{diff, diff_schemas, format_report};
 
     /// Verifies PostgreSQL literal casts do not create default drift.
     #[test]
@@ -1392,6 +1399,34 @@ mod tests {
         assert!(report.findings.is_empty(), "unexpected drift: {:?}", report);
     }
 
+    /// Verifies additional explicitly qualified schemas participate in one drift comparison.
+    #[test]
+    fn multiple_schema_diff_compares_qualified_objects() {
+        let replay = schema_with_namespaced_tables();
+        let live = schema_with_namespaced_tables();
+
+        let report = diff_schemas(replay, live, &["public", "billing"], Dialect::Postgres);
+
+        assert!(report.findings.is_empty(), "unexpected drift: {report:?}");
+    }
+
+    /// Verifies a missing object in an additional schema is reported as drift.
+    #[test]
+    fn multiple_schema_diff_reports_missing_qualified_object() {
+        let replay = schema_with_namespaced_tables();
+        let mut live = schema_with_namespaced_tables();
+        live.tables.remove("billing.invoices");
+
+        let report = diff_schemas(replay, live, &["public", "billing"], Dialect::Postgres);
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.entity_name == "billing.invoices")
+        );
+    }
+
     /// Verifies the drift contract documents registered comparator properties.
     #[test]
     fn drift_contract_lists_registered_column_default() {
@@ -1438,6 +1473,37 @@ mod tests {
                 options: Default::default(),
             },
         );
+        schema
+    }
+
+    fn schema_with_namespaced_tables() -> Schema {
+        let mut schema = Schema::default();
+        let public = Table {
+            name: "users".to_string(),
+            schema: None,
+            primary_key: None,
+            columns: Vec::new(),
+            foreign_keys: Vec::new(),
+            indexes: Vec::new(),
+            constraints: Vec::new(),
+            triggers: Vec::new(),
+            options: Default::default(),
+        };
+        let billing = Table {
+            name: "invoices".to_string(),
+            schema: Some("billing".to_string()),
+            primary_key: None,
+            columns: Vec::new(),
+            foreign_keys: Vec::new(),
+            indexes: Vec::new(),
+            constraints: Vec::new(),
+            triggers: Vec::new(),
+            options: Default::default(),
+        };
+        schema.tables.insert("users".to_string(), public);
+        schema
+            .tables
+            .insert("billing.invoices".to_string(), billing);
         schema
     }
 

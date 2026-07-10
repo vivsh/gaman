@@ -1,0 +1,42 @@
+description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
+features: [live_migration_application, live_inspect_verify, quoted_identifiers, tables_columns, data_preservation]
+migrations:
+  - id: 0001_quoted_order
+    operations:
+      - type: create_table
+        table:
+          name: Order
+          columns:
+            - {name: ID, type: integer, primary_key: true}
+            - {name: Line Item, type: text}
+      - type: statement
+        up: 'INSERT INTO "Order" ("ID", "Line Item") VALUES (1, ''rare value'')'
+dialects:
+  postgres:
+    checks: [migrate, inspect, verify, data]
+    expect_schema:
+      tables:
+        Order:
+          name: Order
+          primary_key: {name: Order_pkey, columns: [ID]}
+          columns:
+            - {name: ID, type: integer, primary_key: true}
+            - {name: Line Item, type: text}
+    expect_verify: []
+    data:
+      - sql: 'SELECT "Line Item" FROM "Order" WHERE "ID" = 1'
+        expect: [rare value]
+  sqlite:
+    checks: [migrate, inspect, verify, data]
+    expect_schema:
+      tables:
+        Order:
+          name: Order
+          primary_key: {name: Order_pkey, columns: [ID]}
+          columns:
+            - {name: ID, type: integer, primary_key: true}
+            - {name: Line Item, type: text}
+    expect_verify: []
+    data:
+      - sql: 'SELECT "Line Item" FROM "Order" WHERE "ID" = 1'
+        expect: [rare value]

@@ -539,7 +539,12 @@ struct SqliteEnvironment {
 impl SqliteEnvironment {
     fn new() -> Self {
         Self {
-            config: Arc::new(Config::default()),
+            config: Arc::new(Config::new(
+                "sqlite::memory:".to_string(),
+                "migrations".into(),
+                "schema.yaml".into(),
+                Dialect::Sqlite,
+            )),
         }
     }
 }
@@ -1444,10 +1449,12 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
 
     let migrator = migrator(migrations);
     let mut executor = sqlite_executor().await;
-    migrator
+    let forward = migrator
         .apply_with(&mut executor, None, false)
         .await
         .unwrap();
+    assert_eq!(forward.applied, 3);
+    assert_eq!(forward.reverted, 0);
     executor
         .execute(r#"INSERT INTO "accounts" ("id") VALUES (1)"#)
         .await
@@ -1462,10 +1469,12 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
         .unwrap_err();
     assert!(err.to_string().contains("FOREIGN KEY"));
 
-    migrator
+    let backward = migrator
         .apply_with(&mut executor, Some("0002_create_users"), false)
         .await
         .unwrap();
+    assert_eq!(backward.applied, 0);
+    assert_eq!(backward.reverted, 1);
     executor
         .execute(r#"INSERT INTO "users" ("id", "account_id") VALUES (2, 404)"#)
         .await

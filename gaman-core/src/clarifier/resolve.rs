@@ -340,6 +340,37 @@ impl ClarifyPlan {
 
 fn trust_accepted_risks(ops: &mut [Operation], decisions: &HashMap<&str, &Answer>) {
     for op in ops {
+        if let Operation::CreateTable { table } = op {
+            let table_name = table.qualified_name();
+            for index in &mut table.indexes {
+                let id = opaque_id(
+                    crate::states::types::EntityKind::Index,
+                    &format!("{}.{}", table_name, index.name),
+                );
+                if index.is_opaque() && accepted(decisions, &id) {
+                    index.mark_trusted();
+                }
+            }
+            for constraint in &mut table.constraints {
+                let id = opaque_id(
+                    crate::states::types::EntityKind::Constraint,
+                    &format!("{}.{}", table_name, constraint.name()),
+                );
+                if constraint.is_opaque() && accepted(decisions, &id) {
+                    constraint.mark_trusted();
+                }
+            }
+            for trigger in &mut table.triggers {
+                let name = trigger.name.as_deref().unwrap_or("<unnamed>");
+                let id = opaque_id(
+                    crate::states::types::EntityKind::Trigger,
+                    &format!("{}.{}", table_name, name),
+                );
+                if trigger.is_opaque() && accepted(decisions, &id) {
+                    trigger.mark_trusted();
+                }
+            }
+        }
         match op {
             Operation::CreateTable { table } if table.has_unmanaged_options() => {
                 let id = super::ids::clarification_id(&ClarificationKind::UnmanagedTableOptions {

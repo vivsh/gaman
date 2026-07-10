@@ -1,0 +1,14 @@
+description: PostgreSQL escapes uncommon enum labels without changing their order.
+group: sql_rendering
+features: [group.sql_rendering, kind.migration_to_sql, operation.create_enum]
+kind: migration_to_sql
+dialect: postgres
+migrations:
+- id: 0001_workflow_state
+  operations:
+  - type: create_enum
+    enum_def:
+      name: workflow_state
+      values: ['in progress', "owner's review", 'ready-to_ship']
+expect_sql: |
+  CREATE TYPE "workflow_state" AS ENUM ('in progress', 'owner''s review', 'ready-to_ship')

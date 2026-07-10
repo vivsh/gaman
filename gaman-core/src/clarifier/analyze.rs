@@ -64,12 +64,46 @@ pub(crate) fn all_clarifications_raw(ops: &[Operation]) -> Vec<Clarification> {
     result.extend(opaque_and_unmanaged_clarifications(ops));
 
     result.sort_by(|a, b| a.id.cmp(&b.id));
+    result.dedup_by(|left, right| left.id == right.id);
     result
 }
 
 fn opaque_and_unmanaged_clarifications(ops: &[Operation]) -> Vec<Clarification> {
     let mut result = Vec::new();
     for op in ops {
+        if let Operation::CreateTable { table } = op {
+            for index in &table.indexes {
+                if index.is_opaque() && !index.opaque.trusted {
+                    push_opaque(
+                        &mut result,
+                        EntityKind::Index,
+                        format!("{}.{}", table.qualified_name(), index.name),
+                    );
+                }
+            }
+            for constraint in &table.constraints {
+                if constraint
+                    .opaque_meta()
+                    .is_some_and(|opaque| opaque.raw.is_some() && !opaque.trusted)
+                {
+                    push_opaque(
+                        &mut result,
+                        EntityKind::Constraint,
+                        format!("{}.{}", table.qualified_name(), constraint.name()),
+                    );
+                }
+            }
+            for trigger in &table.triggers {
+                if trigger.is_opaque() && !trigger.opaque.trusted {
+                    let name = trigger.name.as_deref().unwrap_or("<unnamed>");
+                    push_opaque(
+                        &mut result,
+                        EntityKind::Trigger,
+                        format!("{}.{}", table.qualified_name(), name),
+                    );
+                }
+            }
+        }
         match op {
             Operation::CreateTable { table }
                 if table.has_unmanaged_options() && !table.options.trusted =>

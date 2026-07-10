@@ -33,4 +33,4 @@ dialects:
               opaque:
                 raw: CREATE INDEX users_lower_email_idx ON users USING btree (lower(email))
                 trusted: true
-                fingerprint: v1:sha256:e780c8e83186a869de6f3403856b80c07c561b05de6104857913933095a741d8
+                fingerprint: v1:sha256:b528fc6ac317c3640410937f3e9943746562c7ba57f8209f5c646e327f7c5735

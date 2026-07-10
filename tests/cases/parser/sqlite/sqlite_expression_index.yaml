@@ -21,6 +21,8 @@ expect_schema:
         columns: []
         unique: false
         opaque:
-          raw: CREATE INDEX users_lower_email_idx ON users(lower(email)) WHERE email IS NOT NULL
+          raw: |2-
+
+            CREATE INDEX users_lower_email_idx ON users (lower(email)) WHERE email IS NOT NULL
           trusted: false
-          fingerprint: v1:sha256:eeb9abaac135f502b8af3eb42f05fa2f2853579590b139595a8882c404f9a619
+          fingerprint: v1:sha256:125f1be6aaaec01a177a696ae88b5e2dc9133a89105d56f05e3668e494b4807f

@@ -1,0 +1,45 @@
+description: Nested generated and check expressions remain intact in granular operations.
+group: diff
+features: [group.diff, kind.schema_to_migration, diff.diff_generated_column_added, diff.diff_check_constraint_added]
+kind: schema_to_migration
+dialect: postgres
+name: add_expression_fields
+migrations:
+- id: 0001_measurements
+  operations:
+  - type: create_table
+    table:
+      name: measurements
+      columns:
+      - {name: id, type: integer, primary_key: true}
+      - {name: label, type: text}
+      - {name: value, type: integer}
+current:
+  tables:
+    measurements:
+      columns:
+      - {name: id, type: integer, primary_key: true}
+      - {name: label, type: text}
+      - {name: value, type: integer}
+      - name: normalized
+        type: text
+        nullable: true
+        generated: "lower(coalesce(label, 'unknown'))"
+      constraints:
+      - kind: check
+        name: measurements_value_check
+        expression: "value > 0 AND coalesce(label, '') <> 'blocked'"
+expect_operations:
+- type: add_column
+  table_name: measurements
+  column:
+    name: normalized
+    type: text
+    nullable: true
+    generated: "lower(coalesce(label, 'unknown'))"
+- type: add_constraint
+  table_name: measurements
+  constraint:
+    kind: check
+    name: measurements_value_check
+    expression: "value > 0 AND coalesce(label, '') <> 'blocked'"

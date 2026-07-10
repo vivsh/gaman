@@ -5,10 +5,11 @@ _Pronounced guh-MUN (गमन, /ɡəˈmən/) — Sanskrit for "movement" or "go
 [![Crates.io](https://img.shields.io/crates/v/gaman)](https://crates.io/crates/gaman)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Gaman is an offline-first schema migration engine that generates deterministic
+Gaman is an offline-first schema migration CLI that generates deterministic
 migrations without connecting to a live database.
 
-The crate is intentionally just a Rust library plus a CLI.
+The crate also exposes the same engine as a Rust library for applications that
+need embedded migrations or custom storage.
 
 It starts from a simple idea: your committed migration history is enough to know
 where the schema is, and your desired schema is enough to plan where it should
@@ -33,10 +34,9 @@ compatibility mode.
 
 - Migration generation is deterministic and offline.
 - `sql` renders the SQL plan without opening a database connection.
-- YAML, JSON, SQL DDL, Rust builders, and live inspection all feed one schema model.
+- YAML, JSON, SQL DDL, and live inspection all feed one schema model.
 - Ambiguous or risky changes are surfaced before files are written.
-- Rust applications can use the same `MigrationEngine` API as the CLI.
-- Storage is pluggable: directories, embedded structs, in-memory stores, and future browser buffers are adapters.
+- Rust applications can embed the same engine when they need custom migration storage.
 
 ## Quick Start
 
@@ -62,12 +62,9 @@ The loop is intentionally small:
 schema.yaml -> make -> migration.yaml -> sql -> SQL -> apply
 ```
 
-Offline commands can run without `DATABASE_URL` when the dialect is explicit:
-
-```bash
-gaman make add_posts --dialect postgres
-gaman sql --dialect sqlite
-```
+`DATABASE_URL` is required for every CLI invocation because it selects the
+dialect. Offline commands such as `make`, `show`, and `sql` do not open that
+connection.
 
 For smaller custom builds, select dialect features explicitly:
 
@@ -90,7 +87,6 @@ Global flags come before the subcommand:
 - `-s <file-or-dir>` / `--schema <file-or-dir>` overrides `SCHEMA`.
 - `-d <url>` overrides `DATABASE_URL`.
 - `--env <file>` loads environment variables from a dotenv file before config resolution.
-- `--dialect postgres|sqlite` selects the renderer for offline commands.
 
 Everyday commands:
 
@@ -101,31 +97,41 @@ gaman make --dry-run    # print the migration that would be written
 gaman make --empty name # write an empty migration shell
 gaman make --merge name # merge multiple graph heads
 
-gaman sql [id]            # print offline operation SQL
-gaman sql --backwards id  # print rollback SQL
+gaman sql [id]            # print offline operation SQL; id may be a unique prefix
+gaman sql --backwards id  # print rollback SQL; id may be a unique prefix
 
 gaman apply                     # apply pending migrations
-gaman apply --target id         # apply forward or backward to id
-gaman apply --fake              # record as applied without running DDL
+gaman apply id                  # converge forward or backward to a unique id prefix
+gaman apply --fake              # update tracking without running migration SQL
 gaman apply --plan              # print the live migration plan
 gaman apply --check             # fail if anything is pending
-gaman rollback id               # roll back to a target migration
 
-gaman inspect                  # export live schema
-gaman inspect --table users    # export one table
-gaman verify                   # compare live DB against replayed history
-gaman repair                   # plan one-off drift repair SQL
+gaman inspect                              # export live schema
+gaman inspect --schema billing --table users # export one unambiguous table
+gaman verify --schema public --schema billing # verify multiple owned schemas
+gaman repair --schema billing              # plan one-off drift repair SQL
 gaman repair --apply           # apply one-off drift repair SQL
 gaman status                   # list applied/pending migrations
-gaman show [id]                # show canonical migration YAML
-gaman config                      # print resolved config
+gaman show [id]                # show canonical migration YAML; id may be a unique prefix
+gaman config                    # print resolved config with a redacted URL
+gaman config --show-database-url # print the full database URL explicitly
 ```
+
+`gaman apply [id]` follows Django-style target semantics: it converges the
+database on the selected migration, applying or reverting migrations as needed.
+The target itself remains applied. Use `gaman sql --backwards id` to inspect the
+inverse SQL before moving backward.
 
 Environment variables:
 
-- `DATABASE_URL`: required for `apply`, `inspect`, and `verify`.
+- `DATABASE_URL`: required for all CLI commands; offline commands use it only
+  to select the dialect.
 - `MIGRATIONS_DIR`: defaults to `migrations`.
 - `SCHEMA`: defaults to `schema.yaml`; may be YAML, JSON, SQL, or a directory.
+
+Only commands that write migration files require a writable migrations
+directory. Artifact inspection, SQL rendering, live application, inspection,
+verification, and repair can read migrations from read-only deployments.
 
 ## Support
 
@@ -200,7 +206,7 @@ Offline parser, replay, diff, clarification, rollback, and SQL-rendering
 evidence is tracked separately from live product support. See `TESTING.md` for
 the checked offline evidence matrix and result-recording commands.
 
-## Author Schema
+## Schema Input
 
 All frontends normalize into the same internal `Schema` before replay, diffing,
 clarification, and SQL rendering.
@@ -236,76 +242,8 @@ CREATE TABLE users (
 CREATE UNIQUE INDEX users_email_idx ON users (email);
 ```
 
-Rust uses builders and traits, not a Gaman-owned model derive:
-
-```rust
-use gaman::core::Dialect;
-use gaman::schema::TableBuilder;
-
-let dialect = Dialect::Postgres;
-let users = TableBuilder::new("users")
-    .column_from_type::<i64>(&dialect, "id", |c| c.primary_key())
-    .column_from_type::<String>(&dialect, "email", |c| c.not_null())
-    .column("created_at", "timestamptz", |c| c.default("now()"))
-    .unique_columns(&["email"])
-    .build();
-```
-
-`IntoTable` remains a plain trait, so model/query crates such as Mool can derive
-or implement it without Gaman owning Rust model macros.
-
-## Embedded Migration Sources
-
-Gaman keeps `EmbeddedMigrations` as a plain data structure and migration source
-adapter. It does not provide an embedding macro; external framework/model crates
-can construct or return this Gaman-compatible shape.
-
-Multiple crates can still compose migration trees:
-
-```rust
-use gaman::EmbeddedMigrations;
-
-static MIGRATIONS: EmbeddedMigrations = EmbeddedMigrations {
-    files: &[],
-    dir: "migrations",
-    children: &[("auth", &auth::MIGRATIONS)],
-};
-```
-
-Child IDs are namespaced, for example `auth/0001_init`.
-
-## MigrationEngine
-
-`MigrationEngine` is the public orchestration API. The CLI delegates to it.
-Use `new` when you already have an `EmbeddedMigrations` value from Mool or a
-manual static definition; use `from_source` for custom storage.
-
-```rust
-use gaman::{Config, MigrationEngine};
-use gaman::core::Dialect;
-
-let schema = gaman::schema_file::load_schema_path("schema.yaml", Dialect::Postgres)?;
-let engine = MigrationEngine::new(Config::default(), &MIGRATIONS)
-    .with_dialect(Dialect::Postgres)
-    .with_schema(|_| schema)?;
-```
-
-Common methods:
-
-```rust
-engine.sql()?;                         // offline operation SQL
-engine.sql_id("0002_add_posts")?;      // one migration
-engine.sql_rollback(&["0002_add_posts"])?;     // offline rollback SQL
-engine.make_non_interactive(None)?;  // CI-safe generation
-engine.make_check()?;                // fail if schema changed
-engine.inspect_table(&["public"], "users").await?;
-engine.verify("public").await?;
-```
-
-Live actions require a database connection. Offline SQL planning does not.
-
-Custom storage implements `MigrationSource`; it can be file-backed, embedded,
-in-memory, or application-owned.
+Rust applications can also use builders, `EmbeddedMigrations`, `MigrationSource`,
+and `MigrationEngine` directly. See [Embedding Gaman In Rust](docs/rust-embedding.md).
 
 ## Clarification
 
@@ -364,3 +302,4 @@ More detail lives in:
 
 - [ARCHITECTURE.md](ARCHITECTURE.md)
 - [TESTING.md](TESTING.md)
+- [Embedding Gaman In Rust](docs/rust-embedding.md)

@@ -1,0 +1,28 @@
+description: SQLite renders uncommon foreign key delete and update actions.
+group: sql_rendering
+features: [foreign_key_actions, group.sql_rendering, kind.migration_to_sql]
+kind: migration_to_sql
+dialect: sqlite
+migrations:
+- id: 0001_fk_actions
+  operations:
+  - type: create_table
+    table:
+      name: parents
+      columns:
+      - {name: id, type: integer, primary_key: true}
+  - type: create_table
+    table:
+      name: children
+      columns:
+      - {name: parent_id, type: integer, nullable: true, default: '0'}
+      foreign_keys:
+      - name: children_parent_id_fkey
+        columns: [parent_id]
+        to_table: parents
+        to_columns: [id]
+        on_delete: set_null
+        on_update: set_default
+expect_sql: |
+  CREATE TABLE "parents" ("id" integer PRIMARY KEY)
+  CREATE TABLE "children" ("parent_id" integer DEFAULT 0, CONSTRAINT "children_parent_id_fkey" FOREIGN KEY ("parent_id") REFERENCES "parents" ("id") ON DELETE SET NULL ON UPDATE SET DEFAULT)

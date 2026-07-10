@@ -64,10 +64,16 @@ pub struct Migrator {
     pub diff: DiffEngine,
 }
 
-/// Migration metadata used by listing commands.
-///
-/// The `content` field is the canonical YAML representation of the loaded
-/// migration, not necessarily the exact original file bytes.
+/// Canonical migration content used by offline artifact inspection.
+#[derive(Debug, Clone)]
+pub struct MigrationArtifact {
+    /// Migration id in graph order.
+    pub id: String,
+    /// Canonical YAML content for display and search.
+    pub content: String,
+}
+
+/// Migration metadata used by live application-status listing commands.
 #[derive(Debug, Clone)]
 pub struct MigrationListing {
     /// Migration id in graph order.
@@ -76,6 +82,15 @@ pub struct MigrationListing {
     pub applied: bool,
     /// Canonical YAML content for display and search.
     pub content: String,
+}
+
+/// Counts migration state changes made while moving toward a target.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MigrationMovement {
+    /// Migrations applied in the forward direction.
+    pub applied: usize,
+    /// Migrations reverted in the backward direction.
+    pub reverted: usize,
 }
 
 /// Options for planning or applying one-off drift repair SQL.
@@ -516,9 +531,13 @@ impl Migrator {
     /// Refuses if there are multiple heads — resolve with `make_merge_migration` first.
     /// Calls `install` internally so the tracking table is always present.
     /// Each migration runs in its own transaction; a failure rolls back only that migration.
-    /// Returns the number of migrations applied (forward direction only).
+    /// Returns forward and backward movement counts.
     /// Applies pending migrations through an optional target migration.
-    pub async fn apply(&self, target: Option<&str>, fake: bool) -> Result<usize, MigratorError> {
+    pub async fn apply(
+        &self,
+        target: Option<&str>,
+        fake: bool,
+    ) -> Result<MigrationMovement, MigratorError> {
         let mut executor = self.executor().await?;
         self.apply_with(executor.as_mut(), target, fake).await
     }
@@ -527,7 +546,11 @@ impl Migrator {
     ///
     /// This rejects unapplied targets because rollback is intentionally
     /// backward-only; use apply for forward movement.
-    pub async fn rollback_to(&self, target: &str, fake: bool) -> Result<usize, MigratorError> {
+    pub async fn rollback_to(
+        &self,
+        target: &str,
+        fake: bool,
+    ) -> Result<MigrationMovement, MigratorError> {
         self.graph.detect_conflict()?;
         if self.graph.get(target).is_none() {
             return Err(MigratorError::Config(format!(
@@ -544,7 +567,7 @@ impl Migrator {
         let release_result = executor.release_lock().await;
 
         match (result, release_result) {
-            (Ok(count), Ok(())) => Ok(count),
+            (Ok(movement), Ok(())) => Ok(movement),
             (Err(error), _) => Err(error),
             (Ok(_), Err(error)) => Err(error.into()),
         }
@@ -555,7 +578,7 @@ impl Migrator {
         executor: &mut dyn Executor,
         target: &str,
         fake: bool,
-    ) -> Result<usize, MigratorError> {
+    ) -> Result<MigrationMovement, MigratorError> {
         let order: Vec<&str> = self.ordered_ids.iter().map(String::as_str).collect();
         let applied = self.applied_set(executor).await?;
         self.validate_applied_ids(&applied)?;
@@ -578,13 +601,7 @@ impl Migrator {
                 missing_before_target.join(", ")
             )));
         }
-        let reverted = order[target_pos + 1..]
-            .iter()
-            .filter(|id| applied.contains(**id))
-            .count();
-        self.apply_locked(executor, Some(target), fake, order)
-            .await?;
-        Ok(reverted)
+        self.apply_locked(executor, Some(target), fake, order).await
     }
 
     /// Applies pending migrations with a caller-provided executor.
@@ -593,7 +610,7 @@ impl Migrator {
         executor: &mut dyn Executor,
         target: Option<&str>,
         fake: bool,
-    ) -> Result<usize, MigratorError> {
+    ) -> Result<MigrationMovement, MigratorError> {
         self.graph.detect_conflict()?;
         let all_ordered: Vec<&str> = self.ordered_ids.iter().map(String::as_str).collect();
 
@@ -624,7 +641,7 @@ impl Migrator {
         let release_result = executor.release_lock().await;
 
         match (result, release_result) {
-            (Ok(count), Ok(())) => Ok(count),
+            (Ok(movement), Ok(())) => Ok(movement),
             (Err(error), _) => Err(error),
             (Ok(_), Err(error)) => Err(error.into()),
         }
@@ -636,7 +653,7 @@ impl Migrator {
         target: Option<&str>,
         fake: bool,
         all_ordered: Vec<&'a str>,
-    ) -> Result<usize, MigratorError> {
+    ) -> Result<MigrationMovement, MigratorError> {
         if let Some(target_id) = target {
             if self.graph.get(target_id).is_none() {
                 return Err(MigratorError::Config(format!(
@@ -658,6 +675,7 @@ impl Migrator {
                 .filter(|id| applied.contains(*id as &str))
                 .copied()
                 .collect();
+            let reverted_count = to_revert.len();
             to_revert.reverse();
 
             for id in to_revert {
@@ -709,7 +727,10 @@ impl Migrator {
                 self.apply_one(migration, executor, fake).await?;
             }
 
-            return Ok(applied_count);
+            return Ok(MigrationMovement {
+                applied: applied_count,
+                reverted: reverted_count,
+            });
         }
 
         let applied: HashSet<String> = self.applied_set(executor).await?;
@@ -723,7 +744,10 @@ impl Migrator {
             let migration = self.graph.get(id).expect("pending id must exist in graph");
             self.apply_one(migration, executor, fake).await?;
         }
-        Ok(pending.len())
+        Ok(MigrationMovement {
+            applied: pending.len(),
+            reverted: 0,
+        })
     }
 
     fn validate_applied_ids(&self, applied: &HashSet<String>) -> Result<(), MigratorError> {
@@ -798,20 +822,8 @@ impl Migrator {
             .collect())
     }
 
-    /// Return migrations in graph order with status and canonical YAML content.
-    pub async fn show(&self) -> Result<Vec<MigrationListing>, MigratorError> {
-        let mut executor = self.executor().await?;
-        self.show_with(executor.as_mut()).await
-    }
-
-    /// Return migration listings using the caller-provided executor.
-    pub async fn show_with(
-        &self,
-        executor: &mut dyn Executor,
-    ) -> Result<Vec<MigrationListing>, MigratorError> {
-        self.graph.detect_conflict()?;
-        self.install(executor).await?;
-        let applied: HashSet<String> = self.applied_set(executor).await?;
+    /// Returns canonical migration artifacts without opening a database connection.
+    pub fn artifacts(&self) -> Result<Vec<MigrationArtifact>, MigratorError> {
         self.ordered_ids
             .iter()
             .filter_map(|id| self.graph.get(id).map(|migration| (id, migration)))
@@ -821,10 +833,35 @@ impl Migrator {
                         "failed to serialize migration '{id}' for display: {err}"
                     ))
                 })?;
-                Ok(MigrationListing {
+                Ok(MigrationArtifact {
                     id: id.clone(),
-                    applied: applied.contains(id),
                     content,
+                })
+            })
+            .collect()
+    }
+
+    /// Returns live migration listings with tracking status and canonical content.
+    pub async fn status_listings(&self) -> Result<Vec<MigrationListing>, MigratorError> {
+        let mut executor = self.executor().await?;
+        self.status_listings_with(executor.as_mut()).await
+    }
+
+    /// Returns live migration listings using the caller-provided executor.
+    pub async fn status_listings_with(
+        &self,
+        executor: &mut dyn Executor,
+    ) -> Result<Vec<MigrationListing>, MigratorError> {
+        self.graph.detect_conflict()?;
+        self.install(executor).await?;
+        let applied: HashSet<String> = self.applied_set(executor).await?;
+        self.artifacts()?
+            .into_iter()
+            .map(|artifact| {
+                Ok(MigrationListing {
+                    applied: applied.contains(&artifact.id),
+                    id: artifact.id,
+                    content: artifact.content,
                 })
             })
             .collect()
@@ -844,15 +881,24 @@ impl Migrator {
     /// comparison; verify checks stable metadata such as signatures and trigger
     /// wiring, not catalog-rendered source text.
     pub async fn verify(&self, schema: &str) -> Result<Vec<Operation>, MigratorError> {
-        Ok(self.verify_report(schema).await?.operations)
+        Ok(self.verify_report_schemas(&[schema]).await?.operations)
     }
 
     pub async fn verify_report(
         &self,
         schema: &str,
     ) -> Result<drift::VerificationReport, MigratorError> {
+        self.verify_report_schemas(&[schema]).await
+    }
+
+    /// Compares migration-owned objects across one or more live schemas.
+    pub async fn verify_report_schemas(
+        &self,
+        schemas: &[&str],
+    ) -> Result<drift::VerificationReport, MigratorError> {
         let mut executor = self.executor().await?;
-        self.verify_report_with(executor.as_mut(), schema).await
+        self.verify_report_schemas_with(executor.as_mut(), schemas)
+            .await
     }
 
     /// Plan or apply one-off repair SQL for verified drift in the `public` schema.
@@ -860,8 +906,19 @@ impl Migrator {
     /// Repair never writes migration files or records migration tracking rows.
     /// When `options.apply` is false this is a dry-run that only returns SQL.
     pub async fn repair(&self, options: RepairOptions) -> Result<RepairReport, MigratorError> {
+        self.repair_schemas(&["public"], options).await
+    }
+
+    /// Plans or applies repair SQL across the requested schemas.
+    pub async fn repair_schemas(
+        &self,
+        schemas: &[&str],
+        options: RepairOptions,
+    ) -> Result<RepairReport, MigratorError> {
         let mut executor = self.executor().await?;
-        let initial = self.verify_report_with(executor.as_mut(), "public").await?;
+        let initial = self
+            .verify_report_schemas_with(executor.as_mut(), schemas)
+            .await?;
         if !options.allow_pending && !initial.pending_migrations.is_empty() {
             return Err(MigratorError::Config(format!(
                 "pending migrations block repair: {}",
@@ -878,7 +935,9 @@ impl Migrator {
         let sql = self.repair_sql(plan.operations.clone())?;
         if options.apply && !sql.is_empty() {
             self.apply_repair_sql(executor.as_mut(), &sql).await?;
-            let verification = self.verify_report_with(executor.as_mut(), "public").await?;
+            let verification = self
+                .verify_report_schemas_with(executor.as_mut(), schemas)
+                .await?;
             return Ok(RepairReport {
                 verification,
                 operations: plan.operations,
@@ -929,25 +988,33 @@ impl Migrator {
         executor: &mut (dyn EnvironmentExecutor + Send),
         schema: &str,
     ) -> Result<Vec<Operation>, MigratorError> {
-        Ok(self.verify_report_with(executor, schema).await?.operations)
+        Ok(self
+            .verify_report_schemas_with(executor, &[schema])
+            .await?
+            .operations)
     }
 
-    pub(crate) async fn verify_report_with(
+    pub(crate) async fn verify_report_schemas_with(
         &self,
         executor: &mut (dyn EnvironmentExecutor + Send),
-        schema: &str,
+        schemas: &[&str],
     ) -> Result<drift::VerificationReport, MigratorError> {
+        if schemas.is_empty() {
+            return Err(MigratorError::Config(
+                "verify requires at least one schema".to_string(),
+            ));
+        }
         let dialect = self.dialect();
         let mut replay = self.replay()?;
         replay
             .prepare_mut(&dialect)
             .map_err(|err| MigratorError::Config(err.to_string()))?;
 
-        let live = inspection::inspect_database(executor, &[schema]).await?;
+        let live = inspection::inspect_database(executor, schemas).await?;
         let live = dialect
             .normalize_inspected_schema(live)
             .map_err(|err| MigratorError::Config(err.to_string()))?;
-        let mut report = drift::diff(replay, live, schema, dialect);
+        let mut report = drift::diff_schemas(replay, live, schemas, dialect);
         self.install(executor).await?;
         let applied = self.applied_set(executor).await?;
         self.validate_applied_ids(&applied)?;

@@ -1,0 +1,19 @@
+description: SQLite semantic drift accepts identical stable literal defaults.
+group: verify
+features: [canonical_values]
+kind: verify
+dialect: sqlite
+replayed:
+  tables:
+    defaults_lab:
+      columns:
+      - {name: enabled, type: integer, default: '1'}
+      - {name: label, type: text, default: "'stable'"}
+inspected:
+  tables:
+    defaults_lab:
+      columns:
+      - {name: enabled, type: integer, default: '1'}
+      - {name: label, type: text, default: "'stable'"}
+expect_findings: []
+expect_operations: []

@@ -594,6 +594,9 @@ fn serial_type_matches(expected: &str, observed: &str) -> bool {
 fn canonical_default(value: Option<&str>) -> Option<String> {
     let value = value?.trim();
     let value = strip_wrapping_parens(value);
+    if let Some(numeric) = numeric_literal_cast(value) {
+        return Some(numeric.to_string());
+    }
     let value = strip_literal_cast(value);
     if value.eq_ignore_ascii_case("true") {
         return Some("true".to_string());
@@ -602,6 +605,55 @@ fn canonical_default(value: Option<&str>) -> Option<String> {
         return Some("false".to_string());
     }
     Some(value.to_string())
+}
+
+/// Extracts a catalog-quoted numeric literal only when both its cast and token shape are safe.
+fn numeric_literal_cast(value: &str) -> Option<&str> {
+    let (literal, cast) = value.rsplit_once("::")?;
+    let cast = cast.trim_matches('"').to_ascii_lowercase();
+    if !matches!(
+        cast.as_str(),
+        "numeric" | "decimal" | "smallint" | "integer" | "bigint" | "real" | "double precision"
+    ) {
+        return None;
+    }
+    let literal = literal.strip_prefix('\'')?.strip_suffix('\'')?;
+    is_numeric_literal(literal).then_some(literal)
+}
+
+/// Recognizes a decimal or exponent-form SQL numeric token without evaluating its value.
+fn is_numeric_literal(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let mut digits = 0usize;
+    while matches!(bytes.get(index), Some(b'0'..=b'9')) {
+        digits += 1;
+        index += 1;
+    }
+    if matches!(bytes.get(index), Some(b'.')) {
+        index += 1;
+        while matches!(bytes.get(index), Some(b'0'..=b'9')) {
+            digits += 1;
+            index += 1;
+        }
+    }
+    if digits == 0 {
+        return false;
+    }
+    if matches!(bytes.get(index), Some(b'e' | b'E')) {
+        index += 1;
+        if matches!(bytes.get(index), Some(b'+' | b'-')) {
+            index += 1;
+        }
+        let exponent_start = index;
+        while matches!(bytes.get(index), Some(b'0'..=b'9')) {
+            index += 1;
+        }
+        if index == exponent_start {
+            return false;
+        }
+    }
+    index == bytes.len()
 }
 
 pub(crate) fn canonical_column_default(value: Option<&str>) -> Option<String> {

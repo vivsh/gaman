@@ -1,0 +1,31 @@
+description: Semantic drift ignores source changes when an owned opaque index remains present.
+group: verify
+features: [opaque_lifecycle]
+kind: verify
+dialect: postgres
+replayed:
+  tables:
+    users:
+      columns:
+      - {name: id, type: integer, primary_key: true}
+      - {name: email, type: text}
+      indexes:
+      - name: users_email_idx
+        columns: []
+        opaque:
+          raw: CREATE INDEX users_email_idx ON users ((lower(email)))
+          trusted: true
+inspected:
+  tables:
+    users:
+      columns:
+      - {name: id, type: integer, primary_key: true}
+      - {name: email, type: text}
+      indexes:
+      - name: users_email_idx
+        columns: []
+        opaque:
+          raw: CREATE INDEX users_email_idx ON users (email varchar_pattern_ops)
+          trusted: true
+expect_findings: []
+expect_operations: []

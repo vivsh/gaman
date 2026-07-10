@@ -1,0 +1,62 @@
+description: Changing only a foreign key on_update action replaces the foreign key.
+group: diff
+features: [foreign_key_actions, group.diff, kind.schema_to_migration]
+kind: schema_to_migration
+dialect: postgres
+name: change_fk_update_action
+migrations:
+- id: 0001_schema
+  operations:
+  - type: create_table
+    table:
+      name: parents
+      columns:
+      - {name: id, type: integer, primary_key: true}
+  - type: create_table
+    table:
+      name: children
+      columns:
+      - {name: parent_id, type: integer}
+      foreign_keys:
+      - name: children_parent_id_fkey
+        columns: [parent_id]
+        to_table: parents
+        to_columns: [id]
+        on_delete: cascade
+        on_update: restrict
+current:
+  tables:
+    parents:
+      name: parents
+      columns:
+      - {name: id, type: integer, primary_key: true}
+    children:
+      name: children
+      columns:
+      - {name: parent_id, type: integer}
+      foreign_keys:
+      - name: children_parent_id_fkey
+        columns: [parent_id]
+        to_table: parents
+        to_columns: [id]
+        on_delete: cascade
+        on_update: set_null
+expect_operations:
+- type: drop_foreign_key
+  table_name: children
+  foreign_key:
+    name: children_parent_id_fkey
+    columns: [parent_id]
+    to_table: parents
+    to_columns: [id]
+    on_delete: cascade
+    on_update: restrict
+- type: add_foreign_key
+  table_name: children
+  foreign_key:
+    name: children_parent_id_fkey
+    columns: [parent_id]
+    to_table: parents
+    to_columns: [id]
+    on_delete: cascade
+    on_update: set_null

@@ -23,6 +23,8 @@ pub struct Config {
 /// Errors returned when runtime configuration is internally inconsistent.
 #[derive(Debug, Error)]
 pub enum ConfigError {
+    #[error("DATABASE_URL is required")]
+    MissingDatabaseUrl,
     #[error("database_url must not be empty")]
     EmptyDatabaseUrl,
     #[error("invalid database_url: {0}")]
@@ -34,6 +36,11 @@ pub enum ConfigError {
         database_url: String,
         configured: Dialect,
         inferred: Dialect,
+    },
+    #[error("{dialect} dialect is not available in this Gaman build: {reason}")]
+    DialectUnavailable {
+        dialect: &'static str,
+        reason: &'static str,
     },
     #[error("migrations_dir exists but is not a directory: {0}")]
     MigrationsDirNotDirectory(String),
@@ -53,9 +60,18 @@ impl Config {
         Dialect::parse_from_url(database_url)
     }
 
-    /// Loads configuration from environment variables and validates the database URL dialect.
+    /// Loads configuration from environment variables and infers its dialect.
+    ///
+    /// Call [`Self::validate`] after applying any command-line path overrides.
     pub fn from_env() -> Result<Self, ConfigError> {
-        let database_url = std::env::var("DATABASE_URL").unwrap_or("postgres:///".to_string());
+        Self::from_env_with_database_url(None)
+    }
+
+    /// Loads configuration from environment variables with an optional CLI URL override.
+    pub fn from_env_with_database_url(database_url: Option<String>) -> Result<Self, ConfigError> {
+        let database_url = database_url
+            .or_else(|| std::env::var("DATABASE_URL").ok())
+            .ok_or(ConfigError::MissingDatabaseUrl)?;
         let dialect = Dialect::parse_from_url(&database_url)?;
         let config = Self {
             database_url,
@@ -68,10 +84,12 @@ impl Config {
             tls: TlsMode::NoTls,
             dialect,
         };
-        config.validate()?;
         Ok(config)
     }
 
+    /// Creates configuration from explicit values.
+    ///
+    /// Call [`Self::validate`] before use when values may originate outside the application.
     pub fn new(
         database_url: String,
         migrations_dir: PathBuf,
@@ -87,8 +105,19 @@ impl Config {
         }
     }
 
-    /// Validates that configuration fields are usable and mutually consistent.
+    /// Returns the configured database URL with a password, if present, redacted.
+    pub fn redacted_database_url(&self) -> String {
+        redact_database_url(&self.database_url)
+    }
+
+    /// Validates configuration for operations that may write migration files.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        self.validate_read_only()?;
+        validate_migrations_dir_writable(&self.migrations_dir)
+    }
+
+    /// Validates configuration for operations that only read migration files.
+    pub fn validate_read_only(&self) -> Result<(), ConfigError> {
         if self.database_url.trim().is_empty() {
             return Err(ConfigError::EmptyDatabaseUrl);
         }
@@ -102,29 +131,55 @@ impl Config {
             });
         }
 
-        validate_migrations_dir(&self.migrations_dir)?;
+        validate_dialect_available(self.dialect)?;
+        validate_migrations_dir_readable(&self.migrations_dir)?;
         validate_schema_file(&self.schema_file)?;
         Ok(())
     }
+}
 
-    pub fn with_dialect(self, dialect: Dialect) -> Self {
-        Self { dialect, ..self }
+fn validate_dialect_available(dialect: Dialect) -> Result<(), ConfigError> {
+    match dialect {
+        #[cfg(feature = "postgres")]
+        Dialect::Postgres => Ok(()),
+        #[cfg(not(feature = "postgres"))]
+        Dialect::Postgres => Err(ConfigError::DialectUnavailable {
+            dialect: "postgres",
+            reason: "rebuild with the 'postgres' feature",
+        }),
+        #[cfg(feature = "sqlite")]
+        Dialect::Sqlite => Ok(()),
+        #[cfg(not(feature = "sqlite"))]
+        Dialect::Sqlite => Err(ConfigError::DialectUnavailable {
+            dialect: "sqlite",
+            reason: "rebuild with the 'sqlite' feature",
+        }),
+        Dialect::Mysql => Err(ConfigError::DialectUnavailable {
+            dialect: "mysql",
+            reason: "MySQL migration support is not implemented",
+        }),
     }
 }
 
-fn validate_migrations_dir(path: &Path) -> Result<(), ConfigError> {
+fn validate_migrations_dir_readable(path: &Path) -> Result<(), ConfigError> {
+    if path.exists() && !path.is_dir() {
+        return Err(ConfigError::MigrationsDirNotDirectory(
+            path.display().to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_migrations_dir_writable(path: &Path) -> Result<(), ConfigError> {
+    validate_migrations_dir_readable(path)?;
     if path.exists() {
-        if !path.is_dir() {
-            return Err(ConfigError::MigrationsDirNotDirectory(
+        return if is_writable_path(path) {
+            Ok(())
+        } else {
+            Err(ConfigError::MigrationsDirNotWritable(
                 path.display().to_string(),
-            ));
-        }
-        if !is_writable_path(path) {
-            return Err(ConfigError::MigrationsDirNotWritable(
-                path.display().to_string(),
-            ));
-        }
-        return Ok(());
+            ))
+        };
     }
 
     let parent = path
@@ -157,15 +212,46 @@ fn validate_schema_file(path: &Path) -> Result<(), ConfigError> {
     Ok(())
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self::from_env().unwrap_or_else(|_| Self {
-            database_url: "postgres:///".to_string(),
-            migrations_dir: PathBuf::from("migrations"),
-            schema_file: PathBuf::from("schema.yaml"),
-            tls: TlsMode::NoTls,
-            dialect: Dialect::Postgres,
-        })
+/// Redacts URL user-info passwords without parsing database-specific URL paths.
+fn redact_database_url(database_url: &str) -> String {
+    let Some((scheme, authority_and_path)) = database_url.split_once("://") else {
+        return database_url.to_string();
+    };
+    let Some((user_info, host_and_path)) = authority_and_path.rsplit_once('@') else {
+        return database_url.to_string();
+    };
+    let Some((username, _password)) = user_info.split_once(':') else {
+        return database_url.to_string();
+    };
+    format!("{scheme}://{username}:***@{host_and_path}")
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::{Config, redact_database_url};
+
+    /// Redacts passwords while retaining enough URL information for diagnostics.
+    #[test]
+    fn redacted_database_url_hides_password() {
+        assert_eq!(
+            redact_database_url("postgres://gaman:secret@localhost/app"),
+            "postgres://gaman:***@localhost/app"
+        );
+    }
+
+    /// Leaves URLs without user-info intact.
+    #[test]
+    fn redacted_database_url_preserves_url_without_credentials() {
+        assert_eq!(
+            Config::new(
+                "sqlite::memory:".to_string(),
+                "migrations".into(),
+                "schema.yaml".into(),
+                gaman_core::dialects::Dialect::Sqlite,
+            )
+            .redacted_database_url(),
+            "sqlite::memory:"
+        );
     }
 }
 
@@ -255,14 +341,53 @@ mod tests {
             Dialect::parse("sqlite").unwrap_or(Dialect::Postgres),
         );
 
-        #[cfg(feature = "sqlite")]
         assert!(matches!(
             config.validate(),
             Err(ConfigError::DialectMismatch { .. })
         ));
+    }
 
-        #[cfg(not(feature = "sqlite"))]
-        config.validate().unwrap();
+    /// Verifies the native configuration rejects the unimplemented MySQL lifecycle.
+    #[test]
+    fn validate_rejects_unimplemented_mysql_dialect() {
+        let config = Config::new(
+            "mysql://localhost/app".to_string(),
+            PathBuf::from("migrations"),
+            PathBuf::from("schema.yaml"),
+            Dialect::Mysql,
+        );
+
+        assert!(matches!(
+            config.validate_read_only(),
+            Err(ConfigError::DialectUnavailable {
+                dialect: "mysql",
+                ..
+            })
+        ));
+    }
+
+    /// Verifies read-only commands can consume migrations from a read-only directory.
+    #[cfg(unix)]
+    #[test]
+    fn read_only_validation_does_not_require_writable_migrations() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let migrations = dir.path().join("migrations");
+        std::fs::create_dir(&migrations).unwrap();
+        std::fs::set_permissions(&migrations, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let config = Config::new(
+            "postgres://localhost/app".to_string(),
+            migrations,
+            dir.path().join("schema.yaml"),
+            Dialect::Postgres,
+        );
+
+        config.validate_read_only().unwrap();
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::MigrationsDirNotWritable(_))
+        ));
     }
 
     /// Verifies validation rejects a migrations path that is already a file.

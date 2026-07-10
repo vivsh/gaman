@@ -14,6 +14,10 @@ impl Schema {
                 table.name = table_name.clone();
             }
             normalize_table_primary_key(table);
+            for foreign_key in &mut table.foreign_keys {
+                foreign_key.on_delete = normalize_foreign_key_action(foreign_key.on_delete.take());
+                foreign_key.on_update = normalize_foreign_key_action(foreign_key.on_update.take());
+            }
             for col in table.columns.iter_mut() {
                 if let Some(r) = col.references.take() {
                     let fk_name = r

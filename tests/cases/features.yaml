@@ -31,6 +31,8 @@ features:
     label: Composite primary keys
   - id: single_foreign_keys
     label: Single-column foreign keys
+  - id: foreign_key_actions
+    label: Foreign key actions
   - id: composite_foreign_keys
     label: Composite foreign keys
   - id: indexes
@@ -65,5 +67,11 @@ features:
     label: Unsupported-feature errors
   - id: ownership_scoped_verify
     label: Ownership-scoped verify
+  - id: opaque_presence_verify
+    label: Opaque presence verification
+  - id: quoted_identifiers
+    label: Quoted identifiers
+  - id: unmanaged_table_options
+    label: Unmanaged table options
   - id: data_preservation
     label: Data preservation

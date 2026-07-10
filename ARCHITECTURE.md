@@ -472,7 +472,7 @@ gaman make      # schema -> migration
 gaman status    # migration application status
 gaman show      # migration artifact inspection
 gaman sql       # migration -> SQL
-gaman apply     # apply pending migrations
+gaman apply [id] # apply pending migrations or converge on a target
 gaman verify    # replayed schema vs database
 gaman repair    # one-off drift repair
 gaman config    # resolved configuration
@@ -480,6 +480,24 @@ gaman config    # resolved configuration
 
 `.env` files are loaded only when requested with `--env`. Environment variables
 are configuration overrides, not hidden unconditional input.
+
+`DATABASE_URL` is required by the CLI to select a dialect. Commands that only
+read migration artifacts or render plans do not open a database connection.
+The CLI rejects dialects that are not implemented or compiled into the current
+binary before dispatching a command.
+
+Configuration validation follows command capabilities. Migration-generation
+commands require writable migration storage; read, render, apply, inspect,
+verify, and repair commands require only readable migration storage.
+
+Targeted migration application returns structured forward and backward counts
+so callers and the CLI can report the actual movement. Verification and repair
+accept multiple schema scopes; unqualified migration objects belong to the
+first scope, while explicitly qualified objects retain later schema names.
+
+The CLI has one convergence command: `gaman apply [id]`. It applies or reverts
+migrations until the requested target remains applied; rollback is not a
+separate CLI lifecycle.
 
 ## Testing And Evidence
 

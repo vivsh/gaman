@@ -68,7 +68,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 | Composite foreign keys (`composite_foreign_keys`) | success | success | unimplemented (dialect section missing) |
 | Indexes (`indexes`) | success | success | unimplemented (dialect section missing) |
 | Indexes and constraints (`indexes_constraints`) | success | success | unimplemented (dialect section missing) |
-| Partial indexes (`partial_indexes`) | success | unimplemented (dialect section missing) | unimplemented (dialect section missing) |
+| Partial indexes (`partial_indexes`) | success | success | unimplemented (dialect section missing) |
 | Opaque index metadata (`opaque_index_metadata`) | success | unimplemented (dialect section missing) | unimplemented (dialect section missing) |
 | Enums (`enums`) | success | unimplemented (dialect section missing) | unimplemented (dialect section missing) |
 | Functions (`functions_opaque`) | success | unimplemented (dialect section missing) | unimplemented (dialect section missing) |
@@ -85,6 +85,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`composite_keys`](tests/cases/online/composite_keys.yaml): migrate and inspect composite primary and foreign keys (`migrate, inspect`)
 - [`drop_column_shared`](tests/cases/online/drop_column_shared.yaml): dropping a column preserves remaining rows and inspected schema (`migrate, inspect, data`)
 - [`empty_migration`](tests/cases/online/empty_migration.yaml): empty migrations apply without changing inspected schema (`migrate, inspect`)
+- [`fk_on_update_cascade_shared`](tests/cases/online/fk_on_update_cascade_shared.yaml): PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE. (`migrate, inspect, verify, data`)
 - [`postgres_advanced_index_metadata_inspect`](tests/cases/online/postgres_advanced_index_metadata_inspect.yaml): PostgreSQL inspect preserves advanced index metadata without making it verified drift input (`inspect`)
 - [`postgres_enum_append_inspect`](tests/cases/online/postgres_enum_append_inspect.yaml): PostgreSQL enum append preserves ordered labels during inspect (`migrate, inspect`)
 - [`postgres_expression_index_inspect`](tests/cases/online/postgres_expression_index_inspect.yaml): PostgreSQL inspect preserves expression index metadata without failing (`inspect`)
@@ -93,6 +94,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`postgres_opaque_objects`](tests/cases/online/postgres_opaque_objects.yaml): PostgreSQL migrates and inspects enums functions views and query triggers (`migrate, inspect`)
 - [`postgres_partial_index`](tests/cases/online/postgres_partial_index.yaml): PostgreSQL migrates and inspects partial indexes (`migrate, inspect`)
 - [`postgres_view_replace`](tests/cases/online/postgres_view_replace.yaml): PostgreSQL view replacement updates the inspected view definition (`migrate, inspect`)
+- [`quoted_identifiers_shared`](tests/cases/online/quoted_identifiers_shared.yaml): PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers. (`migrate, inspect, verify, data`)
 - [`rename_table_column`](tests/cases/online/rename_table_column.yaml): live migrations rename tables and columns while preserving data (`migrate, inspect, data`)
 
 ##### SQLite
@@ -101,6 +103,8 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`composite_keys`](tests/cases/online/composite_keys.yaml): migrate and inspect composite primary and foreign keys (`migrate, inspect`)
 - [`drop_column_shared`](tests/cases/online/drop_column_shared.yaml): dropping a column preserves remaining rows and inspected schema (`migrate, inspect, data`)
 - [`empty_migration`](tests/cases/online/empty_migration.yaml): empty migrations apply without changing inspected schema (`migrate, inspect`)
+- [`fk_on_update_cascade_shared`](tests/cases/online/fk_on_update_cascade_shared.yaml): PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE. (`migrate, inspect, verify, data`)
+- [`quoted_identifiers_shared`](tests/cases/online/quoted_identifiers_shared.yaml): PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers. (`migrate, inspect, verify, data`)
 - [`rename_table_column`](tests/cases/online/rename_table_column.yaml): live migrations rename tables and columns while preserving data (`migrate, inspect, data`)
 - [`sqlite_fk_on_delete_inspect_verify`](tests/cases/online/sqlite_fk_on_delete_inspect_verify.yaml): SQLite inspect and verify preserve foreign key on_delete action (`migrate, inspect, verify`)
 - [`sqlite_rebuild_drop_column`](tests/cases/online/sqlite_rebuild_drop_column.yaml): SQLite rebuild drops a column while preserving data and remaining schema (`migrate, inspect, data`)
@@ -115,6 +119,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`lifecycle_atomic_failure_rolls_back`](tests/cases/online/lifecycle_atomic_failure_rolls_back.yaml): atomic migration failure rolls back SQL and does not record the failed migration (`migrate, error, migration_records, inspect, data`)
 - [`lifecycle_atomic_false_partial_failure`](tests/cases/online/lifecycle_atomic_false_partial_failure.yaml): non-atomic migration failure preserves earlier statements but does not record the failed migration (`migrate, error, migration_records, inspect, data`)
 - [`lifecycle_rollback_to_target`](tests/cases/online/lifecycle_rollback_to_target.yaml): migrate target rollback removes later migration effects and records (`rollback, migration_records, inspect, data`)
+- [`quoted_identifiers_shared`](tests/cases/online/quoted_identifiers_shared.yaml): PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers. (`migrate, inspect, verify, data`)
 - [`rename_table_column`](tests/cases/online/rename_table_column.yaml): live migrations rename tables and columns while preserving data (`migrate, inspect, data`)
 
 ##### SQLite
@@ -125,6 +130,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`lifecycle_atomic_failure_rolls_back`](tests/cases/online/lifecycle_atomic_failure_rolls_back.yaml): atomic migration failure rolls back SQL and does not record the failed migration (`migrate, error, migration_records, inspect, data`)
 - [`lifecycle_atomic_false_partial_failure`](tests/cases/online/lifecycle_atomic_false_partial_failure.yaml): non-atomic migration failure preserves earlier statements but does not record the failed migration (`migrate, error, migration_records, inspect, data`)
 - [`lifecycle_rollback_to_target`](tests/cases/online/lifecycle_rollback_to_target.yaml): migrate target rollback removes later migration effects and records (`rollback, migration_records, inspect, data`)
+- [`quoted_identifiers_shared`](tests/cases/online/quoted_identifiers_shared.yaml): PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers. (`migrate, inspect, verify, data`)
 - [`rename_table_column`](tests/cases/online/rename_table_column.yaml): live migrations rename tables and columns while preserving data (`migrate, inspect, data`)
 
 #### Table create/drop/rename (`table_create_drop_rename`)
@@ -200,10 +206,12 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 
 ##### PostgreSQL
 
+- [`fk_on_update_cascade_shared`](tests/cases/online/fk_on_update_cascade_shared.yaml): PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE. (`migrate, inspect, verify, data`)
 - [`postgres_fk_on_delete_inspect`](tests/cases/online/postgres_fk_on_delete_inspect.yaml): PostgreSQL inspect reflects foreign key on_delete action (`migrate, inspect`)
 
 ##### SQLite
 
+- [`fk_on_update_cascade_shared`](tests/cases/online/fk_on_update_cascade_shared.yaml): PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE. (`migrate, inspect, verify, data`)
 - [`sqlite_fk_on_delete_inspect_verify`](tests/cases/online/sqlite_fk_on_delete_inspect_verify.yaml): SQLite inspect and verify preserve foreign key on_delete action (`migrate, inspect, verify`)
 
 #### Composite foreign keys (`composite_foreign_keys`)
@@ -367,6 +375,7 @@ No drift properties are registered.
 | Tables and columns (`tables_columns`) | success | success | unimplemented (dialect section missing) |
 | Type/null/default changes (`type_null_default_changes`) | success | success | unimplemented (dialect section missing) |
 | Generated columns (`generated_columns`) | success | success | unimplemented (dialect section missing) |
+| Single-column primary keys (`single_primary_keys`) | success | success | unimplemented (dialect section missing) |
 | Composite primary keys (`composite_primary_keys`) | success | success | unimplemented (dialect section missing) |
 | Single-column foreign keys (`single_foreign_keys`) | success | success | unimplemented (dialect section missing) |
 | Composite foreign keys (`composite_foreign_keys`) | success | success | unimplemented (dialect section missing) |
@@ -387,6 +396,9 @@ No drift properties are registered.
 
 ##### PostgreSQL
 
+- [`fk_on_update_cascade_shared`](tests/cases/online/fk_on_update_cascade_shared.yaml): PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE. (`migrate, inspect, verify, data`)
+- [`postgres_default_canonical_forms`](tests/cases/online/postgres_default_canonical_forms.yaml): PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift. (`migrate, verify`)
+- [`postgres_opaque_index_with_modeled_drift`](tests/cases/online/postgres_opaque_index_with_modeled_drift.yaml): PostgreSQL modeled column drift remains visible beside an owned opaque index. (`verify`)
 - [`postgres_verify_enum_drift`](tests/cases/online/postgres_verify_enum_drift.yaml): PostgreSQL verify reports owned enum label order drift (`verify`)
 - [`postgres_verify_fk_on_delete_drift`](tests/cases/online/postgres_verify_fk_on_delete_drift.yaml): PostgreSQL verify reports foreign key on_delete drift (`verify`)
 - [`postgres_verify_function_body_ignored`](tests/cases/online/postgres_verify_function_body_ignored.yaml): PostgreSQL verify ignores body-only function drift (`verify`)
@@ -396,8 +408,11 @@ No drift properties are registered.
 - [`postgres_verify_live_only_enum_ignored`](tests/cases/online/postgres_verify_live_only_enum_ignored.yaml): PostgreSQL verify ignores live-only enums (`verify`)
 - [`postgres_verify_missing_enum`](tests/cases/online/postgres_verify_missing_enum.yaml): PostgreSQL verify reports missing owned enums (`verify`)
 - [`postgres_verify_missing_owned_trigger`](tests/cases/online/postgres_verify_missing_owned_trigger.yaml): PostgreSQL verify reports a missing owned trigger (`verify`)
+- [`postgres_verify_opaque_index_definition_ignored`](tests/cases/online/postgres_verify_opaque_index_definition_ignored.yaml): PostgreSQL verify treats changed owned opaque index definitions as present. (`verify`)
+- [`postgres_verify_opaque_index_presence`](tests/cases/online/postgres_verify_opaque_index_presence.yaml): PostgreSQL verify detects a missing owned opaque expression index. (`verify`)
 - [`postgres_verify_schema_qualified_no_drift`](tests/cases/online/postgres_verify_schema_qualified_no_drift.yaml): PostgreSQL verify accepts explicitly schema-qualified owned objects (`verify`)
 - [`postgres_verify_trigger_metadata_drift`](tests/cases/online/postgres_verify_trigger_metadata_drift.yaml): PostgreSQL verify reports owned trigger wiring drift (`verify`)
+- [`quoted_identifiers_shared`](tests/cases/online/quoted_identifiers_shared.yaml): PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers. (`migrate, inspect, verify, data`)
 - [`verify_composite_fk_order_drift`](tests/cases/online/verify_composite_fk_order_drift.yaml): verify reports composite foreign key column order drift (`verify`)
 - [`verify_composite_pk_missing`](tests/cases/online/verify_composite_pk_missing.yaml): verify reports missing owned composite primary keys as manual drift (`verify`)
 - [`verify_composite_pk_order_drift`](tests/cases/online/verify_composite_pk_order_drift.yaml): verify reports composite primary key order drift as manual drift (`verify`)
@@ -415,7 +430,10 @@ No drift properties are registered.
 
 ##### SQLite
 
+- [`fk_on_update_cascade_shared`](tests/cases/online/fk_on_update_cascade_shared.yaml): PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE. (`migrate, inspect, verify, data`)
+- [`quoted_identifiers_shared`](tests/cases/online/quoted_identifiers_shared.yaml): PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers. (`migrate, inspect, verify, data`)
 - [`sqlite_fk_on_delete_inspect_verify`](tests/cases/online/sqlite_fk_on_delete_inspect_verify.yaml): SQLite inspect and verify preserve foreign key on_delete action (`migrate, inspect, verify`)
+- [`sqlite_rebuild_combined_features`](tests/cases/online/sqlite_rebuild_combined_features.yaml): SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together. (`migrate, verify, data`)
 - [`sqlite_verify_trigger_metadata_drift`](tests/cases/online/sqlite_verify_trigger_metadata_drift.yaml): SQLite verify reports owned trigger timing drift (`verify`)
 - [`verify_composite_fk_order_drift`](tests/cases/online/verify_composite_fk_order_drift.yaml): verify reports composite foreign key column order drift (`verify`)
 - [`verify_composite_pk_missing`](tests/cases/online/verify_composite_pk_missing.yaml): verify reports missing owned composite primary keys as manual drift (`verify`)
@@ -435,6 +453,7 @@ No drift properties are registered.
 
 ##### PostgreSQL
 
+- [`postgres_opaque_index_with_modeled_drift`](tests/cases/online/postgres_opaque_index_with_modeled_drift.yaml): PostgreSQL modeled column drift remains visible beside an owned opaque index. (`verify`)
 - [`postgres_verify_enum_drift`](tests/cases/online/postgres_verify_enum_drift.yaml): PostgreSQL verify reports owned enum label order drift (`verify`)
 - [`postgres_verify_fk_on_delete_drift`](tests/cases/online/postgres_verify_fk_on_delete_drift.yaml): PostgreSQL verify reports foreign key on_delete drift (`verify`)
 - [`postgres_verify_function_body_ignored`](tests/cases/online/postgres_verify_function_body_ignored.yaml): PostgreSQL verify ignores body-only function drift (`verify`)
@@ -444,6 +463,8 @@ No drift properties are registered.
 - [`postgres_verify_live_only_enum_ignored`](tests/cases/online/postgres_verify_live_only_enum_ignored.yaml): PostgreSQL verify ignores live-only enums (`verify`)
 - [`postgres_verify_missing_enum`](tests/cases/online/postgres_verify_missing_enum.yaml): PostgreSQL verify reports missing owned enums (`verify`)
 - [`postgres_verify_missing_owned_trigger`](tests/cases/online/postgres_verify_missing_owned_trigger.yaml): PostgreSQL verify reports a missing owned trigger (`verify`)
+- [`postgres_verify_opaque_index_definition_ignored`](tests/cases/online/postgres_verify_opaque_index_definition_ignored.yaml): PostgreSQL verify treats changed owned opaque index definitions as present. (`verify`)
+- [`postgres_verify_opaque_index_presence`](tests/cases/online/postgres_verify_opaque_index_presence.yaml): PostgreSQL verify detects a missing owned opaque expression index. (`verify`)
 - [`postgres_verify_schema_qualified_no_drift`](tests/cases/online/postgres_verify_schema_qualified_no_drift.yaml): PostgreSQL verify accepts explicitly schema-qualified owned objects (`verify`)
 - [`postgres_verify_trigger_metadata_drift`](tests/cases/online/postgres_verify_trigger_metadata_drift.yaml): PostgreSQL verify reports owned trigger wiring drift (`verify`)
 - [`verify_composite_fk_order_drift`](tests/cases/online/verify_composite_fk_order_drift.yaml): verify reports composite foreign key column order drift (`verify`)
@@ -482,6 +503,7 @@ No drift properties are registered.
 
 ##### PostgreSQL
 
+- [`quoted_identifiers_shared`](tests/cases/online/quoted_identifiers_shared.yaml): PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers. (`migrate, inspect, verify, data`)
 - [`verify_detects_changed_column_metadata`](tests/cases/online/verify_detects_changed_column_metadata.yaml): verify reports changed metadata for owned columns (`verify`)
 - [`verify_ignores_untracked_column`](tests/cases/online/verify_ignores_untracked_column.yaml): verify ignores a live-only column on an owned table (`verify`)
 - [`verify_missing_owned_column`](tests/cases/online/verify_missing_owned_column.yaml): verify reports a missing owned column (`verify`)
@@ -489,6 +511,7 @@ No drift properties are registered.
 
 ##### SQLite
 
+- [`quoted_identifiers_shared`](tests/cases/online/quoted_identifiers_shared.yaml): PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers. (`migrate, inspect, verify, data`)
 - [`verify_ignores_untracked_column`](tests/cases/online/verify_ignores_untracked_column.yaml): verify ignores a live-only column on an owned table (`verify`)
 - [`verify_missing_owned_column`](tests/cases/online/verify_missing_owned_column.yaml): verify reports a missing owned column (`verify`)
 - [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
@@ -497,6 +520,8 @@ No drift properties are registered.
 
 ##### PostgreSQL
 
+- [`postgres_default_canonical_forms`](tests/cases/online/postgres_default_canonical_forms.yaml): PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift. (`migrate, verify`)
+- [`postgres_opaque_index_with_modeled_drift`](tests/cases/online/postgres_opaque_index_with_modeled_drift.yaml): PostgreSQL modeled column drift remains visible beside an owned opaque index. (`verify`)
 - [`verify_detects_changed_column_metadata`](tests/cases/online/verify_detects_changed_column_metadata.yaml): verify reports changed metadata for owned columns (`verify`)
 
 #### Generated columns (`generated_columns`)
@@ -508,8 +533,15 @@ No drift properties are registered.
 
 ##### SQLite
 
+- [`sqlite_rebuild_combined_features`](tests/cases/online/sqlite_rebuild_combined_features.yaml): SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together. (`migrate, verify, data`)
 - [`verify_generated_column_expression_drift`](tests/cases/online/verify_generated_column_expression_drift.yaml): verify reports owned generated column expression drift (`verify`)
 - [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
+
+#### Single-column primary keys (`single_primary_keys`)
+
+##### PostgreSQL
+
+- [`postgres_default_canonical_forms`](tests/cases/online/postgres_default_canonical_forms.yaml): PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift. (`migrate, verify`)
 
 #### Composite primary keys (`composite_primary_keys`)
 
@@ -521,6 +553,7 @@ No drift properties are registered.
 
 ##### SQLite
 
+- [`sqlite_rebuild_combined_features`](tests/cases/online/sqlite_rebuild_combined_features.yaml): SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together. (`migrate, verify, data`)
 - [`verify_composite_pk_missing`](tests/cases/online/verify_composite_pk_missing.yaml): verify reports missing owned composite primary keys as manual drift (`verify`)
 - [`verify_composite_pk_order_drift`](tests/cases/online/verify_composite_pk_order_drift.yaml): verify reports composite primary key order drift as manual drift (`verify`)
 - [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
@@ -529,11 +562,17 @@ No drift properties are registered.
 
 ##### PostgreSQL
 
+- [`fk_on_delete_set_default_shared`](tests/cases/online/fk_on_delete_set_default_shared.yaml): PostgreSQL and SQLite enforce ON DELETE SET DEFAULT with a valid parent default. (`migrate, verify, data`)
+- [`fk_on_delete_set_null_shared`](tests/cases/online/fk_on_delete_set_null_shared.yaml): PostgreSQL and SQLite enforce ON DELETE SET NULL. (`migrate, verify, data`)
+- [`fk_on_update_cascade_shared`](tests/cases/online/fk_on_update_cascade_shared.yaml): PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE. (`migrate, inspect, verify, data`)
 - [`postgres_verify_fk_on_delete_drift`](tests/cases/online/postgres_verify_fk_on_delete_drift.yaml): PostgreSQL verify reports foreign key on_delete drift (`verify`)
 - [`verify_detects_missing_index_constraint_fk`](tests/cases/online/verify_detects_missing_index_constraint_fk.yaml): verify reports missing owned indexes constraints and foreign keys (`verify`)
 
 ##### SQLite
 
+- [`fk_on_delete_set_default_shared`](tests/cases/online/fk_on_delete_set_default_shared.yaml): PostgreSQL and SQLite enforce ON DELETE SET DEFAULT with a valid parent default. (`migrate, verify, data`)
+- [`fk_on_delete_set_null_shared`](tests/cases/online/fk_on_delete_set_null_shared.yaml): PostgreSQL and SQLite enforce ON DELETE SET NULL. (`migrate, verify, data`)
+- [`fk_on_update_cascade_shared`](tests/cases/online/fk_on_update_cascade_shared.yaml): PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE. (`migrate, inspect, verify, data`)
 - [`sqlite_fk_on_delete_inspect_verify`](tests/cases/online/sqlite_fk_on_delete_inspect_verify.yaml): SQLite inspect and verify preserve foreign key on_delete action (`migrate, inspect, verify`)
 
 #### Composite foreign keys (`composite_foreign_keys`)
@@ -583,6 +622,7 @@ No drift properties are registered.
 
 ##### SQLite
 
+- [`sqlite_rebuild_combined_features`](tests/cases/online/sqlite_rebuild_combined_features.yaml): SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together. (`migrate, verify, data`)
 - [`verify_ignores_untracked_index_constraint_fk`](tests/cases/online/verify_ignores_untracked_index_constraint_fk.yaml): verify ignores live-only indexes constraints and foreign keys on owned tables (`verify`)
 - [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
 - [`verify_sqlite_detects_missing_index_constraint_fk`](tests/cases/online/verify_sqlite_detects_missing_index_constraint_fk.yaml): SQLite verify reports missing owned indexes constraints and foreign keys (`verify`)
@@ -591,7 +631,10 @@ No drift properties are registered.
 
 ##### PostgreSQL
 
+- [`postgres_opaque_index_with_modeled_drift`](tests/cases/online/postgres_opaque_index_with_modeled_drift.yaml): PostgreSQL modeled column drift remains visible beside an owned opaque index. (`verify`)
 - [`postgres_verify_ignores_opaque_index_metadata`](tests/cases/online/postgres_verify_ignores_opaque_index_metadata.yaml): PostgreSQL verify ignores unregistered opaque metadata on advanced live indexes (`verify`)
+- [`postgres_verify_opaque_index_definition_ignored`](tests/cases/online/postgres_verify_opaque_index_definition_ignored.yaml): PostgreSQL verify treats changed owned opaque index definitions as present. (`verify`)
+- [`postgres_verify_opaque_index_presence`](tests/cases/online/postgres_verify_opaque_index_presence.yaml): PostgreSQL verify detects a missing owned opaque expression index. (`verify`)
 
 #### Schemas / namespaces (`schemas_namespaces`)
 

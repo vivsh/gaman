@@ -1,0 +1,18 @@
+description: Unmanaged table option whitespace does not create a migration.
+group: diff
+features: [unmanaged_table_options, group.diff, kind.sql_schema_to_migration]
+kind: sql_schema_to_migration
+dialect: postgres
+name: reformat_table_storage
+migrations:
+- id: 0001_events
+  operations:
+  - type: create_table
+    table:
+      name: events
+      columns: [{name: id, type: integer, primary_key: true}]
+      options:
+        tail_raw: ['WITH (fillfactor=80)']
+        trusted: true
+sql: CREATE TABLE events (id integer PRIMARY KEY) WITH ( fillfactor = 80 );
+expect_no_changes: true

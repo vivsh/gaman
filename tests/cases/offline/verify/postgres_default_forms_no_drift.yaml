@@ -1,0 +1,21 @@
+description: PostgreSQL semantic defaults equate catalog casts booleans signed numerics and escaped text.
+group: verify
+features: [canonical_values]
+kind: verify
+dialect: postgres
+replayed:
+  tables:
+    defaults_lab:
+      columns:
+      - {name: enabled, type: boolean, default: 'TRUE'}
+      - {name: debt, type: numeric, default: '-12.50'}
+      - {name: label, type: text, default: "'O''Reilly'"}
+inspected:
+  tables:
+    defaults_lab:
+      columns:
+      - {name: enabled, type: boolean, default: 'true'}
+      - {name: debt, type: numeric, default: "'-12.50'::numeric"}
+      - {name: label, type: text, default: "'O''Reilly'::text"}
+expect_findings: []
+expect_operations: []

@@ -38,6 +38,16 @@ impl ParseContext {
         self.pending_indexes.push(index);
     }
 
+    /// Preserves the authored source for an index that lowering classified as opaque.
+    fn preserve_opaque_index_source(&mut self, raw: &str) {
+        let Some((_, index)) = self.pending_indexes.last_mut() else {
+            return;
+        };
+        if index.is_opaque() {
+            *index = Index::from_raw(index.name.clone(), raw.to_string());
+        }
+    }
+
     fn finish(self) -> Result<Schema, ParseError> {
         self.finish_raw()
     }
@@ -92,6 +102,11 @@ pub(crate) fn parse_sql_raw(sql: &str, dialect: Dialect) -> Result<Schema, Parse
                     return Err(error);
                 }
                 lower_raw_segment(&segment, &mut ctx, dialect)?;
+            } else if matches!(
+                segment.kind,
+                Some(SqlStatementKind::Ddl(ref ddl)) if ddl.entity == EntityKind::Index
+            ) {
+                ctx.preserve_opaque_index_source(&segment.sql);
             }
         }
     }

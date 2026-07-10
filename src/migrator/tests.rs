@@ -38,7 +38,12 @@ struct TestEnvironment {
 impl TestEnvironment {
     fn new(dialect: Dialect) -> Self {
         Self {
-            config: Arc::new(Config::default()),
+            config: Arc::new(Config::new(
+                "postgres:///".to_string(),
+                "migrations".into(),
+                "schema.yaml".into(),
+                dialect,
+            )),
             dialect,
         }
     }
@@ -914,6 +919,37 @@ async fn verify_treats_requested_schema_as_default_namespace() {
         .expect("verify should succeed");
 
     assert!(drift.is_empty(), "expected no drift, got: {drift:?}");
+}
+
+/// Verifies one report includes migration-owned objects from multiple schema scopes.
+#[tokio::test]
+async fn verify_compares_multiple_requested_schemas() {
+    let public_users = simple_table("users", &["id"]);
+    let mut billing_invoices = simple_table("invoices", &["id"]);
+    billing_invoices.schema = Some("billing".to_string());
+    let migrator = migrator_from(vec![migration_with_ops(
+        "0001_create_tables",
+        &[],
+        vec![
+            Operation::CreateTable {
+                table: public_users.clone(),
+            },
+            Operation::CreateTable {
+                table: billing_invoices.clone(),
+            },
+        ],
+    )]);
+    let mut live_public = public_users;
+    live_public.schema = Some("public".to_string());
+    let live = state_with_tables(&[live_public, billing_invoices]);
+    let mut executor = InspectingExecutor { live };
+
+    let report = migrator
+        .verify_report_schemas_with(&mut executor, &["public", "billing"])
+        .await
+        .expect("multi-schema verify should succeed");
+
+    assert!(report.findings.is_empty(), "unexpected drift: {report:?}");
 }
 
 #[tokio::test]

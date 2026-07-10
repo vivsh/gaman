@@ -12,6 +12,24 @@ pub(crate) fn opaque_option_sources_equal(left: &Option<String>, right: &Option<
     }
 }
 
+/// Compares ordered unmanaged table clauses by lexical SQL content and placement.
+pub(crate) fn table_option_sources_equal(
+    left_header: &[String],
+    left_tail: &[String],
+    right_header: &[String],
+    right_tail: &[String],
+) -> bool {
+    source_lists_equal(left_header, right_header) && source_lists_equal(left_tail, right_tail)
+}
+
+fn source_lists_equal(left: &[String], right: &[String]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left, right)| opaque_sources_equal(left, right))
+}
+
 pub(crate) fn fingerprint_opaque_source(source: &str) -> String {
     let canonical = canonicalize_opaque_source(source);
     let digest = Sha256::digest(canonical.as_bytes());
@@ -115,6 +133,9 @@ fn normal_token_len(source: &str) -> usize {
         return 0;
     };
     let class = token_class(first);
+    if class == 3 {
+        return first.len_utf8();
+    }
     source
         .char_indices()
         .skip(1)

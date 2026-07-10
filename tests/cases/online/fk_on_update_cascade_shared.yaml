@@ -1,0 +1,84 @@
+description: PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE.
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - foreign_key_actions
+  - single_foreign_keys
+  - data_preservation
+migrations:
+  - id: 0001_fk_update_cascade
+    operations:
+      - type: create_table
+        table:
+          name: parents
+          columns:
+            - {name: id, type: integer, primary_key: true}
+      - type: create_table
+        table:
+          name: children
+          columns:
+            - {name: id, type: integer, primary_key: true}
+            - {name: parent_id, type: integer}
+          foreign_keys:
+            - name: children_parent_id_fkey
+              columns: [parent_id]
+              to_table: parents
+              to_columns: [id]
+              on_update: cascade
+      - type: statement
+        up: INSERT INTO parents (id) VALUES (1)
+      - type: statement
+        up: INSERT INTO children (id, parent_id) VALUES (10, 1)
+dialects:
+  postgres:
+    checks: [migrate, inspect, verify, data]
+    mutate_sql: UPDATE parents SET id = 2 WHERE id = 1
+    expect_schema:
+      tables:
+        children:
+          name: children
+          primary_key: {name: children_pkey, columns: [id]}
+          columns:
+            - {name: id, type: integer, primary_key: true}
+            - {name: parent_id, type: integer}
+          foreign_keys:
+            - name: children_parent_id_fkey
+              columns: [parent_id]
+              to_table: parents
+              to_columns: [id]
+              on_update: cascade
+        parents:
+          name: parents
+          primary_key: {name: parents_pkey, columns: [id]}
+          columns:
+            - {name: id, type: integer, primary_key: true}
+    expect_verify: []
+    data:
+      - sql: SELECT CAST(parent_id AS text) FROM children WHERE id = 10
+        expect: ['2']
+  sqlite:
+    checks: [migrate, inspect, verify, data]
+    mutate_sql: UPDATE parents SET id = 2 WHERE id = 1
+    expect_schema:
+      tables:
+        children:
+          name: children
+          primary_key: {name: children_pkey, columns: [id]}
+          columns:
+            - {name: id, type: integer, primary_key: true}
+            - {name: parent_id, type: integer}
+          foreign_keys:
+            - name: children_parent_id_fkey
+              columns: [parent_id]
+              to_table: parents
+              to_columns: [id]
+              on_update: cascade
+        parents:
+          name: parents
+          primary_key: {name: parents_pkey, columns: [id]}
+          columns:
+            - {name: id, type: integer, primary_key: true}
+    expect_verify: []
+    data:
+      - sql: SELECT CAST(parent_id AS text) FROM children WHERE id = 10
+        expect: ['2']

@@ -1,0 +1,14 @@
+description: PostgreSQL unmanaged UNLOGGED table syntax requires clarification.
+group: diff
+features: [unmanaged_table_options, group.diff, kind.sql_schema_to_migration]
+kind: sql_schema_to_migration
+dialect: postgres
+name: create_unlogged_events
+sql: |
+  CREATE UNLOGGED TABLE events (id integer PRIMARY KEY, payload text);
+expect_clarifications:
+- id: unmanaged_table_options:events
+  severity: warning
+  kind:
+    type: unmanaged_table_options
+    table: events

@@ -1,0 +1,28 @@
+description: Changing an owned opaque index definition requires coarse replacement clarification.
+group: diff
+features: [opaque_lifecycle, group.diff, kind.sql_schema_to_migration]
+kind: sql_schema_to_migration
+dialect: postgres
+name: change_expression_index
+migrations:
+- id: 0001_schema
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - {name: id, type: integer, primary_key: true}
+      - {name: name, type: text}
+      indexes:
+      - name: users_name_expr_idx
+        columns: []
+        opaque:
+          raw: CREATE INDEX users_name_expr_idx ON users ((lower(name)))
+          trusted: true
+sql: |
+  CREATE TABLE users (id integer PRIMARY KEY, name text NOT NULL);
+  CREATE INDEX users_name_expr_idx ON users ((upper(name)));
+expect_clarifications:
+- id: opaque_entity:index:users.users_name_expr_idx
+  severity: warning
+  kind: {type: opaque_entity, kind: index, name: users.users_name_expr_idx}

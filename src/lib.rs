@@ -27,7 +27,7 @@ pub(crate) mod adapters;
 pub mod cli;
 #[cfg(feature = "native")]
 pub(crate) mod conf;
-#[cfg(feature = "cli")]
+#[cfg(feature = "db")]
 pub(crate) mod engine;
 #[cfg(feature = "db")]
 pub(crate) mod environment;
@@ -58,12 +58,14 @@ pub mod drift {
 // Everyday API.
 #[cfg(feature = "native")]
 pub use conf::{Config, ConfigError, TlsMode};
-#[cfg(feature = "cli")]
+#[cfg(feature = "db")]
 pub use engine::{EmbeddedMigrations, EngineError, MigrationEngine};
 #[cfg(feature = "native")]
 pub use gaman_core::Migration;
-#[cfg(all(feature = "cli", feature = "db"))]
-pub use migrator::{RepairOptions, RepairReport};
+#[cfg(feature = "db")]
+pub use migrator::{
+    MigrationArtifact, MigrationListing, MigrationMovement, RepairOptions, RepairReport,
+};
 
 /// Schema types and builders.
 #[cfg(feature = "native")]
@@ -94,9 +96,9 @@ pub mod core {
     #[cfg(feature = "db")]
     pub use crate::executor::{BoxFuture, Executor, ExecutorError, Introspectable};
     #[cfg(feature = "db")]
-    pub use crate::migrator::{Migrator, MigratorError, RepairOptions, RepairReport};
-    #[cfg(feature = "cli")]
-    pub use crate::prompter::CliPromptEngine;
+    pub use crate::migrator::{
+        MigrationMovement, Migrator, MigratorError, RepairOptions, RepairReport,
+    };
     #[cfg(feature = "db")]
     pub use crate::tracking::{
         DatabaseTrackingStore, TRACKING_TABLE, TrackingError, TrackingStore,
