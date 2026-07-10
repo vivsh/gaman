@@ -1,3 +1,4 @@
+use crate::SchemaCheckReport;
 use crate::cli::args::{
     ApplyCmd, Command, InspectCmd, MakeCmd, RepairCmd, ShowCmd, SqlCmd, StatusCmd, VerifyCmd,
 };
@@ -5,12 +6,13 @@ use crate::cli::diagnostic::CommandError;
 use crate::cli::output::{
     drift_detected_error, filter_artifacts, filter_status_listings, print_migration_contents,
     print_migration_movement, print_migration_result, print_migration_row, print_repair_report,
-    print_sql_statements,
+    print_schema_check_report, print_sql_statements,
 };
 use crate::conf::Config;
 use crate::engine::{EngineError, MigrationEngine};
 use crate::migrator::RepairOptions;
 use crate::prompter::CliPromptEngine;
+use crate::schema_file::{SchemaCheckPathEntry, collect_schema_check_entries};
 use gaman_core::clarifier::{Decision, PromptEngine};
 
 use super::args::GamanArgs;
@@ -21,7 +23,11 @@ pub async fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
     let mut config = Config::from_env_with_database_url(args.database_url.clone())
         .map_err(CommandError::from_config_error)?;
     let command = args.apply_to(&mut config)?;
-    if command.requires_writable_migrations() {
+    if command.validates_schema_sql_only() {
+        config
+            .validate_schema_check()
+            .map_err(CommandError::from_config_error)?;
+    } else if command.requires_writable_migrations() {
         config.validate().map_err(CommandError::from_config_error)?;
     } else {
         config
@@ -43,10 +49,56 @@ pub(crate) async fn dispatch(
         Command::Status(command) => handle_status(&engine, command).await,
         Command::Show(command) => handle_show(&engine, command),
         Command::Sql(command) => handle_sql(&engine, command),
+        Command::CheckSchema(_) => handle_check_schema(&engine).await,
         Command::Inspect(command) => handle_inspect(engine, command).await,
         Command::Verify(command) => handle_verify(engine, command).await,
         Command::Repair(command) => handle_repair(engine, command).await,
     }
+}
+
+/// Collects native schema files, validates SQL through the engine, and formats one report.
+async fn handle_check_schema(engine: &MigrationEngine) -> Result<(), CommandError> {
+    let config = engine.config();
+    let entries = collect_schema_check_entries(&config.schema_file)
+        .map_err(EngineError::from)
+        .map_err(CommandError::from_engine)?;
+    let inputs = entries.iter().filter_map(|entry| match entry {
+        SchemaCheckPathEntry::Sql(input) => Some(input.clone()),
+        SchemaCheckPathEntry::Ignored(_) => None,
+    });
+    let checked = engine
+        .check_sql_schema(inputs)
+        .await
+        .map_err(CommandError::from_engine)?;
+    let report = merge_schema_check_reports(entries, checked)?;
+    print_schema_check_report(&report);
+    if report.has_failures() {
+        return Err(CommandError::diagnostic("schema check failed"));
+    }
+    Ok(())
+}
+
+/// Restores native discovery ordering around checked SQL and ignored structured inputs.
+fn merge_schema_check_reports(
+    entries: Vec<SchemaCheckPathEntry>,
+    checked: SchemaCheckReport,
+) -> Result<SchemaCheckReport, CommandError> {
+    let mut checked = checked.files.into_iter();
+    let mut files = Vec::with_capacity(entries.len());
+    for entry in entries {
+        match entry {
+            SchemaCheckPathEntry::Sql(_) => files.push(checked.next().ok_or_else(|| {
+                CommandError::diagnostic("schema check did not return a result for an SQL file")
+            })?),
+            SchemaCheckPathEntry::Ignored(report) => files.push(report),
+        }
+    }
+    if checked.next().is_some() {
+        return Err(CommandError::diagnostic(
+            "schema check returned unexpected SQL file results",
+        ));
+    }
+    Ok(SchemaCheckReport { files })
 }
 
 fn print_config(engine: &MigrationEngine, show_database_url: bool) -> Result<(), CommandError> {

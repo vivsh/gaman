@@ -1698,6 +1698,15 @@ impl PgHarness {
 
 #[cfg(feature = "postgres")]
 impl Executor for PgHarness {
+    fn prepare<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async move {
+            sqlx::Executor::prepare(&mut self.conn, sql)
+                .await
+                .map(|_| ())
+                .map_err(|error| ExecutorError::Prepare(format!("{error}\n  SQL: {sql}")))
+        })
+    }
+
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async move {
             sqlx::query(sql)

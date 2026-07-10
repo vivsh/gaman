@@ -435,7 +435,7 @@ dependencies = [
 
 [[package]]
 name = "gaman"
-version = "0.3.20"
+version = "0.3.21"
 dependencies = [
  "argh",
  "dotenvy",
@@ -450,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "gaman-core"
-version = "0.3.20"
+version = "0.3.21"
 dependencies = [
  "proptest",
  "serde",

@@ -45,6 +45,28 @@ fn missing_semicolon_before_new_top_level_statement() {
     assert!(statements[1].starts_with("CREATE INDEX users_id_idx"));
 }
 
+/// Verifies unknown CREATE modifiers do not hide a view determinant from segmentation.
+#[test]
+fn unknown_create_modifiers_do_not_split_view_body() {
+    let source = "CREATE FUTURE OPTION VIEW active_users AS\nSELECT id FROM users;\nCREATE TABLE audit (id int);";
+    let segments = segment_sql(source, Dialect::Postgres).unwrap();
+
+    assert_eq!(segments.len(), 2);
+    assert!(segments[0].sql.contains("VIEW active_users AS\nSELECT"));
+    assert!(segments[1].sql.contains("CREATE TABLE audit"));
+}
+
+/// Verifies unknown CREATE modifiers do not disable SQLite trigger body tracking.
+#[test]
+fn unknown_create_modifiers_do_not_split_sqlite_trigger_body() {
+    let source = "CREATE FUTURE TRIGGER users_audit AFTER INSERT ON users BEGIN\nINSERT INTO audit(id) VALUES (NEW.id);\nEND;\nCREATE TABLE posts (id int);";
+    let segments = segment_sql(source, Dialect::Sqlite).unwrap();
+
+    assert_eq!(segments.len(), 2);
+    assert!(segments[0].sql.contains("INSERT INTO audit"));
+    assert!(segments[1].sql.contains("CREATE TABLE posts"));
+}
+
 /// Verifies semicolons inside strings, comments, and expressions do not split statements.
 #[test]
 fn no_split_inside_strings_comments_or_brackets() {

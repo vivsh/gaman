@@ -4,11 +4,22 @@
 //! `gaman-core` string parsers. Keeping them here preserves CLI ergonomics
 //! without adding filesystem access to the offline core.
 
+#[cfg(feature = "db")]
+use crate::{SchemaCheckFileReport, SqlSchemaInput};
+use gaman_core::dialects::Dialect;
+use gaman_core::states::{Schema, SchemaLoadError};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use gaman_core::dialects::Dialect;
-use gaman_core::states::{Schema, SchemaLoadError};
+/// One native schema input selected for `check_schema` output.
+#[cfg(feature = "db")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SchemaCheckPathEntry {
+    /// SQL source to prepare through the selected database executor.
+    Sql(SqlSchemaInput),
+    /// A non-SQL schema source intentionally skipped by `check_schema`.
+    Ignored(SchemaCheckFileReport),
+}
 
 /// Load a schema from a native filesystem path.
 ///
@@ -71,6 +82,88 @@ fn schema_entries(dir: &Path) -> Result<Vec<PathBuf>, SchemaLoadError> {
         .map(|entry| entry.path())
         .filter(|path| is_schema_file(path))
         .collect())
+}
+
+/// Collects immediate schema entries for live SQL preparation validation.
+///
+/// Files are ordered by descending modification time and then ascending path
+/// for deterministic ties. YAML and JSON inputs remain visible as ignored
+/// entries; only SQL source is read and supplied to the engine.
+#[cfg(feature = "db")]
+pub(crate) fn collect_schema_check_entries(
+    path: impl AsRef<Path>,
+) -> Result<Vec<SchemaCheckPathEntry>, SchemaLoadError> {
+    let paths = schema_check_paths(path.as_ref())?;
+    sort_schema_check_paths(paths)?
+        .into_iter()
+        .map(schema_check_entry)
+        .collect()
+}
+
+#[cfg(feature = "db")]
+fn schema_check_paths(path: &Path) -> Result<Vec<PathBuf>, SchemaLoadError> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| SchemaLoadError::Io(path.display().to_string(), error))?;
+    if metadata.is_dir() {
+        schema_entries(path)
+    } else if metadata.is_file() {
+        Ok(vec![path.to_path_buf()])
+    } else {
+        Err(SchemaLoadError::Io(
+            path.display().to_string(),
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "not a regular file or directory",
+            ),
+        ))
+    }
+}
+
+#[cfg(feature = "db")]
+fn sort_schema_check_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, SchemaLoadError> {
+    let mut dated_paths = Vec::with_capacity(paths.len());
+    for path in paths {
+        let modified = fs::metadata(&path)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|error| SchemaLoadError::Io(path.display().to_string(), error))?;
+        dated_paths.push((path, modified));
+    }
+    Ok(sort_dated_schema_check_paths(dated_paths))
+}
+
+#[cfg(feature = "db")]
+fn sort_dated_schema_check_paths(
+    mut dated_paths: Vec<(PathBuf, std::time::SystemTime)>,
+) -> Vec<PathBuf> {
+    dated_paths.sort_by(|(left_path, left_modified), (right_path, right_modified)| {
+        right_modified
+            .cmp(left_modified)
+            .then_with(|| left_path.cmp(right_path))
+    });
+    dated_paths.into_iter().map(|(path, _)| path).collect()
+}
+
+#[cfg(feature = "db")]
+fn schema_check_entry(path: PathBuf) -> Result<SchemaCheckPathEntry, SchemaLoadError> {
+    let label = path.display().to_string();
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("sql") => {
+            let source = fs::read_to_string(&path)
+                .map_err(|error| SchemaLoadError::Io(label.clone(), error))?;
+            Ok(SchemaCheckPathEntry::Sql(SqlSchemaInput::new(
+                label, source,
+            )))
+        }
+        Some("yaml" | "yml") => Ok(SchemaCheckPathEntry::Ignored(
+            SchemaCheckFileReport::ignored(label, "YAML schema input"),
+        )),
+        Some("json") => Ok(SchemaCheckPathEntry::Ignored(
+            SchemaCheckFileReport::ignored(label, "JSON schema input"),
+        )),
+        _ => Ok(SchemaCheckPathEntry::Ignored(
+            SchemaCheckFileReport::ignored(label, "not an SQL schema input"),
+        )),
+    }
 }
 
 fn is_schema_file(path: &Path) -> bool {
@@ -190,5 +283,79 @@ mod tests {
             err.to_string().contains("things"),
             "expected error mentioning 'things', got: {err}"
         );
+    }
+
+    /// Verifies schema checking reads SQL while retaining YAML and JSON as ignored inputs.
+    #[cfg(feature = "db")]
+    #[test]
+    fn collect_schema_check_entries_keeps_non_sql_schema_inputs_visible() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("schema.sql"),
+            "CREATE TABLE users (id integer);",
+        )
+        .expect("write SQL schema");
+        fs::write(dir.path().join("schema.yaml"), "tables: {}\n").expect("write YAML schema");
+        fs::write(dir.path().join("schema.json"), "{}\n").expect("write JSON schema");
+
+        let entries = collect_schema_check_entries(dir.path()).expect("collect schema checks");
+
+        assert_eq!(entries.len(), 3);
+        assert!(
+            entries
+                .iter()
+                .any(|entry| matches!(entry, SchemaCheckPathEntry::Sql(_)))
+        );
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            SchemaCheckPathEntry::Ignored(report)
+                if matches!(
+                    report.status,
+                    crate::SchemaCheckFileStatus::Ignored { ref reason }
+                        if reason == "YAML schema input"
+                )
+        )));
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            SchemaCheckPathEntry::Ignored(report)
+                if matches!(
+                    report.status,
+                    crate::SchemaCheckFileStatus::Ignored { ref reason }
+                        if reason == "JSON schema input"
+                )
+        )));
+    }
+
+    /// Verifies schema check ordering is newest-first with a deterministic path tie-breaker.
+    #[cfg(feature = "db")]
+    #[test]
+    fn schema_check_ordering_breaks_equal_timestamps_by_path() {
+        let old = std::time::UNIX_EPOCH;
+        let new = old + std::time::Duration::from_secs(1);
+        let paths = sort_dated_schema_check_paths(vec![
+            (PathBuf::from("z.sql"), old),
+            (PathBuf::from("a.sql"), old),
+            (PathBuf::from("new.sql"), new),
+        ]);
+
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from("new.sql"),
+                PathBuf::from("a.sql"),
+                PathBuf::from("z.sql")
+            ]
+        );
+    }
+
+    /// Verifies missing schema paths produce a path-specific collection error.
+    #[cfg(feature = "db")]
+    #[test]
+    fn collect_schema_check_entries_reports_missing_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("missing.sql");
+        let error = collect_schema_check_entries(&path).expect_err("missing schema must fail");
+
+        assert!(error.to_string().contains(&path.display().to_string()));
     }
 }

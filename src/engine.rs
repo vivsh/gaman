@@ -11,6 +11,7 @@ use crate::migrator::{
     MigrationArtifact, MigrationListing, MigrationMovement, Migrator, MigratorError, RepairOptions,
     RepairReport,
 };
+use crate::schema_check::{SchemaCheckReport, SqlSchemaInput, check_sql_schema_with_executor};
 use crate::schema_file::load_schema_path;
 use gaman_core::clarifier::{Clarification, Decision};
 use gaman_core::dialects::Dialect;
@@ -351,6 +352,28 @@ impl MigrationEngine {
     /// Current configuration as seen by the migrator.
     pub fn config(&self) -> Config {
         self.config.clone()
+    }
+
+    /// Prepares each supplied SQL schema statement against the configured database.
+    ///
+    /// This validates database syntax without executing SQL, reading migration
+    /// storage, installing tracking state, acquiring locks, or starting a
+    /// transaction. The caller supplies in-memory source so the engine remains
+    /// independent of filesystem and browser storage choices.
+    pub async fn check_sql_schema(
+        &self,
+        files: impl IntoIterator<Item = SqlSchemaInput>,
+    ) -> Result<SchemaCheckReport, EngineError> {
+        let files = files.into_iter().collect::<Vec<_>>();
+        if files.is_empty() {
+            return Ok(SchemaCheckReport::default());
+        }
+        let environment = EngineEnvironment::new(Arc::new(self.config.clone()));
+        let mut executor = environment.executor().await.map_err(|error| match error {
+            EnvironmentError::Config(message) => EngineError::Config(message),
+            EnvironmentError::Connect(message) => EngineError::Connect(message),
+        })?;
+        Ok(check_sql_schema_with_executor(&mut *executor, self.config.dialect, files).await)
     }
 
     /// Migrate forward or backward to `target` migration id.

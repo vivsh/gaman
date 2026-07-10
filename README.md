@@ -48,6 +48,7 @@ export DATABASE_URL=postgres://localhost/myapp
 export MIGRATIONS_DIR=migrations
 export SCHEMA=schema.sql
 
+gaman check_schema
 gaman make initial
 gaman sql
 gaman apply
@@ -66,8 +67,9 @@ schema.sql -> make -> migration.yaml -> sql -> SQL -> apply
 
 `DATABASE_URL` is required for every CLI invocation only to select the dialect.
 Offline commands such as `make`, `show`, and `sql` never open or otherwise use
-the connection. It is used only when a command needs live database state, such
-as `status`, `apply`, `inspect`, `verify`, or `repair`.
+the connection. `check_schema` is the deliberate validation exception: it
+prepares schema SQL through the selected database without executing it. Other
+live commands include `status`, `apply`, `inspect`, `verify`, and `repair`.
 
 For smaller custom builds, select dialect features explicitly:
 
@@ -99,6 +101,7 @@ gaman make --check      # CI check; never prompts or writes
 gaman make --dry-run    # print the migration that would be written
 gaman make --empty name # write an empty migration shell
 gaman make --merge name # merge multiple graph heads
+gaman check_schema       # prepare each SQL schema statement without executing it
 
 gaman sql [id]            # print offline operation SQL; id may be a unique prefix
 gaman sql --backwards id  # print rollback SQL; id may be a unique prefix
@@ -128,7 +131,8 @@ inverse SQL before moving backward.
 Environment variables:
 
 - `DATABASE_URL`: required for all CLI commands; offline commands use it only
-  to select the dialect.
+  to select the dialect. `check_schema` connects only to prepare SQL and never
+  executes it.
 - `MIGRATIONS_DIR`: defaults to `migrations`.
 - `SCHEMA`: defaults to `schema.yaml`; may be YAML, JSON, SQL, or a directory.
 

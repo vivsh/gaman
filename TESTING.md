@@ -74,6 +74,10 @@ Prefer the cheapest layer that proves the behavior. Do not add an online case
 when the same rule can be proven deterministically in `gaman-core` or the
 offline harness.
 
+`gaman check_schema` is a focused live validation command, not a migration
+test. It prepares each SQL schema statement without executing it, so it is
+covered by small executor and CLI tests rather than the online fixture matrix.
+
 ## Testing Policy
 
 ### YAML-first policy
@@ -223,6 +227,21 @@ Local non-live gate:
 ```bash
 scripts/check.sh
 ```
+
+### Schema SQL prepare checks
+
+`check_schema` uses `DATABASE_URL` to prepare every segmented `.sql` statement
+without executing it. It does not read migrations, install tracking state,
+acquire locks, or start transactions. YAML and JSON schema inputs are reported
+as ignored.
+
+```bash
+DATABASE_URL=sqlite::memory: gaman --schema schema.sql check_schema
+DATABASE_URL=postgres://localhost/myapp gaman --schema schema check_schema
+```
+
+Prepare validation catches database syntax and prepare-time semantic failures;
+it does not prove effects that require executing statements in order.
 
 Coverage:
 

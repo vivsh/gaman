@@ -341,6 +341,10 @@ impl RecordingExecutor {
 }
 
 impl Executor for RecordingExecutor {
+    fn prepare<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async { Ok(()) })
+    }
+
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
         self.executed.push(sql.to_string());
         Box::pin(async { Ok(()) })
@@ -363,6 +367,10 @@ impl Executor for RecordingExecutor {
 }
 
 impl Executor for NullExecutor {
+    fn prepare<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async { Ok(()) })
+    }
+
     fn execute<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async { Ok(()) })
     }
@@ -411,6 +419,10 @@ impl FailingExecutor {
 }
 
 impl Executor for FailingExecutor {
+    fn prepare<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async { Ok(()) })
+    }
+
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
         let should_fail = sql.contains(self.fail_on);
         Box::pin(async move {
@@ -453,6 +465,10 @@ struct InspectingExecutor {
 }
 
 impl Executor for InspectingExecutor {
+    fn prepare<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async { Ok(()) })
+    }
+
     fn execute<'a>(&'a mut self, _sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async { Ok(()) })
     }

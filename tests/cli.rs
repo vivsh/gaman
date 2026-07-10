@@ -1,6 +1,8 @@
 use std::fs;
 use std::process::Command;
 
+#[cfg(feature = "postgres")]
+use sqlx::Connection;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -9,6 +11,15 @@ fn gaman_command(dir: &tempfile::TempDir) -> Command {
     command
         .current_dir(dir.path())
         .env("DATABASE_URL", "postgres://localhost/gaman_cli_test");
+    command
+}
+
+#[cfg(feature = "sqlite")]
+fn sqlite_gaman_command(dir: &tempfile::TempDir) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_gaman"));
+    command
+        .current_dir(dir.path())
+        .env("DATABASE_URL", "sqlite::memory:");
     command
 }
 
@@ -49,6 +60,116 @@ fn show_is_offline_and_omits_application_status() {
     assert!(stdout.contains("--- 0001_init"));
     assert!(!stdout.contains("(applied)"));
     assert!(!stdout.contains("(pending)"));
+}
+
+/// Verifies check_schema prepares SQL while reporting non-SQL schema files as ignored.
+#[cfg(feature = "sqlite")]
+#[test]
+fn check_schema_reports_checked_and_ignored_files_without_migrations() {
+    let dir = tempfile::tempdir().expect("create temp directory");
+    let schema = dir.path().join("schema");
+    fs::create_dir_all(&schema).expect("create schema directory");
+    fs::write(
+        schema.join("schema.sql"),
+        "CREATE TABLE users (id integer);",
+    )
+    .expect("write SQL schema");
+    fs::write(schema.join("legacy.yaml"), "tables: {}\n").expect("write YAML schema");
+
+    let output = sqlite_gaman_command(&dir)
+        .args(["--schema", "schema", "check_schema"])
+        .output()
+        .expect("run check_schema");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("schema.sql passed (1)"), "{stdout}");
+    assert!(
+        stdout.contains("legacy.yaml ignored (YAML schema input)"),
+        "{stdout}"
+    );
+}
+
+/// Verifies YAML-only schema input is ignored without opening the configured database.
+#[test]
+fn check_schema_ignores_yaml_without_a_database_connection() {
+    let dir = tempfile::tempdir().expect("create temp directory");
+    fs::write(dir.path().join("schema.yaml"), "tables: {}\n").expect("write YAML schema");
+
+    let output = gaman_command(&dir)
+        .arg("check_schema")
+        .output()
+        .expect("run check_schema");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(
+        stdout.contains("schema.yaml ignored (YAML schema input)"),
+        "{stdout}"
+    );
+}
+
+/// Verifies check_schema reports a prepare failure and exits non-zero without migration storage.
+#[cfg(feature = "sqlite")]
+#[test]
+fn check_schema_reports_prepare_failures() {
+    let dir = tempfile::tempdir().expect("create temp directory");
+    fs::write(dir.path().join("schema.sql"), "SELECT FROM;").expect("write malformed SQL schema");
+
+    let output = sqlite_gaman_command(&dir)
+        .args(["--schema", "schema.sql", "check_schema"])
+        .output()
+        .expect("run check_schema");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(
+        stdout.contains("schema.sql passed (0), failed (1)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("statement 1 (line 1): prepare failed:"),
+        "{stdout}"
+    );
+    assert!(stderr.contains("schema check failed"), "{stderr}");
+}
+
+/// Verifies PostgreSQL prepare validation does not execute an otherwise valid schema statement.
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn check_schema_postgres_does_not_create_prepared_table() {
+    let Ok(database_url) = std::env::var("POSTGRES_DATABASE_URL") else {
+        return;
+    };
+    let dir = tempfile::tempdir().expect("create temp directory");
+    let table = format!("gaman_check_schema_{}", std::process::id());
+    fs::write(
+        dir.path().join("schema.sql"),
+        format!("CREATE TABLE {table} (id integer);"),
+    )
+    .expect("write SQL schema");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_gaman"))
+        .current_dir(dir.path())
+        .env("DATABASE_URL", &database_url)
+        .args(["--schema", "schema.sql", "check_schema"])
+        .output()
+        .expect("run PostgreSQL check_schema");
+
+    assert!(output.status.success());
+    let mut connection = sqlx::PgConnection::connect(&database_url)
+        .await
+        .expect("connect PostgreSQL");
+    let exists: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text")
+        .bind(&table)
+        .fetch_one(&mut connection)
+        .await
+        .expect("query prepared table");
+    assert!(
+        exists.is_none(),
+        "check_schema unexpectedly created {table}"
+    );
 }
 
 /// Verifies ambiguous migration id prefixes report each graph-ordered candidate.

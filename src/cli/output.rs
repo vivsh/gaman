@@ -1,5 +1,6 @@
 use crate::cli::diagnostic::{CliDiagnostic, CommandError};
 use crate::migrator::{MigrationArtifact, MigrationListing, MigrationMovement, RepairReport};
+use crate::{SchemaCheckFailure, SchemaCheckFileStatus, SchemaCheckReport};
 use gaman_core::migrations::Migration;
 
 /// Filters live status listings by id or canonical migration content.
@@ -153,6 +154,44 @@ pub(crate) fn print_sql_statements(statements: &[String]) {
         for statement in statements {
             println!("{}", sql_statement_for_cli(statement));
         }
+    }
+}
+
+/// Prints concise per-file results from a live SQL schema prepare check.
+pub(crate) fn print_schema_check_report(report: &SchemaCheckReport) {
+    for file in &report.files {
+        match &file.status {
+            SchemaCheckFileStatus::Ignored { reason } => {
+                println!("{} ignored ({reason})", file.label);
+            }
+            SchemaCheckFileStatus::Checked { passed, failures } if failures.is_empty() => {
+                println!("{} passed ({passed})", file.label);
+            }
+            SchemaCheckFileStatus::Checked { passed, failures } => {
+                println!(
+                    "{} passed ({passed}), failed ({})",
+                    file.label,
+                    failures.len()
+                );
+                for failure in failures {
+                    print_schema_check_failure(failure);
+                }
+            }
+        }
+    }
+}
+
+/// Prints one statement or segmentation diagnostic beneath its file result.
+fn print_schema_check_failure(failure: &SchemaCheckFailure) {
+    match failure {
+        SchemaCheckFailure::Segmentation { message } => {
+            println!("  segmentation: {message}");
+        }
+        SchemaCheckFailure::Statement {
+            ordinal,
+            line,
+            message,
+        } => println!("  statement {ordinal} (line {line}): {message}"),
     }
 }
 

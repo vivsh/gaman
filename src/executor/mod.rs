@@ -15,6 +15,9 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 #[derive(Debug, Error)]
 /// Errors returned by live SQL execution, transaction, and introspection calls.
 pub enum ExecutorError {
+    /// A statement could not be prepared by the configured database driver.
+    #[error("prepare failed: {0}")]
+    Prepare(String),
     /// A statement failed during execution.
     #[error("execute failed: {0}")]
     Execute(String),
@@ -31,6 +34,13 @@ pub enum ExecutorError {
 /// Implementations are used only by native live migration paths. Offline
 /// planning and `sql_migrate` render SQL without an executor.
 pub trait Executor: Send {
+    /// Prepares one statement without executing it.
+    ///
+    /// Implementations should delegate to their database driver's prepare
+    /// operation. This is used by `MigrationEngine::check_sql_schema` and must
+    /// not execute SQL, begin a transaction, or change migration state.
+    fn prepare<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>>;
+
     /// Executes a statement that does not return rows to Gaman.
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>>;
 

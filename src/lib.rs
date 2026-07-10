@@ -39,6 +39,8 @@ pub(crate) mod inspection;
 pub(crate) mod migrator;
 #[cfg(feature = "cli")]
 pub(crate) mod prompter;
+#[cfg(feature = "db")]
+mod schema_check;
 #[cfg(feature = "native")]
 pub mod schema_file;
 #[cfg(feature = "db")]
@@ -65,6 +67,11 @@ pub use gaman_core::Migration;
 #[cfg(feature = "db")]
 pub use migrator::{
     MigrationArtifact, MigrationListing, MigrationMovement, RepairOptions, RepairReport,
+};
+#[cfg(feature = "db")]
+pub use schema_check::{
+    SchemaCheckFailure, SchemaCheckFileReport, SchemaCheckFileStatus, SchemaCheckReport,
+    SqlSchemaInput,
 };
 
 /// Schema types and builders.

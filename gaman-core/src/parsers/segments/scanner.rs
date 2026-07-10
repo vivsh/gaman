@@ -1,4 +1,4 @@
-use super::classifier::classify_segment;
+use super::classifier::{CreateDeterminantKind, classify_segment, determinant_for_word};
 use super::types::{Location, SqlSegment, SqlSegmentationExt};
 use crate::dialects::Dialect;
 use crate::parsers::ParseError;
@@ -27,7 +27,7 @@ struct Scanner<'a> {
     brace_depth: usize,
     body_depth: usize,
     first_word: Option<String>,
-    create_kind: Option<String>,
+    create_kind: Option<CreateDeterminantKind>,
     recent_words: Vec<String>,
     segments: Vec<SqlSegment>,
 }
@@ -116,18 +116,14 @@ impl<'a> Scanner<'a> {
         if word == "REPLACE" && self.recent_words.ends_with(&["CREATE".into(), "OR".into()]) {
             return false;
         }
-        !matches!(
-            (
-                self.first_word.as_deref(),
-                self.create_kind.as_deref(),
-                word
-            ),
-            (
-                Some("CREATE"),
-                Some("VIEW" | "FUNCTION" | "PROCEDURE" | "TRIGGER" | "EVENT"),
-                _
-            ) | (Some("INSERT"), _, "SELECT" | "WITH")
-        )
+        if self.first_word.as_deref() == Some("CREATE")
+            && self
+                .create_kind
+                .is_some_and(CreateDeterminantKind::protects_statement_body)
+        {
+            return false;
+        }
+        !(self.first_word.as_deref() == Some("INSERT") && matches!(word, "SELECT" | "WITH"))
     }
 
     /// Tracks statement kind and procedural body depth from canonical words.
@@ -137,12 +133,13 @@ impl<'a> Scanner<'a> {
         }
         self.observe_create_kind(word);
         if ((self.dialect.tracks_sqlite_trigger_body()
-            && self.create_kind.as_deref() == Some("TRIGGER"))
+            && self
+                .create_kind
+                .is_some_and(CreateDeterminantKind::tracks_sqlite_body))
             || (self.dialect.tracks_mysql_body_blocks()
-                && matches!(
-                    self.create_kind.as_deref(),
-                    Some("FUNCTION" | "PROCEDURE" | "TRIGGER" | "EVENT")
-                )))
+                && self
+                    .create_kind
+                    .is_some_and(CreateDeterminantKind::tracks_mysql_body)))
             && self.paren_depth == 0
         {
             match word {
@@ -161,21 +158,8 @@ impl<'a> Scanner<'a> {
         if self.first_word.as_deref() != Some("CREATE") || self.create_kind.is_some() {
             return;
         }
-        if !matches!(
-            word,
-            "CREATE"
-                | "OR"
-                | "REPLACE"
-                | "TEMP"
-                | "TEMPORARY"
-                | "UNLOGGED"
-                | "UNIQUE"
-                | "MATERIALIZED"
-                | "IF"
-                | "NOT"
-                | "EXISTS"
-        ) {
-            self.create_kind = Some(word.to_string());
+        if let Some(kind) = determinant_for_word(word) {
+            self.create_kind = Some(kind);
         }
     }
 

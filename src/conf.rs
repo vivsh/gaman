@@ -118,6 +118,23 @@ impl Config {
 
     /// Validates configuration for operations that only read migration files.
     pub fn validate_read_only(&self) -> Result<(), ConfigError> {
+        self.validate_runtime()?;
+        validate_migrations_dir_readable(&self.migrations_dir)?;
+        validate_schema_file(&self.schema_file)?;
+        Ok(())
+    }
+
+    /// Validates configuration for live SQL schema preparation without migrations.
+    ///
+    /// `check_schema` connects to the configured dialect but does not read or
+    /// write migration storage, so a missing migrations directory is valid.
+    pub fn validate_schema_check(&self) -> Result<(), ConfigError> {
+        self.validate_runtime()?;
+        validate_schema_file(&self.schema_file)
+    }
+
+    /// Validates the database URL and selected live dialect shared by native commands.
+    fn validate_runtime(&self) -> Result<(), ConfigError> {
         if self.database_url.trim().is_empty() {
             return Err(ConfigError::EmptyDatabaseUrl);
         }
@@ -132,8 +149,6 @@ impl Config {
         }
 
         validate_dialect_available(self.dialect)?;
-        validate_migrations_dir_readable(&self.migrations_dir)?;
-        validate_schema_file(&self.schema_file)?;
         Ok(())
     }
 }
@@ -388,6 +403,22 @@ mod tests {
             config.validate(),
             Err(ConfigError::MigrationsDirNotWritable(_))
         ));
+    }
+
+    /// Verifies SQL schema checking does not require migration storage to exist.
+    #[test]
+    fn schema_check_validation_skips_migration_directory_validation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = Config::new(
+            "postgres://localhost/app".to_string(),
+            dir.path().join("missing-migrations"),
+            dir.path().join("schema.sql"),
+            Dialect::Postgres,
+        );
+
+        config
+            .validate_schema_check()
+            .expect("schema check should not require migrations");
     }
 
     /// Verifies validation rejects a migrations path that is already a file.

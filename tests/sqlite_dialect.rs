@@ -1701,6 +1701,13 @@ impl RecordingExecutor {
 }
 
 impl Executor for RecordingExecutor {
+    fn prepare<'a>(
+        &'a mut self,
+        _sql: &'a str,
+    ) -> BoxFuture<'a, Result<(), gaman::core::ExecutorError>> {
+        Box::pin(async { Ok(()) })
+    }
+
     fn execute<'a>(
         &'a mut self,
         sql: &'a str,

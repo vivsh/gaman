@@ -41,6 +41,7 @@ pub enum Command {
     Status(StatusCmd),
     Show(ShowCmd),
     Sql(SqlCmd),
+    CheckSchema(CheckSchemaCmd),
     Config(ShowConfigCmd),
     Inspect(InspectCmd),
     Verify(VerifyCmd),
@@ -118,6 +119,11 @@ pub struct SqlCmd {
     #[argh(switch)]
     pub backwards: bool,
 }
+
+/// Prepare authored SQL schema files without executing them.
+#[derive(FromArgs, Debug)]
+#[argh(subcommand, name = "check_schema")]
+pub struct CheckSchemaCmd {}
 
 /// Apply pending migrations or converge on a target migration.
 #[derive(FromArgs, Debug)]
@@ -231,6 +237,11 @@ impl Command {
     /// Returns whether this command may persist a generated migration file.
     pub(crate) fn requires_writable_migrations(&self) -> bool {
         matches!(self, Self::Make(command) if !command.check && !command.dry_run)
+    }
+
+    /// Returns whether the command validates schema SQL without accessing migration storage.
+    pub(crate) fn validates_schema_sql_only(&self) -> bool {
+        matches!(self, Self::CheckSchema(_))
     }
 }
 

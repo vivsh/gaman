@@ -58,6 +58,7 @@ fn classify_create(tokens: &TokenStream<'_>) -> Option<SqlStatementKind> {
                 owner: None,
             }))
         }
+        CreateDeterminantKind::Procedure | CreateDeterminantKind::Event => None,
     }
 }
 
@@ -101,7 +102,7 @@ fn find_entity_determinant(tokens: &TokenStream<'_>) -> Option<EntityDeterminant
     None
 }
 
-fn determinant_for_word(word: &str) -> Option<CreateDeterminantKind> {
+pub(super) fn determinant_for_word(word: &str) -> Option<CreateDeterminantKind> {
     match word {
         "TABLE" => Some(CreateDeterminantKind::Entity(EntityKind::Table)),
         "INDEX" => Some(CreateDeterminantKind::Entity(EntityKind::Index)),
@@ -110,6 +111,8 @@ fn determinant_for_word(word: &str) -> Option<CreateDeterminantKind> {
         "TRIGGER" => Some(CreateDeterminantKind::Entity(EntityKind::Trigger)),
         "EXTENSION" => Some(CreateDeterminantKind::Entity(EntityKind::Extension)),
         "TYPE" => Some(CreateDeterminantKind::Type),
+        "PROCEDURE" => Some(CreateDeterminantKind::Procedure),
+        "EVENT" => Some(CreateDeterminantKind::Event),
         _ => None,
     }
 }
@@ -200,9 +203,35 @@ impl EntityDeterminant {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum CreateDeterminantKind {
+pub(super) enum CreateDeterminantKind {
     Entity(EntityKind),
     Type,
+    Procedure,
+    Event,
+}
+
+impl CreateDeterminantKind {
+    pub(super) fn protects_statement_body(self) -> bool {
+        matches!(
+            self,
+            Self::Entity(EntityKind::View | EntityKind::Function | EntityKind::Trigger)
+                | Self::Procedure
+                | Self::Event
+        )
+    }
+
+    pub(super) fn tracks_sqlite_body(self) -> bool {
+        matches!(self, Self::Entity(EntityKind::Trigger))
+    }
+
+    pub(super) fn tracks_mysql_body(self) -> bool {
+        matches!(
+            self,
+            Self::Entity(EntityKind::Function | EntityKind::Trigger)
+                | Self::Procedure
+                | Self::Event
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

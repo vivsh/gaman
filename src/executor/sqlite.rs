@@ -19,6 +19,15 @@ impl SqliteExecutor {
 }
 
 impl Executor for SqliteExecutor {
+    fn prepare<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async move {
+            sqlx::Executor::prepare(&mut self.conn, sql)
+                .await
+                .map(|_| ())
+                .map_err(|e| ExecutorError::Prepare(format!("{e}\n  SQL: {sql}")))
+        })
+    }
+
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async move {
             sqlx::query(sql)
@@ -705,6 +714,9 @@ fn extract_trigger_body(sql: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema_check::{SqlSchemaInput, check_sql_schema_with_executor};
+    use gaman_core::dialects::Dialect;
+    use sqlx::ConnectOptions;
 
     /// Verifies SQLite CREATE TABLE parsing recovers modeled generated columns and constraints.
     #[test]
@@ -745,5 +757,49 @@ mod tests {
         assert_eq!(trigger.timing, TriggerTiming::After);
         assert_eq!(trigger.events, vec![TriggerEvent::Insert]);
         assert_eq!(trigger.scope, TriggerScope::Row);
+    }
+
+    /// Verifies SQLite driver preparation validates source without creating schema objects.
+    #[tokio::test]
+    async fn prepare_validates_sql_without_executing_it() {
+        let options = "sqlite::memory:"
+            .parse::<sqlx::sqlite::SqliteConnectOptions>()
+            .expect("SQLite options");
+        let mut executor = SqliteExecutor::new(options.connect().await.expect("SQLite connection"));
+        let report = check_sql_schema_with_executor(
+            &mut executor,
+            Dialect::Sqlite,
+            [SqlSchemaInput::new(
+                "schema.sql",
+                "CREATE TABLE users (id integer);",
+            )],
+        )
+        .await;
+
+        assert!(!report.has_failures());
+        let tables = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'users'",
+        )
+        .fetch_one(&mut executor.conn)
+        .await
+        .expect("table count");
+        assert_eq!(tables, 0);
+    }
+
+    /// Verifies SQLite driver preparation reports malformed statements without execution.
+    #[tokio::test]
+    async fn prepare_reports_malformed_sql() {
+        let options = "sqlite::memory:"
+            .parse::<sqlx::sqlite::SqliteConnectOptions>()
+            .expect("SQLite options");
+        let mut executor = SqliteExecutor::new(options.connect().await.expect("SQLite connection"));
+        let report = check_sql_schema_with_executor(
+            &mut executor,
+            Dialect::Sqlite,
+            [SqlSchemaInput::new("schema.sql", "SELECT FROM;")],
+        )
+        .await;
+
+        assert!(report.has_failures());
     }
 }
