@@ -28,6 +28,7 @@ mod segments;
 mod sql;
 mod sqlite;
 mod table_recovery;
+pub(crate) mod tokens;
 
 #[cfg(test)]
 mod tests;

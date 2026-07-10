@@ -1383,6 +1383,17 @@ mod tests {
         );
     }
 
+    /// Verifies unquoted PostgreSQL default-expression case does not create drift.
+    #[test]
+    fn postgres_default_function_case_is_not_drift() {
+        let replay = schema_with_column(defaulted_column("uploaded_at", Some("NOW()")));
+        let live = schema_with_column(defaulted_column("uploaded_at", Some("now()")));
+
+        let report = diff(replay, live, "public", Dialect::Postgres);
+
+        assert!(report.findings.is_empty(), "unexpected drift: {report:?}");
+    }
+
     /// Verifies function body-only differences are outside live drift detection.
     #[test]
     fn function_body_only_drift_is_not_reported() {

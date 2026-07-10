@@ -82,10 +82,6 @@ pub struct SqlSegment {
 }
 
 pub(super) trait SqlSegmentationExt {
-    fn supports_nested_block_comments(self) -> bool;
-    fn supports_dollar_quotes(self) -> bool;
-    fn supports_backtick_quotes(self) -> bool;
-    fn supports_hash_comments(self) -> bool;
     fn supports_delimiter_directive(self) -> bool;
     fn tracks_sqlite_trigger_body(self) -> bool;
     fn tracks_mysql_body_blocks(self) -> bool;
@@ -93,22 +89,6 @@ pub(super) trait SqlSegmentationExt {
 }
 
 impl SqlSegmentationExt for Dialect {
-    fn supports_nested_block_comments(self) -> bool {
-        matches!(self, Self::Postgres)
-    }
-
-    fn supports_dollar_quotes(self) -> bool {
-        matches!(self, Self::Postgres)
-    }
-
-    fn supports_backtick_quotes(self) -> bool {
-        matches!(self, Self::Mysql)
-    }
-
-    fn supports_hash_comments(self) -> bool {
-        matches!(self, Self::Mysql)
-    }
-
     fn supports_delimiter_directive(self) -> bool {
         matches!(self, Self::Mysql)
     }

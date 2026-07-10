@@ -1,6 +1,7 @@
 use crate::dialects::{DialectError, DialectProcessor};
 use crate::migrations::Migration;
 use crate::operations::Operation;
+use crate::parsers::tokens::{MYSQL_TOKENIZER, SqlTokenizer};
 use crate::states::types::EntityKind;
 use crate::states::{Schema, SchemaValidationError};
 
@@ -9,6 +10,10 @@ pub(super) static MYSQL: MysqlProcessor = MysqlProcessor;
 pub(super) struct MysqlProcessor;
 
 impl DialectProcessor for MysqlProcessor {
+    fn tokenizer(&self) -> &'static dyn SqlTokenizer {
+        &MYSQL_TOKENIZER
+    }
+
     fn migration_to_sql(
         &self,
         _migration: &Migration,
@@ -44,6 +49,13 @@ impl DialectProcessor for MysqlProcessor {
 
     fn canonical_type(&self, t: &str) -> String {
         t.to_string()
+    }
+
+    fn type_comparison_key(&self, t: &str) -> String {
+        t.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase()
     }
 
     fn is_catalog_type(&self, _t: &str) -> bool {

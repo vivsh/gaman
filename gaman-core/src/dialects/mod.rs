@@ -3,6 +3,7 @@ use thiserror::Error;
 use crate::drift::{DriftPropertyDoc, DriftRegistry};
 use crate::migrations::Migration;
 use crate::operations::Operation;
+use crate::parsers::tokens::SqlTokenizer;
 use crate::states::types::EntityKind;
 use crate::states::{Schema, SchemaValidationError};
 
@@ -48,6 +49,8 @@ pub enum Dialect {
 /// live behind this trait instead of leaking into shared code as variant
 /// matches.
 pub(crate) trait DialectProcessor: Sync {
+    fn tokenizer(&self) -> &'static dyn SqlTokenizer;
+
     fn migration_to_sql(
         &self,
         migration: &Migration,
@@ -79,6 +82,12 @@ pub(crate) trait DialectProcessor: Sync {
     /// when persisting or normalizing schema state before comparison/validation.
     fn canonical_type(&self, t: &str) -> String;
 
+    /// Returns the dialect's semantic comparison key for a declared type.
+    ///
+    /// This key never becomes authored schema state. PostgreSQL uses it to
+    /// compare native aliases, while SQLite uses its declared-type affinity.
+    fn type_comparison_key(&self, t: &str) -> String;
+
     fn is_catalog_type(&self, t: &str) -> bool;
 
     fn type_suggestions(&self, t: &str) -> Vec<String>;
@@ -96,6 +105,10 @@ pub(crate) trait DialectProcessor: Sync {
     fn drift_registry(&self) -> &'static DriftRegistry;
 
     fn normalize_inspected_schema(&self, schema: Schema) -> Result<Schema, SchemaValidationError>;
+
+    fn default_expressions_equal(&self, left: &str, right: &str) -> bool {
+        crate::parsers::tokens::expressions_equal(self.tokenizer(), left, right)
+    }
 }
 
 impl Dialect {
@@ -153,6 +166,14 @@ impl Dialect {
         }
     }
 
+    pub(crate) fn tokenizer(&self) -> &'static dyn SqlTokenizer {
+        self.processor().tokenizer()
+    }
+
+    pub(crate) fn default_expressions_equal(&self, left: &str, right: &str) -> bool {
+        self.processor().default_expressions_equal(left, right)
+    }
+
     #[doc(hidden)]
     pub fn migration_to_sql(
         &self,
@@ -197,6 +218,11 @@ impl Dialect {
 
     pub fn canonical_type(&self, t: &str) -> String {
         self.processor().canonical_type(t)
+    }
+
+    #[doc(hidden)]
+    pub fn type_comparison_key(&self, t: &str) -> String {
+        self.processor().type_comparison_key(t)
     }
 
     pub fn is_catalog_type(&self, t: &str) -> bool {

@@ -146,6 +146,26 @@ fn expected_inspect_schema(
     })
 }
 
+fn assert_inspected_extensions(
+    name: &str,
+    schema: &gaman::schema::Schema,
+    expected: &[String],
+) -> Result<(), TestSupportError> {
+    for extension_name in expected {
+        let extension = schema.extensions.get(extension_name).ok_or_else(|| {
+            TestSupportError::message(format!(
+                "{name}: inspected schema is missing extension '{extension_name}'"
+            ))
+        })?;
+        if extension.version.as_deref().is_none_or(str::is_empty) {
+            return Err(TestSupportError::message(format!(
+                "{name}: inspected extension '{extension_name}' has no catalog version"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn expected_verify_ops<'a>(
     name: &str,
     section: &'a support::OnlineDialectCase,
@@ -256,8 +276,14 @@ fn validate_online_case(
                 dialect.as_str()
             )));
         }
+        if !section.requires_extensions.is_empty() && *dialect != OnlineDialect::Postgres {
+            return Err(TestSupportError::message(format!(
+                "{name}: requires_extensions is currently PostgreSQL-only"
+            )));
+        }
         if section.checks.contains(&OnlineCheck::Inspect)
             && section.expect_schema.is_none()
+            && section.expect_extensions.is_empty()
             && section.expect_error.is_none()
         {
             return Err(TestSupportError::message(format!(
@@ -367,6 +393,16 @@ async fn run_online_dialect(
                 return CaseStatus::Unimplemented(format!(
                     "{POSTGRES_DATABASE_URL_ENV} is not set"
                 ));
+            }
+            match support::missing_postgres_extensions(&section.requires_extensions).await {
+                Ok(missing) if !missing.is_empty() => {
+                    return CaseStatus::Unimplemented(format!(
+                        "required PostgreSQL extensions unavailable: {}",
+                        missing.join(", ")
+                    ));
+                }
+                Ok(_) => {}
+                Err(error) => return CaseStatus::Failure(error.to_string()),
             }
             run_postgres_online_case(name, case, section)
                 .await
@@ -518,8 +554,15 @@ async fn run_postgres_checks(
             let result = async {
                 let mut actual = harness.inspect_schema().await?;
                 support::scope_schema_for_compare(&mut actual, harness.schema_name());
-                let expected = expected_inspect_schema(name, section)?;
-                support::assert_schema_matches(name, "inspected schema", actual, expected)
+                if let Some(expected) = &section.expect_schema {
+                    support::assert_schema_matches(
+                        name,
+                        "inspected schema",
+                        actual.clone(),
+                        expected.clone(),
+                    )?;
+                }
+                assert_inspected_extensions(name, &actual, &section.expect_extensions)
             }
             .await;
             if error_action == Some(ExpectedErrorAction::Inspect) {

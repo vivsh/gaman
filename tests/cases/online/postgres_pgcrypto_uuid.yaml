@@ -1,0 +1,31 @@
+description: PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - extensions
+  - tables_columns
+
+migrations:
+  - id: 0001_create_uuid_sessions
+    operations:
+      - type: create_extension
+        extension:
+          name: pgcrypto
+      - type: create_table
+        table:
+          name: sessions
+          columns:
+            - name: id
+              type: uuid
+              primary_key: true
+              default: gen_random_uuid()
+
+dialects:
+  postgres:
+    requires_extensions: [pgcrypto]
+    checks: [migrate, inspect, verify, data]
+    expect_extensions: [pgcrypto]
+    expect_verify: []
+    data:
+      - sql: "WITH inserted AS (INSERT INTO sessions DEFAULT VALUES RETURNING id) SELECT (id IS NOT NULL)::text FROM inserted"
+        expect: ["true"]

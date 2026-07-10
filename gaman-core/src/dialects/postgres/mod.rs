@@ -9,15 +9,24 @@ use crate::states::{
 };
 
 use super::{DialectError, DialectProcessor};
+use crate::parsers::tokens::{POSTGRES_TOKENIZER, SqlTokenizer};
 
 mod data_types;
 mod extension_types;
+#[cfg(test)]
+mod extensions;
+#[cfg(test)]
+mod signature_types;
 
 pub(super) static POSTGRES: PostgresProcessor = PostgresProcessor;
 
 pub(super) struct PostgresProcessor;
 
 impl DialectProcessor for PostgresProcessor {
+    fn tokenizer(&self) -> &'static dyn SqlTokenizer {
+        &POSTGRES_TOKENIZER
+    }
+
     fn migration_to_sql(
         &self,
         migration: &Migration,
@@ -59,6 +68,10 @@ impl DialectProcessor for PostgresProcessor {
     }
 
     fn canonical_type(&self, t: &str) -> String {
+        canonical_type(t)
+    }
+
+    fn type_comparison_key(&self, t: &str) -> String {
         canonical_type(t)
     }
 

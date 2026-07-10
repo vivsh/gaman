@@ -1,6 +1,6 @@
 //! Lexical and non validating statement classification for already-segmented SQL.
 //!
-//! The classifier is intentionally dialect-agnostic and broad-stroke. It reads
+//! The classifier is intentionally broad-stroke. It reads dialect tokens at
 //! top-level tokens to identify the primary statement kind and object name, but
 //! it does not validate SQL grammar, dialect support, or Gaman lowering support.
 //! Dialect-specific boundary handling belongs to the segment scanner.
@@ -11,11 +11,13 @@
 use std::ops::Range;
 
 use super::types::{DdlStatementKind, DmlStatementKind, SqlObjectName, SqlStatementKind};
+use crate::dialects::Dialect;
+use crate::parsers::tokens::SqlTokenKind;
 use crate::states::types::EntityKind;
 
 /// Classifies a segment using only scanner-safe top-level lexical tokens.
-pub(super) fn classify_segment(sql: &str) -> Option<SqlStatementKind> {
-    let tokens = TopLevelTokens::new(sql).collect();
+pub(super) fn classify_segment(dialect: Dialect, sql: &str) -> Option<SqlStatementKind> {
+    let tokens = TokenStream::from_dialect(dialect, sql)?;
     match tokens.first_word()? {
         "CREATE" => classify_create(&tokens),
         "SELECT" => Some(dml(DmlStatementKind::Select)),
@@ -284,236 +286,39 @@ struct NameAtom<'a> {
     part: String,
 }
 
-struct TopLevelTokens<'a> {
-    sql: &'a str,
-    pos: usize,
-    tokens: Vec<TopLevelToken>,
-}
-
-impl<'a> TopLevelTokens<'a> {
-    fn new(sql: &'a str) -> Self {
-        Self {
-            sql,
-            pos: 0,
-            tokens: Vec::new(),
-        }
-    }
-
-    fn collect(mut self) -> TokenStream<'a> {
-        while let Some(ch) = self.current_char() {
-            match ch {
-                c if c.is_whitespace() => self.advance_char(),
-                '-' if self.starts_with("--") => self.consume_line_comment(),
-                '#' => self.consume_line_comment(),
-                '/' if self.starts_with("/*") => self.consume_block_comment(),
-                '\'' => self.consume_string_literal(),
-                '"' => self.consume_quoted_name('"', true),
-                '`' => self.consume_quoted_name('`', true),
-                '$' if self.dollar_tag().is_some() => self.consume_dollar_quote(),
-                '(' | '[' | '{' => {
-                    self.consume_group(ch);
-                    self.tokens.push(TopLevelToken::Group);
-                }
-                '.' => {
-                    self.tokens.push(TopLevelToken::Dot);
-                    self.advance_char();
-                }
-                ',' => {
-                    self.tokens.push(TopLevelToken::Comma);
-                    self.advance_char();
-                }
-                c if is_ident_start(c) => self.consume_word(),
-                _ => self.advance_char(),
-            }
-        }
-        TokenStream {
-            sql: self.sql,
-            tokens: self.tokens,
-        }
-    }
-
-    fn consume_word(&mut self) {
-        let start = self.pos;
-        while let Some(ch) = self.current_char() {
-            if is_ident_continue(ch) {
-                self.advance_char();
-            } else {
-                break;
-            }
-        }
-        self.tokens.push(TopLevelToken::Word {
-            upper: self.sql[start..self.pos].to_ascii_uppercase(),
-            span: start..self.pos,
-        });
-    }
-
-    fn consume_line_comment(&mut self) {
-        while let Some(ch) = self.current_char() {
-            self.advance_char();
-            if ch == '\n' {
-                break;
-            }
-        }
-    }
-
-    fn consume_block_comment(&mut self) {
-        self.advance_to(self.pos + 2);
-        let mut depth = 1usize;
-        while self.current_char().is_some() {
-            if self.starts_with("/*") {
-                depth += 1;
-                self.advance_to(self.pos + 2);
-            } else if self.starts_with("*/") {
-                depth -= 1;
-                self.advance_to(self.pos + 2);
-                if depth == 0 {
-                    return;
-                }
-            } else {
-                self.advance_char();
-            }
-        }
-    }
-
-    fn consume_string_literal(&mut self) {
-        self.advance_char();
-        while let Some(ch) = self.current_char() {
-            self.advance_char();
-            if ch == '\'' {
-                if self.current_char() == Some('\'') {
-                    self.advance_char();
-                } else {
-                    return;
-                }
-            } else if ch == '\\' {
-                self.advance_char();
-            }
-        }
-    }
-
-    fn consume_quoted_name(&mut self, quote: char, record: bool) {
-        let start = self.pos;
-        self.advance_char();
-        let mut unquoted = String::new();
-        while let Some(ch) = self.current_char() {
-            self.advance_char();
-            if ch == quote {
-                if self.current_char() == Some(quote) {
-                    unquoted.push(quote);
-                    self.advance_char();
-                } else {
-                    if record {
-                        self.tokens.push(TopLevelToken::QuotedName {
-                            unquoted,
-                            span: start..self.pos,
-                        });
+impl<'a> TokenStream<'a> {
+    /// Projects shared dialect tokens into the classifier's top-level view.
+    fn from_dialect(dialect: Dialect, sql: &'a str) -> Option<Self> {
+        let source = dialect.tokenizer().tokenize(sql).ok()?;
+        let mut tokens = Vec::new();
+        let mut depth = 0usize;
+        for token in source {
+            match token.kind {
+                SqlTokenKind::LeftParen | SqlTokenKind::LeftBracket | SqlTokenKind::LeftBrace => {
+                    if depth == 0 {
+                        tokens.push(TopLevelToken::Group);
                     }
-                    return;
+                    depth += 1;
                 }
-            } else if ch == '\\' {
-                if let Some(next) = self.current_char() {
-                    unquoted.push(next);
-                    self.advance_char();
+                SqlTokenKind::RightParen
+                | SqlTokenKind::RightBracket
+                | SqlTokenKind::RightBrace => depth = depth.saturating_sub(1),
+                _ if depth > 0 || token.is_trivia() => {}
+                SqlTokenKind::Word { canonical, .. } => tokens.push(TopLevelToken::Word {
+                    upper: canonical,
+                    span: token.span,
+                }),
+                SqlTokenKind::QuotedIdentifier { value, .. } => {
+                    tokens.push(TopLevelToken::QuotedName {
+                        unquoted: value,
+                        span: token.span,
+                    });
                 }
-            } else {
-                unquoted.push(ch);
+                SqlTokenKind::Dot => tokens.push(TopLevelToken::Dot),
+                SqlTokenKind::Comma => tokens.push(TopLevelToken::Comma),
+                _ => {}
             }
         }
+        Some(Self { sql, tokens })
     }
-
-    fn consume_dollar_quote(&mut self) {
-        let Some(tag) = self.dollar_tag() else {
-            return;
-        };
-        self.advance_to(self.pos + tag.len());
-        if let Some(offset) = self.sql[self.pos..].find(&tag) {
-            self.advance_to(self.pos + offset + tag.len());
-        }
-    }
-
-    fn consume_group(&mut self, open: char) {
-        let Some(close) = matching_close(open) else {
-            return;
-        };
-        self.advance_char();
-        let mut stack = vec![close];
-        while let Some(ch) = self.current_char() {
-            match ch {
-                '\'' => self.consume_string_literal(),
-                '"' => self.consume_quoted_name('"', false),
-                '`' => self.consume_quoted_name('`', false),
-                '$' if self.dollar_tag().is_some() => self.consume_dollar_quote(),
-                '-' if self.starts_with("--") => self.consume_line_comment(),
-                '#' => self.consume_line_comment(),
-                '/' if self.starts_with("/*") => self.consume_block_comment(),
-                '(' | '[' | '{' => {
-                    if let Some(close) = matching_close(ch) {
-                        stack.push(close);
-                    }
-                    self.advance_char();
-                }
-                _ if stack.last() == Some(&ch) => {
-                    stack.pop();
-                    self.advance_char();
-                    if stack.is_empty() {
-                        return;
-                    }
-                }
-                _ => self.advance_char(),
-            }
-        }
-    }
-
-    fn dollar_tag(&self) -> Option<String> {
-        let rest = &self.sql[self.pos..];
-        if !rest.starts_with('$') {
-            return None;
-        }
-        for (idx, ch) in rest.char_indices().skip(1) {
-            if ch == '$' {
-                return Some(rest[..idx + 1].to_string());
-            }
-            if !(ch == '_' || ch.is_ascii_alphanumeric()) {
-                return None;
-            }
-        }
-        None
-    }
-
-    fn starts_with(&self, value: &str) -> bool {
-        self.sql[self.pos..].starts_with(value)
-    }
-
-    fn current_char(&self) -> Option<char> {
-        self.sql[self.pos..].chars().next()
-    }
-
-    fn advance_char(&mut self) {
-        if let Some(ch) = self.current_char() {
-            self.pos += ch.len_utf8();
-        }
-    }
-
-    fn advance_to(&mut self, end: usize) {
-        while self.pos < end {
-            self.advance_char();
-        }
-    }
-}
-
-fn matching_close(open: char) -> Option<char> {
-    match open {
-        '(' => Some(')'),
-        '[' => Some(']'),
-        '{' => Some('}'),
-        _ => None,
-    }
-}
-
-fn is_ident_start(ch: char) -> bool {
-    ch == '_' || ch.is_ascii_alphabetic()
-}
-
-fn is_ident_continue(ch: char) -> bool {
-    ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
 }

@@ -142,10 +142,14 @@ fn column_name(expected: &Column, observed: &Column, _: DriftContext<'_>) -> Pro
     exact_string(&expected.name, &observed.name)
 }
 
-fn sqlite_column_type(expected: &Column, observed: &Column, _: DriftContext<'_>) -> PropertyMatch {
+fn sqlite_column_type(
+    expected: &Column,
+    observed: &Column,
+    ctx: DriftContext<'_>,
+) -> PropertyMatch {
     exact_string(
-        &expected.col_type.to_ascii_lowercase(),
-        &observed.col_type.to_ascii_lowercase(),
+        &ctx.dialect.type_comparison_key(&expected.col_type),
+        &ctx.dialect.type_comparison_key(&observed.col_type),
     )
 }
 
@@ -153,8 +157,15 @@ fn column_nullable(expected: &Column, observed: &Column, _: DriftContext<'_>) ->
     exact_bool(expected.nullable, observed.nullable)
 }
 
-fn column_default(expected: &Column, observed: &Column, _: DriftContext<'_>) -> PropertyMatch {
-    exact_option(&expected.default, &observed.default)
+fn column_default(expected: &Column, observed: &Column, ctx: DriftContext<'_>) -> PropertyMatch {
+    match (&expected.default, &observed.default) {
+        (Some(expected), Some(observed))
+            if ctx.dialect.default_expressions_equal(expected, observed) =>
+        {
+            PropertyMatch::Match
+        }
+        _ => exact_option(&expected.default, &observed.default),
+    }
 }
 
 fn column_generated(expected: &Column, observed: &Column, _: DriftContext<'_>) -> PropertyMatch {

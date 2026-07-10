@@ -59,7 +59,7 @@ dialects:
         table_name: items
         old:
           name: total
-          type: integer
+          type: INTEGER
           nullable: true
           generated: price + qty
         new:

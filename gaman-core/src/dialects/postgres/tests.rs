@@ -1,4 +1,8 @@
 use super::*;
+use std::collections::BTreeMap;
+
+use serde::Deserialize;
+
 use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::states::{
@@ -148,6 +152,7 @@ mod property_identifiers {
     }
 }
 
+/// Verifies PostgreSQL aliases, extension types, and typo suggestions are recognized.
 #[test]
 fn postgres_type_catalog_canonicalizes_aliases_and_suggests_typos() {
     assert_eq!(canonical_type("int4"), "integer");
@@ -156,6 +161,133 @@ fn postgres_type_catalog_canonicalizes_aliases_and_suggests_typos() {
     assert!(is_catalog_type("vector(1536)"));
     assert_eq!(canonical_type("project_code"), "project_code");
     assert!(type_suggestions("intger").contains(&"integer".to_string()));
+}
+
+/// Verifies every stable native catalog entry and alias is recognized deterministically.
+#[test]
+fn postgres_native_type_catalog_is_complete_and_unambiguous() {
+    for spec in data_types::native_type_specs() {
+        assert!(spec.minimum_postgres >= 14);
+        assert!(
+            data_types::canonical_known_type(spec.canonical).is_some(),
+            "canonical {}",
+            spec.canonical
+        );
+        assert!(data_types::type_family(spec.canonical).is_some());
+        for alias in spec.aliases {
+            assert_eq!(
+                data_types::canonical_known_type(alias).as_deref(),
+                Some(spec.canonical),
+                "alias {alias}"
+            );
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct PostgresCatalogManifest {
+    postgres_versions: Vec<u16>,
+    minimum_postgres: u16,
+    native_type_witnesses: Vec<String>,
+    aliases: BTreeMap<String, String>,
+    excluded_pseudo_types: Vec<String>,
+}
+
+/// Verifies the checked PostgreSQL version manifest matches native catalog behavior.
+#[test]
+fn postgres_catalog_matches_the_checked_version_manifest() {
+    let manifest: PostgresCatalogManifest = serde_yaml::from_str(include_str!(
+        "../../../../tests/catalogs/postgres-native-types.yaml"
+    ))
+    .expect("checked PostgreSQL catalog manifest must parse");
+
+    assert_eq!(manifest.minimum_postgres, 14);
+    assert_eq!(manifest.postgres_versions, vec![14, 15, 16, 17, 18]);
+    for type_name in manifest.native_type_witnesses {
+        assert!(is_catalog_type(&type_name), "{type_name}");
+    }
+    for (alias, canonical) in manifest.aliases {
+        assert_eq!(canonical_type(&alias), canonical, "{alias}");
+    }
+    for pseudo_type in manifest.excluded_pseudo_types {
+        assert!(!is_catalog_type(&pseudo_type), "{pseudo_type}");
+    }
+}
+
+/// Verifies PostgreSQL type modifiers, qualification, arrays, and float precision use native forms.
+#[test]
+fn postgres_catalog_handles_native_modifiers_qualification_and_arrays() {
+    assert_eq!(canonical_type("numeric(12, 3)"), "numeric(12, 3)");
+    assert_eq!(canonical_type("varchar(255)"), "varchar(255)");
+    assert_eq!(canonical_type("varbit(32)"), "bit varying(32)");
+    assert_eq!(
+        canonical_type("timestamp(6) with time zone"),
+        "timestamp(6) with time zone"
+    );
+    assert_eq!(
+        canonical_type("time(3) without time zone"),
+        "time(3) without time zone"
+    );
+    assert_eq!(canonical_type("float(24)"), "real");
+    assert_eq!(canonical_type("float(53)"), "double precision");
+    assert_eq!(canonical_type("interval(3)"), "interval(3)");
+    assert_eq!(
+        canonical_type("interval day to second(6)"),
+        "interval day to second(6)"
+    );
+    assert_eq!(canonical_type("pg_catalog.uuid[][]"), "uuid[][]");
+}
+
+/// Verifies UUID is native while pgcrypto remains a separately recognized extension.
+#[test]
+fn postgres_uuid_is_native_and_pgcrypto_is_a_known_extension() {
+    assert!(is_catalog_type("uuid"));
+    assert!(is_catalog_type("uuid[]"));
+    assert!(extensions::is_known_extension("pgcrypto"));
+    assert_eq!(
+        extensions::extension_description("pgcrypto"),
+        Some("cryptographic functions and UUID generation")
+    );
+    assert!(!extension_types::is_extension_type("uuid"));
+}
+
+/// Verifies extension type recognition supports schema qualification, modifiers, and arrays.
+#[test]
+fn postgres_extension_type_catalog_is_grouped_by_provider() {
+    let mut bundled = 0;
+    let mut external = 0;
+    for extension in extensions::known_extensions() {
+        assert!(!extension.description.is_empty());
+        if extension.bundled {
+            bundled += 1;
+        } else {
+            external += 1;
+        }
+    }
+    assert!(bundled > 0);
+    assert!(external > 0);
+
+    for catalog in extension_types::extension_type_catalogs() {
+        assert!(extensions::is_known_extension(catalog.extension));
+        for type_name in catalog.types {
+            assert_eq!(
+                extension_types::extension_for_type(type_name),
+                Some(catalog.extension)
+            );
+        }
+    }
+    assert!(is_catalog_type("extensions.vector(1536)"));
+    assert!(is_catalog_type("public.citext[]"));
+    assert!(is_catalog_type("public.citext[][]"));
+    assert!(is_catalog_type("geometry(Point, 4326)"));
+}
+
+/// Verifies function-only PostgreSQL pseudo-types never become column-type approvals.
+#[test]
+fn postgres_signature_pseudotypes_are_separate_from_column_types() {
+    for pseudo_type in signature_types::pseudo_types() {
+        assert!(!is_catalog_type(pseudo_type), "{pseudo_type}");
+    }
 }
 
 #[test]

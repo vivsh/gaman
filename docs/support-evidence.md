@@ -70,6 +70,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 | Indexes and constraints (`indexes_constraints`) | success | success | unimplemented (dialect section missing) |
 | Partial indexes (`partial_indexes`) | success | success | unimplemented (dialect section missing) |
 | Opaque index metadata (`opaque_index_metadata`) | success | unimplemented (dialect section missing) | unimplemented (dialect section missing) |
+| Extensions (`extensions`) | success | unimplemented (dialect section missing) | unimplemented (dialect section missing) |
 | Enums (`enums`) | success | unimplemented (dialect section missing) | unimplemented (dialect section missing) |
 | Functions (`functions_opaque`) | success | unimplemented (dialect section missing) | unimplemented (dialect section missing) |
 | Triggers (`trigger_query_objects`) | success | success | unimplemented (dialect section missing) |
@@ -93,6 +94,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`postgres_function_name_trigger`](tests/cases/online/postgres_function_name_trigger.yaml): PostgreSQL function-name triggers execute and inspect stable wiring (`migrate, inspect, data`)
 - [`postgres_opaque_objects`](tests/cases/online/postgres_opaque_objects.yaml): PostgreSQL migrates and inspects enums functions views and query triggers (`migrate, inspect`)
 - [`postgres_partial_index`](tests/cases/online/postgres_partial_index.yaml): PostgreSQL migrates and inspects partial indexes (`migrate, inspect`)
+- [`postgres_pgcrypto_uuid`](tests/cases/online/postgres_pgcrypto_uuid.yaml): PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type (`migrate, inspect, verify, data`)
 - [`postgres_view_replace`](tests/cases/online/postgres_view_replace.yaml): PostgreSQL view replacement updates the inspected view definition (`migrate, inspect`)
 - [`quoted_identifiers_shared`](tests/cases/online/quoted_identifiers_shared.yaml): PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers. (`migrate, inspect, verify, data`)
 - [`rename_table_column`](tests/cases/online/rename_table_column.yaml): live migrations rename tables and columns while preserving data (`migrate, inspect, data`)
@@ -119,6 +121,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`lifecycle_atomic_failure_rolls_back`](tests/cases/online/lifecycle_atomic_failure_rolls_back.yaml): atomic migration failure rolls back SQL and does not record the failed migration (`migrate, error, migration_records, inspect, data`)
 - [`lifecycle_atomic_false_partial_failure`](tests/cases/online/lifecycle_atomic_false_partial_failure.yaml): non-atomic migration failure preserves earlier statements but does not record the failed migration (`migrate, error, migration_records, inspect, data`)
 - [`lifecycle_rollback_to_target`](tests/cases/online/lifecycle_rollback_to_target.yaml): migrate target rollback removes later migration effects and records (`rollback, migration_records, inspect, data`)
+- [`postgres_pgcrypto_uuid`](tests/cases/online/postgres_pgcrypto_uuid.yaml): PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type (`migrate, inspect, verify, data`)
 - [`quoted_identifiers_shared`](tests/cases/online/quoted_identifiers_shared.yaml): PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers. (`migrate, inspect, verify, data`)
 - [`rename_table_column`](tests/cases/online/rename_table_column.yaml): live migrations rename tables and columns while preserving data (`migrate, inspect, data`)
 
@@ -250,6 +253,12 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 
 - [`postgres_advanced_index_metadata_inspect`](tests/cases/online/postgres_advanced_index_metadata_inspect.yaml): PostgreSQL inspect preserves advanced index metadata without making it verified drift input (`inspect`)
 - [`postgres_expression_index_inspect`](tests/cases/online/postgres_expression_index_inspect.yaml): PostgreSQL inspect preserves expression index metadata without failing (`inspect`)
+
+#### Extensions (`extensions`)
+
+##### PostgreSQL
+
+- [`postgres_pgcrypto_uuid`](tests/cases/online/postgres_pgcrypto_uuid.yaml): PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type (`migrate, inspect, verify, data`)
 
 #### Enums (`enums`)
 
@@ -384,6 +393,7 @@ No drift properties are registered.
 | Indexes and constraints (`indexes_constraints`) | success | success | unimplemented (dialect section missing) |
 | Opaque index metadata (`opaque_index_metadata`) | success | unimplemented (dialect section missing) | unimplemented (dialect section missing) |
 | Schemas / namespaces (`schemas_namespaces`) | success | unimplemented (dialect section missing) | unimplemented (dialect section missing) |
+| Extensions (`extensions`) | success | unimplemented (dialect section missing) | unimplemented (dialect section missing) |
 | Enums (`enums`) | success | unimplemented (dialect section missing) | unimplemented (dialect section missing) |
 | Functions (`functions_opaque`) | success | unimplemented (dialect section missing) | unimplemented (dialect section missing) |
 | Triggers (`trigger_query_objects`) | success | success | unimplemented (dialect section missing) |
@@ -399,6 +409,7 @@ No drift properties are registered.
 - [`fk_on_update_cascade_shared`](tests/cases/online/fk_on_update_cascade_shared.yaml): PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE. (`migrate, inspect, verify, data`)
 - [`postgres_default_canonical_forms`](tests/cases/online/postgres_default_canonical_forms.yaml): PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift. (`migrate, verify`)
 - [`postgres_opaque_index_with_modeled_drift`](tests/cases/online/postgres_opaque_index_with_modeled_drift.yaml): PostgreSQL modeled column drift remains visible beside an owned opaque index. (`verify`)
+- [`postgres_pgcrypto_uuid`](tests/cases/online/postgres_pgcrypto_uuid.yaml): PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type (`migrate, inspect, verify, data`)
 - [`postgres_verify_enum_drift`](tests/cases/online/postgres_verify_enum_drift.yaml): PostgreSQL verify reports owned enum label order drift (`verify`)
 - [`postgres_verify_fk_on_delete_drift`](tests/cases/online/postgres_verify_fk_on_delete_drift.yaml): PostgreSQL verify reports foreign key on_delete drift (`verify`)
 - [`postgres_verify_function_body_ignored`](tests/cases/online/postgres_verify_function_body_ignored.yaml): PostgreSQL verify ignores body-only function drift (`verify`)
@@ -503,6 +514,7 @@ No drift properties are registered.
 
 ##### PostgreSQL
 
+- [`postgres_pgcrypto_uuid`](tests/cases/online/postgres_pgcrypto_uuid.yaml): PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type (`migrate, inspect, verify, data`)
 - [`quoted_identifiers_shared`](tests/cases/online/quoted_identifiers_shared.yaml): PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers. (`migrate, inspect, verify, data`)
 - [`verify_detects_changed_column_metadata`](tests/cases/online/verify_detects_changed_column_metadata.yaml): verify reports changed metadata for owned columns (`verify`)
 - [`verify_ignores_untracked_column`](tests/cases/online/verify_ignores_untracked_column.yaml): verify ignores a live-only column on an owned table (`verify`)
@@ -641,6 +653,12 @@ No drift properties are registered.
 ##### PostgreSQL
 
 - [`postgres_verify_schema_qualified_no_drift`](tests/cases/online/postgres_verify_schema_qualified_no_drift.yaml): PostgreSQL verify accepts explicitly schema-qualified owned objects (`verify`)
+
+#### Extensions (`extensions`)
+
+##### PostgreSQL
+
+- [`postgres_pgcrypto_uuid`](tests/cases/online/postgres_pgcrypto_uuid.yaml): PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type (`migrate, inspect, verify, data`)
 
 #### Enums (`enums`)
 

@@ -320,8 +320,9 @@ rows:
     label: Extensions as opaque schema objects
     dialects:
       postgres:
-        status: planned
-        note: PostgreSQL extension modeling exists, but README support stays planned until safe live evidence is accepted.
+        status: supported
+        evidence:
+          online: [extensions]
       sqlite:
         status: unsupported
         evidence:

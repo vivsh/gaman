@@ -1,0 +1,29 @@
+---
+description: Render pgcrypto independently from native UUID columns.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- operation.create_extension
+- operation.create_table
+- renderer.postgres.create_extension
+- renderer.postgres.create_table
+kind: migration_to_sql
+dialect: postgres
+migrations:
+- id: 0001_create_sessions
+  operations:
+  - type: create_extension
+    extension:
+      name: pgcrypto
+  - type: create_table
+    table:
+      name: sessions
+      columns:
+      - name: id
+        type: uuid
+        primary_key: true
+        default: gen_random_uuid()
+expect_sql: |
+  CREATE EXTENSION IF NOT EXISTS "pgcrypto"
+  CREATE TABLE "sessions" ("id" uuid NOT NULL DEFAULT gen_random_uuid(), CONSTRAINT "sessions_pkey" PRIMARY KEY ("id"))

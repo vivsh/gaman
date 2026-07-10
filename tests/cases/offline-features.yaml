@@ -731,7 +731,7 @@ features:
   label: validation / validation postgres type alias noop
   category: validation
 - id: validation.validation_sqlite_type_alias_noop
-  label: validation / validation sqlite type alias noop
+  label: validation / sqlite equivalent affinity no diff
   category: validation
 - id: validation.validation_unknown_fk_target_error
   label: validation / validation unknown fk target error

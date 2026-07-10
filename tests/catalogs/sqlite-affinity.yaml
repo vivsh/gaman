@@ -1,0 +1,21 @@
+examples:
+  - declared: UNSIGNED BIG INT
+    affinity: integer
+  - declared: NCHAR(20)
+    affinity: text
+  - declared: DOUBLE PRECISION
+    affinity: real
+  - declared: DECIMAL(10,5)
+    affinity: numeric
+  - declared: BOOLEAN
+    affinity: numeric
+  - declared: DATE
+    affinity: numeric
+  - declared: DATETIME
+    affinity: numeric
+  - declared: FLOATING POINT
+    affinity: integer
+  - declared: STRING
+    affinity: numeric
+  - declared: ""
+    affinity: blob

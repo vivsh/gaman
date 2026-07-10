@@ -508,13 +508,20 @@ features:
   extensions:
     mysql:
       status: unimplemented
-      reason: no online evidence recorded
+      reason: dialect section missing
     postgres:
-      status: unimplemented
-      reason: no online evidence recorded
+      status: success
+      evidence:
+      - case: postgres_pgcrypto_uuid
+        description: PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
     sqlite:
       status: unimplemented
-      reason: no online evidence recorded
+      reason: dialect section missing
   foreign_key_actions:
     mysql:
       status: unimplemented
@@ -912,6 +919,13 @@ features:
         checks:
         - migrate
         - inspect
+      - case: postgres_pgcrypto_uuid
+        description: PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: postgres_verify_enum_drift
         description: PostgreSQL verify reports owned enum label order drift
         checks:
@@ -1325,6 +1339,13 @@ features:
         checks:
         - migrate
         - inspect
+      - case: postgres_pgcrypto_uuid
+        description: PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: postgres_view_replace
         description: PostgreSQL view replacement updates the inspected view definition
         checks:
@@ -2306,6 +2327,13 @@ features:
         description: linear migration chains apply in dependency order
         checks:
         - migrate
+        - data
+      - case: postgres_pgcrypto_uuid
+        description: PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type
+        checks:
+        - migrate
+        - inspect
+        - verify
         - data
       - case: quoted_identifiers_shared
         description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.

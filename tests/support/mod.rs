@@ -110,6 +110,12 @@ pub struct OnlineCase {
 #[serde(deny_unknown_fields)]
 pub struct OnlineDialectCase {
     pub checks: Vec<OnlineCheck>,
+    /// PostgreSQL extensions required for this case to be meaningful.
+    ///
+    /// The harness records unavailable extensions as host capability gaps
+    /// rather than treating them as a Gaman regression.
+    #[serde(default)]
+    pub requires_extensions: Vec<String>,
     #[serde(default)]
     pub migrations: Option<Vec<InlineMigration>>,
     #[serde(default)]
@@ -118,6 +124,8 @@ pub struct OnlineDialectCase {
     pub mutate_sql: Option<String>,
     #[serde(default)]
     pub expect_schema: Option<Schema>,
+    #[serde(default)]
+    pub expect_extensions: Vec<String>,
     #[serde(default)]
     pub expect_verify: Option<Vec<Operation>>,
     #[serde(default)]
@@ -1313,6 +1321,8 @@ pub fn assert_schema_matches_with_dialect(
 ) -> Result<(), TestSupportError> {
     canonicalize_schema(&mut actual, dialect);
     canonicalize_schema(&mut expected, dialect);
+    normalize_schema_type_comparison_keys(&mut actual, dialect);
+    normalize_schema_type_comparison_keys(&mut expected, dialect);
     if actual == expected {
         return Ok(());
     }
@@ -1331,6 +1341,19 @@ pub fn assert_schema_matches_with_dialect(
     Err(TestSupportError::message(format!(
         "{case_name}: {label} mismatch\nexpected:\n{expected_yaml}\nactual:\n{actual_yaml}",
     )))
+}
+
+/// Rewrites column type text to test-only dialect comparison keys.
+///
+/// SQLite catalog inspection preserves the database's declared spelling, while
+/// desired input preserves the author's spelling. The online harness compares
+/// their documented semantic affinity without changing either production value.
+fn normalize_schema_type_comparison_keys(schema: &mut Schema, dialect: Dialect) {
+    for table in schema.tables.values_mut() {
+        for column in &mut table.columns {
+            column.col_type = dialect.type_comparison_key(&column.col_type);
+        }
+    }
 }
 
 pub fn assert_sql_matches(
@@ -1741,6 +1764,40 @@ fn test_database_url() -> Result<String, TestSupportError> {
             "{POSTGRES_DATABASE_URL_ENV} must be set to run PostgreSQL integration tests",
         ))
     })
+}
+
+/// Returns PostgreSQL extensions unavailable in the configured test server.
+#[cfg(feature = "postgres")]
+pub async fn missing_postgres_extensions(
+    extensions: &[String],
+) -> Result<Vec<String>, TestSupportError> {
+    if extensions.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let url = test_database_url()?;
+    let options = url
+        .parse::<PgConnectOptions>()
+        .map_err(|error| {
+            TestSupportError::message(format!("failed to parse test database URL: {error}"))
+        })?
+        .ssl_mode(PgSslMode::Disable);
+    let mut connection = options.connect().await.map_err(|error| {
+        TestSupportError::message(format!("failed to connect to test database: {error}"))
+    })?;
+    let available = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM pg_available_extensions WHERE name = ANY($1)",
+    )
+    .bind(extensions)
+    .fetch_all(&mut connection)
+    .await
+    .map_err(|error| TestSupportError::message(format!("failed to query extensions: {error}")))?;
+
+    Ok(extensions
+        .iter()
+        .filter(|extension| !available.iter().any(|name| name == *extension))
+        .cloned()
+        .collect())
 }
 
 #[cfg(feature = "sqlite")]

@@ -1037,6 +1037,11 @@ features:
       group: sql_rendering
       kind: migration_to_sql
       dialect: postgres
+    - case: postgres_pgcrypto_uuid
+      description: Render pgcrypto independently from native UUID columns.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
     - case: postgres_query_trigger_row
       description: PostgreSQL wraps a row-level query trigger and appends RETURN NEW.
       group: sql_rendering
@@ -1192,7 +1197,7 @@ features:
       kind: schema_to_migration
       dialect: postgres
     - case: sqlite_type_alias_noop
-      description: SQLite declared type aliases canonicalize before diffing.
+      description: SQLite preserves declared types while diffing equivalent affinities.
       group: validation
       kind: schema_to_migration
       dialect: sqlite
@@ -1342,6 +1347,11 @@ features:
       dialect: postgres
     - case: postgres_migration_to_sql_raw_statement
       description: Render raw SQL statements exactly as authored.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_pgcrypto_uuid
+      description: Render pgcrypto independently from native UUID columns.
       group: sql_rendering
       kind: migration_to_sql
       dialect: postgres
@@ -1907,7 +1917,7 @@ features:
       kind: schema_to_migration
       dialect: postgres
     - case: sqlite_type_alias_noop
-      description: SQLite declared type aliases canonicalize before diffing.
+      description: SQLite preserves declared types while diffing equivalent affinities.
       group: validation
       kind: schema_to_migration
       dialect: sqlite
@@ -2135,6 +2145,11 @@ features:
       group: sql_rendering
       kind: migration_to_sql
       dialect: postgres
+    - case: postgres_pgcrypto_uuid
+      description: Render pgcrypto independently from native UUID columns.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
   operation.create_function:
     status: success
     evidence:
@@ -2150,6 +2165,11 @@ features:
       description: Diff creates a table from an empty replay state.
       group: diff
       kind: schema_to_migration
+      dialect: postgres
+    - case: postgres_pgcrypto_uuid
+      description: Render pgcrypto independently from native UUID columns.
+      group: sql_rendering
+      kind: migration_to_sql
       dialect: postgres
   operation.create_trigger:
     status: success
@@ -2708,6 +2728,11 @@ features:
       group: sql_rendering
       kind: migration_to_sql
       dialect: postgres
+    - case: postgres_pgcrypto_uuid
+      description: Render pgcrypto independently from native UUID columns.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
   renderer.postgres.create_function:
     status: success
     evidence:
@@ -2836,6 +2861,11 @@ features:
       dialect: postgres
     - case: postgres_migration_to_sql_features
       description: Render SQL for richer PostgreSQL-only features.
+      group: sql_rendering
+      kind: migration_to_sql
+      dialect: postgres
+    - case: postgres_pgcrypto_uuid
+      description: Render pgcrypto independently from native UUID columns.
       group: sql_rendering
       kind: migration_to_sql
       dialect: postgres
@@ -3674,7 +3704,7 @@ features:
     status: success
     evidence:
     - case: sqlite_type_alias_noop
-      description: SQLite declared type aliases canonicalize before diffing.
+      description: SQLite preserves declared types while diffing equivalent affinities.
       group: validation
       kind: schema_to_migration
       dialect: sqlite

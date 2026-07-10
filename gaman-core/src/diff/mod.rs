@@ -49,7 +49,12 @@ pub fn generate_diff(current: &Schema, previous: &Schema) -> Vec<Operation> {
         view_equal,
         diff_view,
     );
-    diff_map(&current.tables, &previous.tables, &mut ops, diff_table);
+    diff_map(
+        &current.tables,
+        &previous.tables,
+        &mut ops,
+        |curr, prev, ops| diff_table(curr, prev, ops, None),
+    );
 
     ops
 }
@@ -188,16 +193,26 @@ fn diff_view(curr: Option<&ViewDef>, prev: Option<&ViewDef>, ops: &mut Vec<Opera
     }
 }
 
-fn diff_table(curr: Option<&Table>, prev: Option<&Table>, ops: &mut Vec<Operation>) {
+fn diff_table(
+    curr: Option<&Table>,
+    prev: Option<&Table>,
+    ops: &mut Vec<Operation>,
+    dialect: Option<&Dialect>,
+) {
     match (curr, prev) {
         (Some(c), None) => ops.push(Operation::CreateTable { table: c.clone() }),
         (None, Some(p)) => ops.push(Operation::DropTable { table: p.clone() }),
-        (Some(c), Some(p)) => diff_table_children(p, c, ops),
+        (Some(c), Some(p)) => diff_table_children(p, c, ops, dialect),
         _ => {}
     }
 }
 
-fn diff_table_children(prev: &Table, curr: &Table, ops: &mut Vec<Operation>) {
+fn diff_table_children(
+    prev: &Table,
+    curr: &Table,
+    ops: &mut Vec<Operation>,
+    dialect: Option<&Dialect>,
+) {
     let table_name = curr.qualified_name();
     if !table_option_sources_equal(
         &prev.options.header_raw,
@@ -216,7 +231,7 @@ fn diff_table_children(prev: &Table, curr: &Table, ops: &mut Vec<Operation>) {
         &prev.columns,
         &curr.columns,
         |c| c.name.as_str(),
-        PartialEq::eq,
+        |left, right| column_equal(left, right, dialect),
     ) {
         match change {
             SubChange::Removed(col) => ops.push(Operation::DropColumn {
@@ -351,6 +366,31 @@ fn diff_table_children(prev: &Table, curr: &Table, ops: &mut Vec<Operation>) {
     }
 }
 
+fn column_equal(left: &Column, right: &Column, dialect: Option<&Dialect>) -> bool {
+    let type_equal = dialect.map_or_else(
+        || left.col_type == right.col_type,
+        |dialect| {
+            dialect.type_comparison_key(&left.col_type)
+                == dialect.type_comparison_key(&right.col_type)
+        },
+    );
+    type_equal
+        && left.name == right.name
+        && left.nullable == right.nullable
+        && dialect.map_or_else(
+            || left.default == right.default,
+            |dialect| match (&left.default, &right.default) {
+                (Some(left), Some(right)) => dialect.default_expressions_equal(left, right),
+                (None, None) => true,
+                _ => false,
+            },
+        )
+        && left.primary_key == right.primary_key
+        && left.references == right.references
+        && left.check == right.check
+        && left.generated == right.generated
+}
+
 fn function_equal(left: &FunctionDef, right: &FunctionDef) -> bool {
     if left.is_opaque() || right.is_opaque() {
         return left.qualified_name() == right.qualified_name()
@@ -426,7 +466,7 @@ fn diff_by_name<'a, T>(
     prev: &'a [T],
     curr: &'a [T],
     name_fn: impl Fn(&T) -> &str,
-    equal: fn(&T, &T) -> bool,
+    equal: impl Fn(&T, &T) -> bool,
 ) -> Vec<SubChange<'a, T>> {
     let prev_map: HashMap<&str, &T> = prev.iter().map(|v| (name_fn(v), v)).collect();
     let curr_map: HashMap<&str, &T> = curr.iter().map(|v| (name_fn(v), v)).collect();
@@ -979,13 +1019,45 @@ impl DiffEngine {
         previous.canonicalize(dialect);
         reject_primary_key_mutations(&current, &previous)?;
 
-        let raw_ops = generate_diff(&current, &previous);
+        let raw_ops = generate_diff_for_dialect(&current, &previous, dialect);
         let ops = inject_orphan_triggers(raw_ops, &previous);
         let ops = inject_enum_column_casts(ops, &previous);
         let ops = decompose(ops);
         let ops = sort_operations(ops)?;
         Ok(merge_operations(ops, dialect))
     }
+}
+
+fn generate_diff_for_dialect(
+    current: &Schema,
+    previous: &Schema,
+    dialect: &Dialect,
+) -> Vec<Operation> {
+    let mut current_without_tables = current.clone();
+    current_without_tables.tables.clear();
+    let mut previous_without_tables = previous.clone();
+    previous_without_tables.tables.clear();
+    let mut ops = generate_diff(&current_without_tables, &previous_without_tables);
+
+    for (key, current_table) in &current.tables {
+        match previous.tables.get(key) {
+            None => diff_table(Some(current_table), None, &mut ops, Some(dialect)),
+            Some(previous_table) => {
+                diff_table(
+                    Some(current_table),
+                    Some(previous_table),
+                    &mut ops,
+                    Some(dialect),
+                );
+            }
+        }
+    }
+    for (key, previous_table) in &previous.tables {
+        if !current.tables.contains_key(key) {
+            diff_table(None, Some(previous_table), &mut ops, Some(dialect));
+        }
+    }
+    ops
 }
 
 fn reject_primary_key_mutations(current: &Schema, previous: &Schema) -> Result<(), DiffError> {

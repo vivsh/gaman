@@ -181,6 +181,26 @@ fn gen_identical_schemas_no_diff() {
     assert!(generate_diff(&s, &s).is_empty());
 }
 
+/// Verifies default-expression keyword case does not produce a schema migration.
+#[test]
+fn default_expression_case_only_change_is_noop() {
+    let mut table = empty_table("users");
+    table.columns.push(text_col("created_at"));
+    let mut previous = schema_with_table(table);
+    let mut current = previous.clone();
+    previous.tables.get_mut("users").unwrap().columns[0].default = Some("NOW()".to_string());
+    current.tables.get_mut("users").unwrap().columns[0].default = Some("now()".to_string());
+
+    let operations = DiffEngine::new()
+        .diff(&current, &previous, &Dialect::Postgres)
+        .unwrap();
+
+    assert!(
+        operations.is_empty(),
+        "unexpected operations: {operations:?}"
+    );
+}
+
 /// Adding a new table produces a single CreateTable.
 #[test]
 fn gen_new_table() {

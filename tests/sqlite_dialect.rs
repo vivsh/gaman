@@ -1111,10 +1111,12 @@ fn sqlite_rebuild_rejects_unsafe_cases() {
     .unwrap_err();
     assert!(err.to_string().contains("require atomic migrations"));
 
-    let err = sql_for_result(vec![
+    let sql = sql_for_result(vec![
         migration(
             "0001_create_users",
-            vec![Operation::CreateTable { table: users }],
+            vec![Operation::CreateTable {
+                table: users.clone(),
+            }],
         ),
         migration(
             "0002_custom_type",
@@ -1126,10 +1128,28 @@ fn sqlite_rebuild_rejects_unsafe_cases() {
             }],
         ),
     ])
+    .expect("SQLite must preserve approved custom declared types");
+    assert!(sql.join("\n").contains("email_address"));
+
+    let err = sql_for_result(vec![
+        migration(
+            "0001_create_users",
+            vec![Operation::CreateTable { table: users }],
+        ),
+        migration(
+            "0002_empty_type",
+            vec![Operation::AlterColumn {
+                table_name: "users".to_string(),
+                old: col("name", "text", true),
+                new: col("name", "", true),
+                cast_expr: None,
+            }],
+        ),
+    ])
     .unwrap_err();
     assert!(
         err.to_string()
-            .contains("cannot automatically cast to ambiguous type 'email_address'")
+            .contains("cannot automatically cast to an empty type declaration")
     );
 }
 

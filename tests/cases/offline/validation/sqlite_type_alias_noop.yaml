@@ -1,5 +1,5 @@
 ---
-description: SQLite declared type aliases canonicalize before diffing.
+description: SQLite preserves declared types while diffing equivalent affinities.
 group: validation
 features:
 - group.validation
@@ -21,7 +21,7 @@ migrations:
       - name: email
         type: text
       - name: active
-        type: integer
+        type: numeric
 current:
   tables:
     users:

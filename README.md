@@ -34,6 +34,7 @@ compatibility mode.
 
 - Migration generation is deterministic and offline.
 - `sql` renders the SQL plan without opening a database connection.
+- `schema.sql` uses supported database `CREATE` DDL and direct database types.
 - YAML, JSON, SQL DDL, and live inspection all feed one schema model.
 - Ambiguous or risky changes are surfaced before files are written.
 - Rust applications can embed the same engine when they need custom migration storage.
@@ -41,10 +42,11 @@ compatibility mode.
 ## Quick Start
 
 ```bash
-cargo install gaman
+cargo install --locked gaman
+
 export DATABASE_URL=postgres://localhost/myapp
 export MIGRATIONS_DIR=migrations
-export SCHEMA=schema.yaml
+export SCHEMA=schema.sql
 
 gaman make initial
 gaman sql
@@ -59,12 +61,13 @@ profile yet.
 The loop is intentionally small:
 
 ```text
-schema.yaml -> make -> migration.yaml -> sql -> SQL -> apply
+schema.sql -> make -> migration.yaml -> sql -> SQL -> apply
 ```
 
-`DATABASE_URL` is required for every CLI invocation because it selects the
-dialect. Offline commands such as `make`, `show`, and `sql` do not open that
-connection.
+`DATABASE_URL` is required for every CLI invocation only to select the dialect.
+Offline commands such as `make`, `show`, and `sql` never open or otherwise use
+the connection. It is used only when a command needs live database state, such
+as `status`, `apply`, `inspect`, `verify`, or `repair`.
 
 For smaller custom builds, select dialect features explicitly:
 
@@ -177,7 +180,7 @@ verifier can inspect them deterministically.
 | Partial indexes | ✅ | ◐ | 🚧 |
 | Concurrent indexes | ✅ | ❌ | 🚧 |
 | Schemas / namespaces | ✅ | ❌ | ❌ |
-| Extensions as opaque schema objects | 🚧 | ❌ | ❌ |
+| Extensions as opaque schema objects | ✅ | ❌ | ❌ |
 | Enums | ✅ | ❌ | 🚧 |
 | Functions as opaque schema objects | ✅ | ❌ | 🚧 |
 | Trigger query schema objects | ✅ | ✅ | 🚧 |
@@ -211,7 +214,44 @@ the checked offline evidence matrix and result-recording commands.
 All frontends normalize into the same internal `Schema` before replay, diffing,
 clarification, and SQL rendering.
 
-YAML is explicit and reviewable:
+### Schema SQL First
+
+`schema.sql` is the primary schema-authoring format. It contains supported
+`CREATE` DDL declarations for the selected database dialect:
+
+```sql
+CREATE TABLE users (
+    id bigserial PRIMARY KEY,
+    email text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX users_email_idx ON users (email);
+```
+
+Use the database's own type names: `bigserial`, `text`, `timestamptz`, `jsonb`,
+`integer`, and so on. Gaman has no separate type language and does not convert
+application types into database types. It recognizes common aliases to validate
+and canonicalize them, but the schema remains database DDL. See [Clarification](#clarification) for how unrecognized types are approved.
+
+PostgreSQL recognition covers its stable user-declarable built-in types and
+aliases from PostgreSQL 14 onward, including ranges, multiranges, `jsonpath`,
+and native `uuid`. `pgcrypto` is an optional known extension for functions such
+as `gen_random_uuid()`; it does not provide the `uuid` type. SQLite preserves
+the declared type text and uses SQLite's documented affinity rules for semantic
+comparison. These catalogs improve diagnostics only: custom, domain, composite,
+and unlisted extension types still use trust on first use (TOFU).
+
+`schema.sql` describes desired state; it is not a hand-written migration file.
+When it changes, Gaman compares its prepared schema with replayed migration
+history, generates a migration, and then applies that migration to update the
+database. Schema SQL accepts supported `CREATE` definitions only; use generated
+migrations or explicit raw migration SQL for structural `ALTER` and `DROP`
+work. Data changes are outside schema input and remain application-owned SQL.
+
+### YAML And Other Structured Input
+
+YAML is available when a structured schema is a better fit:
 
 ```yaml
 tables:
@@ -230,17 +270,9 @@ tables:
       - columns: [product_id]
 ```
 
-SQL DDL works when schema already lives as SQL:
-
-```sql
-CREATE TABLE users (
-    id bigserial PRIMARY KEY,
-    email text NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE UNIQUE INDEX users_email_idx ON users (email);
-```
+YAML and JSON use the same direct database type strings as `schema.sql`; they
+do not introduce an alternate type vocabulary. Rust builders and live inspection
+also feed this same schema model.
 
 Rust applications can also use builders, `EmbeddedMigrations`, `MigrationSource`,
 and `MigrationEngine` directly. See [Embedding Gaman In Rust](docs/rust-embedding.md).

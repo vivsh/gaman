@@ -1,0 +1,42 @@
+postgres_versions: [14, 15, 16, 17, 18]
+minimum_postgres: 14
+native_type_witnesses:
+  - bigint
+  - bit varying
+  - boolean
+  - bytea
+  - character varying
+  - date
+  - double precision
+  - inet
+  - integer
+  - interval
+  - jsonb
+  - jsonpath
+  - money
+  - numeric
+  - oid
+  - pg_lsn
+  - pg_snapshot
+  - regclass
+  - time with time zone
+  - timestamp with time zone
+  - tstzmultirange
+  - tsvector
+  - uuid
+  - xml
+aliases:
+  int4: integer
+  int8: bigint
+  bool: boolean
+  decimal: numeric
+  float4: real
+  float8: double precision
+  serial4: serial
+  timestamptz: timestamp with time zone
+  timetz: time with time zone
+excluded_pseudo_types:
+  - anyelement
+  - record
+  - trigger
+  - void

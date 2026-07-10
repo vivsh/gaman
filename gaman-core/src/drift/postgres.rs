@@ -250,8 +250,8 @@ fn column_name(expected: &Column, observed: &Column, _: DriftContext<'_>) -> Pro
 }
 
 fn column_type(expected: &Column, observed: &Column, ctx: DriftContext<'_>) -> PropertyMatch {
-    let expected_type = ctx.dialect.normalize_type(&expected.col_type).to_string();
-    let actual_type = ctx.dialect.normalize_type(&observed.col_type).to_string();
+    let expected_type = ctx.dialect.type_comparison_key(&expected.col_type);
+    let actual_type = ctx.dialect.type_comparison_key(&observed.col_type);
     if expected_type == actual_type || serial_type_matches(&expected_type, &actual_type) {
         PropertyMatch::Match
     } else {
@@ -267,10 +267,15 @@ fn column_nullable(expected: &Column, observed: &Column, _: DriftContext<'_>) ->
     exact_bool(expected.nullable, observed.nullable)
 }
 
-fn column_default(expected: &Column, observed: &Column, _: DriftContext<'_>) -> PropertyMatch {
+fn column_default(expected: &Column, observed: &Column, ctx: DriftContext<'_>) -> PropertyMatch {
     let expected_default = canonical_default(expected.default.as_deref());
     let actual_default = canonical_default(observed.default.as_deref());
-    if expected_default == actual_default {
+    let equal = match (&expected_default, &actual_default) {
+        (Some(expected), Some(actual)) => ctx.dialect.default_expressions_equal(expected, actual),
+        (None, None) => true,
+        _ => false,
+    };
+    if equal {
         PropertyMatch::Match
     } else {
         PropertyMatch::Drift {

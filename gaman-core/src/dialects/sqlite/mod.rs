@@ -8,6 +8,7 @@ use crate::states::{
 };
 
 use super::DialectProcessor;
+use crate::parsers::tokens::{SQLITE_TOKENIZER, SqlTokenizer};
 
 mod data_types;
 mod extension_types;
@@ -17,6 +18,10 @@ pub(super) static SQLITE: SqliteProcessor = SqliteProcessor;
 pub(super) struct SqliteProcessor;
 
 impl DialectProcessor for SqliteProcessor {
+    fn tokenizer(&self) -> &'static dyn SqlTokenizer {
+        &SQLITE_TOKENIZER
+    }
+
     fn migration_to_sql(
         &self,
         migration: &Migration,
@@ -55,6 +60,10 @@ impl DialectProcessor for SqliteProcessor {
 
     fn canonical_type(&self, t: &str) -> String {
         canonical_type(t)
+    }
+
+    fn type_comparison_key(&self, t: &str) -> String {
+        data_types::affinity_key(t)
     }
 
     fn is_catalog_type(&self, t: &str) -> bool {
@@ -469,7 +478,8 @@ fn copy_expr(source: &Column, target: &Column, ops: &[Operation]) -> Result<Stri
         _ => None,
     });
 
-    let type_changed = normalize_type(&source.col_type) != normalize_type(&target.col_type);
+    let type_changed =
+        data_types::affinity_key(&source.col_type) != data_types::affinity_key(&target.col_type);
     let mut expr = if let Some(Some(cast_expr)) = alter {
         cast_expr.to_string()
     } else if type_changed {
@@ -501,39 +511,16 @@ fn copy_expr(source: &Column, target: &Column, ops: &[Operation]) -> Result<Stri
 }
 
 fn validate_auto_cast_type(col_type: &str) -> Result<(), DialectError> {
-    let normalized = normalize_type(col_type).to_ascii_lowercase();
-    let base = normalized
-        .split_once('(')
-        .map_or(normalized.as_str(), |(head, _)| head)
-        .trim();
-    let supported = matches!(
-        base,
-        "integer"
-            | "int"
-            | "bigint"
-            | "smallint"
-            | "tinyint"
-            | "real"
-            | "double"
-            | "float"
-            | "text"
-            | "varchar"
-            | "char"
-            | "clob"
-            | "blob"
-            | "numeric"
-            | "decimal"
-            | "boolean"
-    );
-    if supported {
-        Ok(())
-    } else {
+    if col_type.trim().is_empty() {
         Err(unsupported(
             "alter_column",
             format!(
-                "SQLite cannot automatically cast to ambiguous type '{col_type}'; provide cast_expr"
+                "SQLite cannot automatically cast to an empty type declaration '{col_type}'; provide cast_expr"
             ),
         ))
+    } else {
+        let _ = data_types::affinity(col_type);
+        Ok(())
     }
 }
 
@@ -700,7 +687,7 @@ fn is_ident_continue(ch: char) -> bool {
     ch == '_' || ch.is_ascii_alphanumeric()
 }
 
-fn pk_signature(table: &Table) -> Vec<(&str, &str)> {
+fn pk_signature(table: &Table) -> Vec<(&str, String)> {
     table
         .primary_key_column_names()
         .into_iter()
@@ -709,7 +696,12 @@ fn pk_signature(table: &Table) -> Vec<(&str, &str)> {
                 .columns
                 .iter()
                 .find(|column| column.name == name)
-                .map(|column| (column.name.as_str(), normalize_type(&column.col_type)))
+                .map(|column| {
+                    (
+                        column.name.as_str(),
+                        data_types::affinity_key(&column.col_type),
+                    )
+                })
         })
         .collect()
 }
@@ -1008,11 +1000,7 @@ pub fn normalize_type(t: &str) -> &str {
 }
 
 pub fn canonical_type(t: &str) -> String {
-    if extension_types::is_extension_type(t) {
-        t.to_string()
-    } else {
-        data_types::canonical_type(t)
-    }
+    data_types::canonical_type(t)
 }
 
 pub fn validate_schema(schema: &Schema) -> Result<(), SchemaValidationError> {
@@ -1053,6 +1041,21 @@ pub fn validate_schema(schema: &Schema) -> Result<(), SchemaValidationError> {
         }
         for trigger in &table.triggers {
             validate_sqlite_trigger(table_name, trigger)?;
+        }
+        if table
+            .options
+            .tail_raw
+            .iter()
+            .any(|option| option.eq_ignore_ascii_case("strict"))
+        {
+            for column in &table.columns {
+                if !data_types::strict_type_allowed(&column.col_type) {
+                    return Err(SchemaValidationError::Invalid(format!(
+                        "SQLite STRICT table {table_name} column {} must use INT, INTEGER, REAL, TEXT, BLOB, or ANY; found {}",
+                        column.name, column.col_type
+                    )));
+                }
+            }
         }
     }
 

@@ -4,6 +4,10 @@ Gaman is tested through Rust unit tests, property tests, and YAML fixture
 harnesses. The YAML fixtures are the main product evidence: they describe
 observable behavior, supported dialect behavior, and expected unsupported cases.
 
+Most migration planning is tested entirely offline without requiring a running
+database. Live databases are only required for behavior that cannot be modeled
+deterministically.
+
 This file is a contributor guide. Detailed fixture schemas live in:
 
 - [Parser fixtures](docs/parser-fixtures.md)
@@ -18,6 +22,13 @@ This file is a contributor guide. Detailed fixture schemas live in:
 ### Testing philosophy
 
 Tests should prove Gaman behavior at the boundary where users observe it.
+
+Testing hierarchy:
+
+1. Rust unit tests verify implementation details.
+2. Offline YAML fixtures verify deterministic migration behavior.
+3. Online YAML fixtures verify real database behavior.
+4. Accepted evidence generates the public support matrix.
 
 YAML fixtures are used because they describe externally observable behavior, and their accepted results can be reused as evidence for user-facing documentation such as the README support matrix.
 
@@ -113,6 +124,23 @@ Run property tests through the normal core commands:
 cargo test -p gaman-core
 cargo test -p gaman-core --features sqlite
 ```
+
+### Dialect type catalogs
+
+Dialect catalogs improve alias normalization, suggestions, and TOFU prompts;
+they never reject a type merely because it is absent. PostgreSQL catalog
+references live in `tests/catalogs/postgres-native-types.yaml`; SQLite affinity
+examples live in `tests/catalogs/sqlite-affinity.yaml`. Core unit tests keep
+both artifacts aligned with the implementation.
+
+To audit a pristine PostgreSQL server for new built-in catalog candidates, run:
+
+```bash
+POSTGRES_DATABASE_URL=postgres://... scripts/audit-postgres-types.sh
+```
+
+The audit is advisory. Review its output before classifying a candidate as a
+column type, a function-only pseudo-type, or an internal catalog type.
 
 ### Evidence policy
 

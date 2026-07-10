@@ -272,8 +272,9 @@ tables:
     assert!(err.to_string().contains("unknown column 'missing'"));
 }
 
+/// Verifies SQLite preparation preserves declared type strings for faithful schema rendering.
 #[test]
-fn prepare_normalizes_sqlite_type_aliases() {
+fn prepare_preserves_sqlite_declared_type_strings() {
     let schema = Schema::from_yaml_str(
         r#"
 tables:
@@ -291,9 +292,9 @@ tables:
     .expect("prepared schema");
 
     let columns = &schema.tables["users"].columns;
-    assert_eq!(columns[0].col_type, "integer");
-    assert_eq!(columns[1].col_type, "integer");
-    assert_eq!(columns[2].col_type, "text");
+    assert_eq!(columns[0].col_type, "int4");
+    assert_eq!(columns[1].col_type, "bool");
+    assert_eq!(columns[2].col_type, "varchar(100)");
 }
 
 #[test]
