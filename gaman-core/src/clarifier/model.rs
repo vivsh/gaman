@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::operations::Operation;
+use crate::states::types::EntityKind;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -49,6 +50,13 @@ pub enum ClarificationKind {
         type_name: String,
         suggested: Vec<String>,
     },
+    OpaqueEntity {
+        kind: EntityKind,
+        name: String,
+    },
+    UnmanagedTableOptions {
+        table: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -70,6 +78,7 @@ pub enum Answer {
     TypeCastImplicit,
     UseType(String),
     KeepType,
+    AcceptRisk,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

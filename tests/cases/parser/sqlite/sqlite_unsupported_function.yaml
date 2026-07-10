@@ -3,4 +3,4 @@ description: SQLite CREATE FUNCTION is not represented in Schema.
 dialect: sqlite
 sql: |
   CREATE FUNCTION f() RETURNS integer;
-expect_error: SQL parse error
+expect_error: SQLite does not support stored functions

@@ -1,5 +1,5 @@
 ---
-description: SQLite expression CREATE INDEX records expression columns.
+description: SQLite expression CREATE INDEX is preserved as an opaque index.
 dialect: sqlite
 sql: |
   CREATE TABLE users (email text);
@@ -18,6 +18,9 @@ expect_schema:
         nullable: true
       indexes:
       - name: users_lower_email_idx
-        columns: [lower(email)]
+        columns: []
         unique: false
-        predicate: email IS NOT NULL
+        opaque:
+          raw: CREATE INDEX users_lower_email_idx ON users(lower(email)) WHERE email IS NOT NULL
+          trusted: false
+          fingerprint: v1:sha256:eeb9abaac135f502b8af3eb42f05fa2f2853579590b139595a8882c404f9a619

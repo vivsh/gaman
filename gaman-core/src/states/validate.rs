@@ -41,6 +41,9 @@ impl Schema {
             }
             validate_table_references(self, name, table)?;
             for trigger in &table.triggers {
+                if trigger.is_opaque() {
+                    continue;
+                }
                 if trigger.events.is_empty() {
                     let tname = trigger.name.as_deref().unwrap_or("<unnamed>");
                     return Err(SchemaValidationError::Invalid(format!(
@@ -98,6 +101,9 @@ fn validate_table_references(
                 index.name
             )));
         }
+        if index.is_opaque() {
+            continue;
+        }
         for column in &index.columns {
             if !column_names.contains(column.as_str()) {
                 return Err(SchemaValidationError::Invalid(format!(
@@ -124,6 +130,12 @@ fn validate_table_references(
                     )));
                 }
             }
+        } else if let Constraint::Opaque { name, .. } = constraint
+            && name.trim().is_empty()
+        {
+            return Err(SchemaValidationError::Invalid(format!(
+                "table '{table_name}' has opaque constraint with empty name"
+            )));
         }
     }
 
@@ -152,6 +164,14 @@ fn validate_table_references(
         {
             return Err(SchemaValidationError::Invalid(format!(
                 "table {table_name} foreign key {}: unsupported on_delete action '{}'",
+                fk.name, action
+            )));
+        }
+        if let Some(action) = &fk.on_update
+            && canonical_foreign_key_action(action).is_none()
+        {
+            return Err(SchemaValidationError::Invalid(format!(
+                "table {table_name} foreign key {}: unsupported on_update action '{}'",
                 fk.name, action
             )));
         }

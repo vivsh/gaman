@@ -379,10 +379,9 @@ fn support_notes(manifest: &SupportMatrix) -> Vec<String> {
             if matches!(
                 cell.status,
                 SupportStatus::Partial | SupportStatus::Unsupported
-            ) {
-                if let Some(note) = &cell.note {
-                    grouped.entry(note.as_str()).or_default().push(*dialect);
-                }
+            ) && let Some(note) = &cell.note
+            {
+                grouped.entry(note.as_str()).or_default().push(*dialect);
             }
         }
         for (note, dialects) in grouped {

@@ -1,6 +1,6 @@
 ---
-description: PostgreSQL materialized view WITH DATA tail is reported as parser error.
+description: PostgreSQL materialized views are rejected outside EntityKind.
 dialect: postgres
 sql: |
   CREATE MATERIALIZED VIEW active_users AS SELECT id FROM users WITH DATA;
-expect_error: SQL parse error
+expect_error: known Gaman entity kind

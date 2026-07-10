@@ -60,6 +60,7 @@ mod tests {
             indexes: vec![],
             constraints: vec![],
             triggers: vec![],
+            options: Default::default(),
         }
     }
 
@@ -68,6 +69,7 @@ mod tests {
             name: "status".to_string(),
             schema: None,
             values: values.iter().map(|value| value.to_string()).collect(),
+            opaque: Default::default(),
         }
     }
 

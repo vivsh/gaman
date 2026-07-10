@@ -19,6 +19,7 @@ fn empty_table(name: &str) -> Table {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     }
 }
 
@@ -92,6 +93,7 @@ fn basic_function(name: &str) -> FunctionDef {
         body: "SELECT 1".to_string(),
         volatility: Volatility::Volatile,
         security_definer: false,
+        opaque: Default::default(),
     }
 }
 
@@ -105,6 +107,7 @@ fn basic_trigger(name: &str, fn_name: &str) -> TriggerDef {
         when: None,
         query: None,
         language: None,
+        opaque: Default::default(),
     }
 }
 
@@ -232,6 +235,7 @@ fn gen_new_table_suppresses_sub_entity_adds() {
         columns: vec!["email".into()],
         unique: true,
         predicate: None,
+        opaque: Default::default(),
     });
     let ops = generate_diff(&schema_with_table(t), &empty_schema());
     assert_eq!(
@@ -268,11 +272,13 @@ fn gen_enum_reorder_is_destructive() {
         name: "status".into(),
         schema: None,
         values: vec!["active".into(), "inactive".into(), "pending".into()],
+        opaque: Default::default(),
     });
     let curr = schema_with_enum(EnumDef {
         name: "status".into(),
         schema: None,
         values: vec!["pending".into(), "active".into(), "inactive".into()],
+        opaque: Default::default(),
     });
     let ops = generate_diff(&curr, &prev);
     let names = op_names(&ops);
@@ -295,11 +301,13 @@ fn gen_enum_strict_append() {
         name: "status".into(),
         schema: None,
         values: vec!["a".into(), "b".into()],
+        opaque: Default::default(),
     });
     let curr = schema_with_enum(EnumDef {
         name: "status".into(),
         schema: None,
         values: vec!["a".into(), "b".into(), "c".into()],
+        opaque: Default::default(),
     });
     let ops = generate_diff(&curr, &prev);
     assert_eq!(ops.len(), 1);
@@ -314,11 +322,13 @@ fn gen_enum_insert_without_reorder_is_alter() {
         name: "status".into(),
         schema: None,
         values: vec!["a".into(), "c".into()],
+        opaque: Default::default(),
     });
     let curr = schema_with_enum(EnumDef {
         name: "status".into(),
         schema: None,
         values: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+        opaque: Default::default(),
     });
     let ops = generate_diff(&curr, &prev);
     assert_eq!(ops.len(), 1);
@@ -332,11 +342,13 @@ fn gen_enum_append_with_reorder_is_destructive() {
         name: "status".into(),
         schema: None,
         values: vec!["a".into(), "b".into()],
+        opaque: Default::default(),
     });
     let curr = schema_with_enum(EnumDef {
         name: "status".into(),
         schema: None,
         values: vec!["b".into(), "a".into(), "c".into()],
+        opaque: Default::default(),
     });
     let ops = generate_diff(&curr, &prev);
     let names = op_names(&ops);
@@ -354,11 +366,13 @@ fn gen_enum_value_removed() {
         name: "status".into(),
         schema: None,
         values: vec!["a".into(), "b".into(), "c".into()],
+        opaque: Default::default(),
     });
     let curr = schema_with_enum(EnumDef {
         name: "status".into(),
         schema: None,
         values: vec!["a".into(), "c".into()],
+        opaque: Default::default(),
     });
     let ops = generate_diff(&curr, &prev);
     let names = op_names(&ops);
@@ -507,6 +521,7 @@ fn sort_enum_before_table_using_it() {
                 name: "user_status".into(),
                 schema: None,
                 values: vec!["active".into(), "inactive".into()],
+                opaque: Default::default(),
             },
         },
     ];
@@ -617,11 +632,13 @@ fn sort_replace_view_after_create_function() {
                 name: "v".into(),
                 schema: None,
                 definition: "SELECT 1".into(),
+                opaque: Default::default(),
             },
             new: ViewDef {
                 name: "v".into(),
                 schema: None,
                 definition: "SELECT fn1()".into(),
+                opaque: Default::default(),
             },
         },
         Operation::CreateFunction {
@@ -648,11 +665,13 @@ fn sort_replace_view_after_create_table() {
                 name: "v".into(),
                 schema: None,
                 definition: "SELECT 1".into(),
+                opaque: Default::default(),
             },
             new: ViewDef {
                 name: "v".into(),
                 schema: None,
                 definition: "SELECT * FROM t".into(),
+                opaque: Default::default(),
             },
         },
         Operation::CreateTable {
@@ -682,6 +701,7 @@ fn sort_extension_before_table() {
                 name: "uuid-ossp".into(),
                 schema: None,
                 version: None,
+                opaque: Default::default(),
             },
         },
     ];
@@ -708,6 +728,7 @@ fn sort_deterministic() {
                     name: "x".into(),
                     schema: None,
                     values: vec!["v".into()],
+                    opaque: Default::default(),
                 },
             },
             Operation::CreateExtension {
@@ -715,6 +736,7 @@ fn sort_deterministic() {
                     name: "pgcrypto".into(),
                     schema: None,
                     version: None,
+                    opaque: Default::default(),
                 },
             },
         ]
@@ -749,6 +771,7 @@ fn sort_drop_view_before_drop_table_and_function() {
                 name: "v1".into(),
                 schema: None,
                 definition: "SELECT 1".into(),
+                opaque: Default::default(),
             },
         },
     ];
@@ -778,6 +801,7 @@ fn sort_create_view_after_tables_and_functions() {
                 name: "v".into(),
                 schema: None,
                 definition: "SELECT 1".into(),
+                opaque: Default::default(),
             },
         },
         Operation::CreateFunction {
@@ -813,6 +837,7 @@ fn sort_drop_table_before_drop_enum() {
                 name: "status".into(),
                 schema: None,
                 values: vec!["a".into()],
+                opaque: Default::default(),
             },
         },
         Operation::DropTable {
@@ -839,6 +864,7 @@ fn sort_drop_function_before_drop_extension() {
                 name: "pgcrypto".into(),
                 schema: None,
                 version: None,
+                opaque: Default::default(),
             },
         },
         Operation::DropFunction {
@@ -904,11 +930,13 @@ fn full_pipeline_enum_reorder_is_destructive() {
         name: "s".into(),
         schema: None,
         values: vec!["a".into(), "b".into(), "c".into()],
+        opaque: Default::default(),
     });
     let curr = schema_with_enum(EnumDef {
         name: "s".into(),
         schema: None,
         values: vec!["c".into(), "a".into(), "b".into()],
+        opaque: Default::default(),
     });
     let engine = DiffEngine::new();
     let ops = engine.diff(&curr, &prev, &Dialect::Postgres).unwrap();
@@ -931,6 +959,7 @@ fn full_pipeline_enum_table_ordering() {
             name: "role".into(),
             schema: None,
             values: vec!["admin".into(), "user".into()],
+            opaque: Default::default(),
         },
     );
     let mut t = empty_table("accounts");
@@ -1027,9 +1056,11 @@ fn full_pipeline_view_formatting_only_change_is_noop() {
         name: "active_users".to_string(),
         schema: None,
         definition: "SELECT  id -- ignored\nFROM users".to_string(),
+        opaque: Default::default(),
     };
     let curr = ViewDef {
         definition: "SELECT id FROM users".to_string(),
+        opaque: Default::default(),
         ..prev.clone()
     };
 
@@ -1051,9 +1082,11 @@ fn full_pipeline_view_real_definition_change_replaces_view() {
         name: "active_users".to_string(),
         schema: None,
         definition: "SELECT 'a b'".to_string(),
+        opaque: Default::default(),
     };
     let curr = ViewDef {
         definition: "SELECT 'ab'".to_string(),
+        opaque: Default::default(),
         ..prev.clone()
     };
 
@@ -1167,6 +1200,7 @@ fn incompatible_enum_change_injects_column_casts() {
             name: "status".into(),
             schema: None,
             values: vec!["a".into(), "b".into()],
+            opaque: Default::default(),
         },
     );
     prev.tables.insert(
@@ -1192,6 +1226,7 @@ fn incompatible_enum_change_injects_column_casts() {
             indexes: vec![],
             constraints: vec![],
             triggers: vec![],
+            options: Default::default(),
         },
     );
 
@@ -1202,6 +1237,7 @@ fn incompatible_enum_change_injects_column_casts() {
             name: "status".into(),
             schema: None,
             values: vec!["x".into(), "y".into()],
+            opaque: Default::default(),
         },
     );
 
@@ -1256,6 +1292,7 @@ fn drop_order_respects_fk_dependencies() {
             indexes: vec![],
             constraints: vec![],
             triggers: vec![],
+            options: Default::default(),
         },
     );
     prev.tables.insert(
@@ -1286,6 +1323,7 @@ fn drop_order_respects_fk_dependencies() {
             indexes: vec![],
             constraints: vec![],
             triggers: vec![],
+            options: Default::default(),
         },
     );
 
@@ -1389,6 +1427,7 @@ mod property_diff {
                     indexes: vec![],
                     constraints: vec![],
                     triggers: vec![],
+                    options: Default::default(),
                 }
             })
     }
@@ -1426,6 +1465,7 @@ mod property_diff {
                 indexes: vec![],
                 constraints: vec![],
                 triggers: vec![],
+                options: Default::default(),
             },
         );
         schema.normalize();

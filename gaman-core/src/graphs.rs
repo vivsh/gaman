@@ -10,7 +10,7 @@ pub enum GraphError {
     DuplicateId(String),
     #[error("cycle detected in migration graph")]
     CycleDetected,
-    #[error("multiple heads detected — run make_migration --merge to resolve")]
+    #[error("multiple heads detected — run make --merge to resolve")]
     Conflict,
     #[error("unknown dependency '{dep}' referenced by '{migration}'")]
     UnknownDependency { migration: String, dep: String },

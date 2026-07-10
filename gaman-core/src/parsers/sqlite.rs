@@ -7,11 +7,11 @@ use super::error::ParseError;
 use super::postgres::{trigger_events, trigger_scope, trigger_timing};
 use super::sql::ParseContext;
 use crate::dialects::Dialect;
-use crate::states::{TriggerDef, ViewDef, schema_qualified_key};
+use crate::states::{OpaqueMeta, TriggerDef, ViewDef, schema_qualified_key};
 
 pub(super) fn lower_statement(stmt: &Statement, ctx: &mut ParseContext) -> Result<(), ParseError> {
     match stmt {
-        Statement::CreateTable(ct) => ctx.insert_table(parse_create_table(ct)?),
+        Statement::CreateTable(ct) => ctx.insert_table(parse_create_table(ct, Dialect::Sqlite)?),
         Statement::CreateIndex(ci) => {
             ctx.push_index(parse_create_index(ci));
             Ok(())
@@ -25,6 +25,7 @@ pub(super) fn lower_statement(stmt: &Statement, ctx: &mut ParseContext) -> Resul
                     name,
                     schema,
                     definition: cv.query.to_string(),
+                    opaque: OpaqueMeta::default(),
                 },
             );
             Ok(())
@@ -67,7 +68,8 @@ fn lower_create_trigger(
         function_name: None,
         when: trigger.condition.as_ref().map(ToString::to_string),
         query,
-        language: Some("sql".to_string()),
+        language: None,
+        opaque: OpaqueMeta::default(),
     });
     Ok(())
 }

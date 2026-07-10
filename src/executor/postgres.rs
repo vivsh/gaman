@@ -4,10 +4,11 @@ use sqlx::PgConnection;
 use sqlx::Row;
 
 use super::{BoxFuture, Executor, ExecutorError, Introspectable};
+use crate::tracking::TRACKING_TABLE;
 use gaman_core::states::{
-    Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, PrimaryKey, Schema,
-    Table, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming, ViewDef, Volatility,
-    schema_qualified_key,
+    Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, OpaqueMeta,
+    PrimaryKey, Schema, Table, TableOptionsMeta, TriggerDef, TriggerEvent, TriggerScope,
+    TriggerTiming, ViewDef, Volatility, schema_qualified_key,
 };
 
 const GAMAN_LOCK_KEY: i64 = 7242068691819328000;
@@ -159,6 +160,7 @@ struct PgForeignKeyRow {
     ref_table: String,
     ref_column: String,
     on_delete: Option<String>,
+    on_update: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -173,10 +175,14 @@ struct PgIndexRow {
     table_oid: i64,
     index_name: String,
     unique: bool,
+    method: String,
+    raw: String,
     predicate: Option<String>,
-    columns: Option<Vec<String>>,
+    columns: Vec<Option<String>>,
     element_defs: Vec<String>,
-    has_expression: bool,
+    has_sort_options: bool,
+    has_explicit_collation: bool,
+    has_nondefault_opclass: bool,
 }
 
 #[derive(sqlx::FromRow)]
@@ -233,19 +239,20 @@ async fn inspect_postgres_schema(
     attach_foreign_keys(conn, &schema_list, &mut tables).await?;
     attach_unique_constraints(conn, &schema_list, &mut tables).await?;
     attach_check_constraints(conn, &schema_list, &mut tables).await?;
+    attach_opaque_constraints(conn, &schema_list, &mut tables).await?;
     attach_indexes(conn, &schema_list, &mut tables).await?;
     attach_triggers(conn, &schema_list, &mut tables).await?;
 
-    let mut state = Schema::default();
-    state.tables = tables
-        .into_values()
-        .map(|table| (table.qualified_name(), table))
-        .collect();
-    state.views = fetch_views(conn, &schema_list).await?;
-    state.functions = fetch_functions(conn, &schema_list).await?;
-    state.extensions = fetch_extensions(conn, &schema_list).await?;
-    state.enums = fetch_enums(conn, &schema_list).await?;
-    Ok(state)
+    Ok(Schema {
+        tables: tables
+            .into_values()
+            .map(|table| (table.qualified_name(), table))
+            .collect(),
+        views: fetch_views(conn, &schema_list).await?,
+        functions: fetch_functions(conn, &schema_list).await?,
+        extensions: fetch_extensions(conn, &schema_list).await?,
+        enums: fetch_enums(conn, &schema_list).await?,
+    })
 }
 
 async fn fetch_tables(
@@ -258,10 +265,11 @@ async fn fetch_tables(
          JOIN pg_namespace n ON n.oid = c.relnamespace \
          WHERE c.relkind IN ('r', 'p') \
          AND n.nspname = ANY($1) \
-         AND c.relname != 'gaman_migrations' \
+         AND c.relname != $2 \
          ORDER BY n.nspname, c.relname",
     )
     .bind(schemas)
+    .bind(TRACKING_TABLE)
     .fetch_all(conn)
     .await
     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
@@ -278,6 +286,7 @@ async fn fetch_tables(
                 indexes: Vec::new(),
                 constraints: Vec::new(),
                 triggers: Vec::new(),
+                options: TableOptionsMeta::default(),
             };
             (row.oid, table)
         })
@@ -302,11 +311,12 @@ async fn attach_columns(
          LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
          WHERE cl.relkind IN ('r', 'p') \
          AND n.nspname = ANY($1) \
-         AND cl.relname != 'gaman_migrations' \
+         AND cl.relname != $2 \
          AND a.attnum > 0 AND NOT a.attisdropped \
          ORDER BY cl.oid, a.attnum",
     )
     .bind(schemas)
+    .bind(TRACKING_TABLE)
     .fetch_all(conn)
     .await
     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
@@ -338,11 +348,10 @@ fn column_from_row(row: PgColumnRow) -> Column {
         && default
             .as_deref()
             .is_some_and(|expr| expr.trim_start().starts_with("nextval("))
+        && let Some(serial_type) = serial_type_for(&col_type)
     {
-        if let Some(serial_type) = serial_type_for(&col_type) {
-            col_type = serial_type.to_string();
-            default = None;
-        }
+        col_type = serial_type.to_string();
+        default = None;
     }
     Column {
         name: row.name,
@@ -425,11 +434,12 @@ async fn key_column_rows(
          JOIN unnest(con.conkey) WITH ORDINALITY AS keys(attnum, ordinality) ON TRUE \
          JOIN pg_attribute a ON a.attrelid = rel.oid AND a.attnum = keys.attnum \
          WHERE con.contype = $2 AND ns.nspname = ANY($1) \
-         AND rel.relname != 'gaman_migrations' \
+         AND rel.relname != $3 \
          ORDER BY rel.oid, con.conname, keys.ordinality",
     )
     .bind(schemas)
     .bind(contype)
+    .bind(TRACKING_TABLE)
     .fetch_all(conn)
     .await
     .map_err(|e| ExecutorError::Fetch(e.to_string()))
@@ -450,7 +460,14 @@ async fn attach_foreign_keys(
            WHEN 'n' THEN 'set_null' \
            WHEN 'd' THEN 'set_default' \
            ELSE NULL \
-         END AS on_delete \
+         END AS on_delete, \
+         CASE c.confupdtype \
+           WHEN 'c' THEN 'cascade' \
+           WHEN 'r' THEN 'restrict' \
+           WHEN 'n' THEN 'set_null' \
+           WHEN 'd' THEN 'set_default' \
+           ELSE NULL \
+         END AS on_update \
          FROM pg_constraint c \
          JOIN pg_class t ON t.oid = c.conrelid \
          JOIN pg_namespace tn ON tn.oid = t.relnamespace \
@@ -460,28 +477,44 @@ async fn attach_foreign_keys(
          JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = keys.from_attnum \
          JOIN pg_attribute fa ON fa.attrelid = fc.oid AND fa.attnum = keys.ref_attnum \
          WHERE c.contype = 'f' AND tn.nspname = ANY($1) \
-         AND t.relname != 'gaman_migrations' \
+         AND t.relname != $2 \
          ORDER BY t.oid, c.conname, keys.ordinality",
     )
     .bind(schemas)
+    .bind(TRACKING_TABLE)
     .fetch_all(conn)
     .await
     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
-    let mut keys: BTreeMap<(i64, String), (String, Vec<String>, Vec<String>, Option<String>)> =
-        BTreeMap::new();
+    type ForeignKeyParts = (
+        String,
+        Vec<String>,
+        Vec<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let mut keys: BTreeMap<(i64, String), ForeignKeyParts> = BTreeMap::new();
     for row in rows {
         let to_table = schema_qualified_key(&row.ref_table, Some(&row.ref_schema));
         let entry = keys
             .entry((row.table_oid, row.constraint_name))
-            .or_insert_with(|| (to_table, Vec::new(), Vec::new(), row.on_delete));
+            .or_insert_with(|| {
+                (
+                    to_table,
+                    Vec::new(),
+                    Vec::new(),
+                    row.on_delete,
+                    row.on_update,
+                )
+            });
         entry.1.push(row.from_column);
         entry.2.push(row.ref_column);
     }
-    for ((oid, name), (to_table, columns, to_columns, on_delete)) in keys {
+    for ((oid, name), (to_table, columns, to_columns, on_delete, on_update)) in keys {
         if let Some(table) = tables.get_mut(&oid) {
             let mut foreign_key = ForeignKey::new(name, columns, to_table, to_columns);
             foreign_key.on_delete = on_delete;
+            foreign_key.on_update = on_update;
             table.foreign_keys.push(foreign_key);
         }
     }
@@ -500,10 +533,11 @@ async fn attach_check_constraints(
          JOIN pg_class rel ON rel.oid = con.conrelid \
          JOIN pg_namespace ns ON ns.oid = rel.relnamespace \
          WHERE con.contype = 'c' AND ns.nspname = ANY($1) \
-         AND rel.relname != 'gaman_migrations' \
+         AND rel.relname != $2 \
          ORDER BY rel.oid, con.conname",
     )
     .bind(schemas)
+    .bind(TRACKING_TABLE)
     .fetch_all(conn)
     .await
     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
@@ -519,6 +553,40 @@ async fn attach_check_constraints(
     Ok(())
 }
 
+/// Preserves named PostgreSQL table constraints outside Gaman's modeled subset.
+async fn attach_opaque_constraints(
+    conn: &mut PgConnection,
+    schemas: &[String],
+    tables: &mut BTreeMap<i64, Table>,
+) -> Result<(), ExecutorError> {
+    let rows = sqlx::query_as::<_, PgCheckRow>(
+        "SELECT rel.oid::int8 AS table_oid, con.conname AS constraint_name, \
+         pg_get_constraintdef(con.oid, true) AS definition \
+         FROM pg_constraint con \
+         JOIN pg_class rel ON rel.oid = con.conrelid \
+         JOIN pg_namespace ns ON ns.oid = rel.relnamespace \
+         WHERE con.contype NOT IN ('p', 'u', 'f', 'c') \
+         AND con.conrelid != 0 AND ns.nspname = ANY($1) \
+         AND rel.relname != $2 \
+         ORDER BY rel.oid, con.conname",
+    )
+    .bind(schemas)
+    .bind(TRACKING_TABLE)
+    .fetch_all(conn)
+    .await
+    .map_err(|error| ExecutorError::Fetch(error.to_string()))?;
+
+    for row in rows {
+        if let Some(table) = tables.get_mut(&row.table_oid) {
+            table.constraints.push(Constraint::from_trusted_raw(
+                row.constraint_name,
+                row.definition,
+            ));
+        }
+    }
+    Ok(())
+}
+
 async fn attach_indexes(
     conn: &mut PgConnection,
     schemas: &[String],
@@ -526,24 +594,30 @@ async fn attach_indexes(
 ) -> Result<(), ExecutorError> {
     let rows = sqlx::query_as::<_, PgIndexRow>(
         "SELECT t.oid::int8 AS table_oid, i.relname AS index_name, ix.indisunique AS unique, \
+         am.amname AS method, pg_get_indexdef(i.oid) AS raw, \
          pg_get_expr(ix.indpred, ix.indrelid) AS predicate, \
-         array_agg(a.attname ORDER BY keys.ordinality) FILTER (WHERE keys.attnum > 0) AS columns, \
+         array_agg(a.attname ORDER BY keys.ordinality) AS columns, \
          array_agg(pg_get_indexdef(i.oid, keys.ordinality::int, true) ORDER BY keys.ordinality) AS element_defs, \
-         bool_or(keys.attnum <= 0) AS has_expression \
+         bool_or(ix.indoption[(keys.ordinality - 1)::int] <> 0) AS has_sort_options, \
+         bool_or(ix.indcollation[(keys.ordinality - 1)::int] <> COALESCE(a.attcollation, 0)) AS has_explicit_collation, \
+         bool_or(NOT opc.opcdefault) AS has_nondefault_opclass \
          FROM pg_index ix \
          JOIN pg_class t ON t.oid = ix.indrelid \
          JOIN pg_namespace n ON n.oid = t.relnamespace \
          JOIN pg_class i ON i.oid = ix.indexrelid \
+         JOIN pg_am am ON am.oid = i.relam \
          JOIN unnest(ix.indkey) WITH ORDINALITY AS keys(attnum, ordinality) ON TRUE \
          LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = keys.attnum \
+         LEFT JOIN pg_opclass opc ON opc.oid = ix.indclass[(keys.ordinality - 1)::int] \
          WHERE n.nspname = ANY($1) \
-         AND t.relname != 'gaman_migrations' \
+         AND t.relname != $2 \
          AND NOT ix.indisprimary \
          AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = ix.indexrelid) \
-         GROUP BY t.oid, i.oid, i.relname, ix.indisunique, ix.indpred, ix.indrelid \
+         GROUP BY t.oid, i.oid, i.relname, ix.indisunique, ix.indpred, ix.indrelid, am.amname \
          ORDER BY t.oid, i.relname",
     )
     .bind(schemas)
+    .bind(TRACKING_TABLE)
     .fetch_all(conn)
     .await
     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
@@ -558,26 +632,41 @@ async fn attach_indexes(
 }
 
 fn index_from_row(row: PgIndexRow) -> Result<(i64, Index), ExecutorError> {
-    if row.has_expression {
-        return Err(ExecutorError::Fetch(format!(
-            "unsupported PostgreSQL expression index '{}'; model index expressions before inspection",
-            row.index_name
-        )));
-    }
-    let columns = row.columns.unwrap_or_default();
-    if columns.is_empty() {
-        return Err(ExecutorError::Fetch(format!(
-            "unsupported PostgreSQL index '{}' with no simple columns",
-            row.index_name
-        )));
-    }
-    for (column, element_def) in columns.iter().zip(row.element_defs.iter()) {
-        if element_def != column && element_def != &quote_ident(column) {
-            return Err(ExecutorError::Fetch(format!(
-                "unsupported PostgreSQL index '{}' column metadata '{}'; operator classes, collations, and sort order are not modeled",
-                row.index_name, element_def
-            )));
+    let mut columns = Vec::new();
+    let mut unsupported = Vec::new();
+    for (column, element_def) in row.columns.iter().zip(row.element_defs.iter()) {
+        match column {
+            Some(column) if element_def == column || element_def == &quote_ident(column) => {
+                columns.push(column.clone());
+            }
+            Some(column) => {
+                columns.push(column.clone());
+                unsupported.push(format!("column metadata: {element_def}"));
+            }
+            None => {
+                columns.push(element_def.clone());
+                unsupported.push(format!("expression: {element_def}"));
+            }
         }
+    }
+    let method = (row.method != "btree").then(|| row.method.clone());
+    if let Some(method) = &method {
+        unsupported.push(format!("access method: {method}"));
+    }
+    if row.has_sort_options {
+        unsupported.push("sort or null ordering".to_string());
+    }
+    if row.has_explicit_collation {
+        unsupported.push("explicit collation".to_string());
+    }
+    if row.has_nondefault_opclass {
+        unsupported.push("operator class".to_string());
+    }
+    if !unsupported.is_empty() {
+        let mut index = Index::from_trusted_raw(row.index_name, row.raw);
+        index.unique = row.unique;
+        index.predicate = row.predicate.map(|value| normalize_index_predicate(&value));
+        return Ok((row.table_oid, index));
     }
     Ok((
         row.table_oid,
@@ -586,6 +675,7 @@ fn index_from_row(row: PgIndexRow) -> Result<(i64, Index), ExecutorError> {
             columns,
             unique: row.unique,
             predicate: row.predicate.map(|value| normalize_index_predicate(&value)),
+            opaque: OpaqueMeta::default(),
         },
     ))
 }
@@ -605,10 +695,11 @@ async fn attach_triggers(
          JOIN pg_namespace n2 ON n2.oid = p.pronamespace \
          JOIN pg_language l ON l.oid = p.prolang \
          WHERE n.nspname = ANY($1) AND NOT t.tgisinternal \
-         AND c.relname != 'gaman_migrations' \
+         AND c.relname != $2 \
          ORDER BY c.oid, t.tgname",
     )
     .bind(schemas)
+    .bind(TRACKING_TABLE)
     .fetch_all(conn)
     .await
     .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
@@ -628,6 +719,7 @@ async fn attach_triggers(
                 when: None,
                 query: None,
                 language: Some(row.language),
+                opaque: OpaqueMeta::default(),
             });
         }
     }
@@ -656,6 +748,7 @@ async fn fetch_views(
                 name: row.name,
                 schema: schema_for_output(&row.schema_name),
                 definition: row.definition,
+                opaque: OpaqueMeta::default(),
             };
             (view.qualified_name(), view)
         })
@@ -696,6 +789,7 @@ async fn fetch_functions(
                 body: row.body,
                 volatility: volatility_from_pg(row.volatility),
                 security_definer: row.security_definer,
+                opaque: OpaqueMeta::default(),
             };
             (function_key(&function), function)
         })
@@ -725,6 +819,7 @@ async fn fetch_extensions(
                 name: row.name,
                 schema: schema_for_output(&row.schema_name),
                 version: row.version,
+                opaque: OpaqueMeta::default(),
             };
             (extension.qualified_name(), extension)
         })
@@ -758,6 +853,7 @@ async fn fetch_enums(
                 name: row.name,
                 schema,
                 values: Vec::new(),
+                opaque: OpaqueMeta::default(),
             })
             .values
             .push(row.label);

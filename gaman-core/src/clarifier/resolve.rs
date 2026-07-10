@@ -329,12 +329,153 @@ impl ClarifyPlan {
             }
         }
 
+        trust_accepted_risks(&mut result, &decision_map);
         result
     }
 
     fn clarification(&self, id: &str) -> Option<&Clarification> {
         self.by_id.get(id).map(|idx| &self.clarifications[*idx])
     }
+}
+
+fn trust_accepted_risks(ops: &mut [Operation], decisions: &HashMap<&str, &Answer>) {
+    for op in ops {
+        match op {
+            Operation::CreateTable { table } if table.has_unmanaged_options() => {
+                let id = super::ids::clarification_id(&ClarificationKind::UnmanagedTableOptions {
+                    table: table.qualified_name(),
+                });
+                if accepted(decisions, &id) {
+                    table.mark_options_trusted();
+                }
+            }
+            Operation::AcknowledgeTableOptions {
+                table_name, new, ..
+            } => {
+                let id = super::ids::clarification_id(&ClarificationKind::UnmanagedTableOptions {
+                    table: table_name.clone(),
+                });
+                if accepted(decisions, &id) {
+                    new.trusted = true;
+                }
+            }
+            Operation::AddIndex {
+                table_name, index, ..
+            }
+            | Operation::DropIndex {
+                table_name, index, ..
+            } if index.is_opaque() => {
+                let id = opaque_id(
+                    crate::states::types::EntityKind::Index,
+                    &format!("{}.{}", table_name, index.name),
+                );
+                if accepted(decisions, &id) {
+                    index.mark_trusted();
+                }
+            }
+            Operation::AddConstraint {
+                table_name,
+                constraint,
+            }
+            | Operation::DropConstraint {
+                table_name,
+                constraint,
+            } if constraint.is_opaque() => {
+                let id = opaque_id(
+                    crate::states::types::EntityKind::Constraint,
+                    &format!("{}.{}", table_name, constraint.name()),
+                );
+                if accepted(decisions, &id) {
+                    constraint.mark_trusted();
+                }
+            }
+            Operation::CreateTrigger {
+                table_name,
+                trigger,
+            }
+            | Operation::DropTrigger {
+                table_name,
+                trigger,
+            }
+            | Operation::AlterTrigger {
+                table_name,
+                new: trigger,
+                ..
+            } if trigger.is_opaque() => {
+                let name = trigger.name.as_deref().unwrap_or("<unnamed>");
+                let id = opaque_id(
+                    crate::states::types::EntityKind::Trigger,
+                    &format!("{}.{}", table_name, name),
+                );
+                if accepted(decisions, &id) {
+                    trigger.mark_trusted();
+                }
+            }
+            Operation::CreateFunction { function } | Operation::DropFunction { function }
+                if function.is_opaque() =>
+            {
+                let id = opaque_id(
+                    crate::states::types::EntityKind::Function,
+                    &function.qualified_name(),
+                );
+                if accepted(decisions, &id) {
+                    function.mark_trusted();
+                }
+            }
+            Operation::AlterFunction { new, .. } if new.is_opaque() => {
+                let id = opaque_id(
+                    crate::states::types::EntityKind::Function,
+                    &new.qualified_name(),
+                );
+                if accepted(decisions, &id) {
+                    new.mark_trusted();
+                }
+            }
+            Operation::CreateView { view } | Operation::DropView { view } if view.is_opaque() => {
+                let id = opaque_id(
+                    crate::states::types::EntityKind::View,
+                    &view.qualified_name(),
+                );
+                if accepted(decisions, &id) {
+                    view.mark_trusted();
+                }
+            }
+            Operation::ReplaceView { new, .. } if new.is_opaque() => {
+                let id = opaque_id(
+                    crate::states::types::EntityKind::View,
+                    &new.qualified_name(),
+                );
+                if accepted(decisions, &id) {
+                    new.mark_trusted();
+                }
+            }
+            Operation::CreateExtension { extension } | Operation::DropExtension { extension }
+                if extension.is_opaque() =>
+            {
+                let id = opaque_id(
+                    crate::states::types::EntityKind::Extension,
+                    &extension.qualified_name(),
+                );
+                if accepted(decisions, &id) {
+                    extension.mark_trusted();
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn accepted(decisions: &HashMap<&str, &Answer>, id: &str) -> bool {
+    decisions
+        .get(id)
+        .is_some_and(|answer| matches!(**answer, Answer::AcceptRisk))
+}
+
+fn opaque_id(kind: crate::states::types::EntityKind, name: &str) -> String {
+    super::ids::clarification_id(&ClarificationKind::OpaqueEntity {
+        kind,
+        name: name.to_string(),
+    })
 }
 
 fn filter_claimed_candidates(
@@ -410,6 +551,8 @@ fn validate_answer(clar: &Clarification, answer: &Answer) -> Result<(), ClarifyE
         | (ClarificationKind::NotNullChange { .. }, Answer::NotNullNullable)
         | (ClarificationKind::NotNullChange { .. }, Answer::NotNullManual)
         | (ClarificationKind::TypeCast { .. }, Answer::TypeCastImplicit) => {}
+        (ClarificationKind::OpaqueEntity { .. }, Answer::AcceptRisk)
+        | (ClarificationKind::UnmanagedTableOptions { .. }, Answer::AcceptRisk) => {}
         _ => {
             return Err(ClarifyError::InvalidAnswer {
                 id: clar.id.clone(),

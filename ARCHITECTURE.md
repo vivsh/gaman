@@ -1,86 +1,164 @@
 # Gaman Architecture
 
-Gaman is a schema-first migration system. It models database structure as a
+Gaman is a schema-first migration system. It turns authored schema into a
 Gaman-owned `Schema`, derives migration operations from schema differences, and
-uses dialect modules to render, inspect, and verify database-specific behavior.
+checks live databases against replayed migration state.
 
 ```text
-schema input          migration planning              live database
------------           ------------------              -------------
-YAML/JSON/Rust  ->    desired Schema
-SQL CREATE DDL  ->    normalize
-                     prepare(dialect)
+schema input     -> input Schema     -> normalize + prepare(dialect)
+migration files  -> replayed Schema  -> defensive prepare(dialect)
+live database    -> inspected Schema -> normalize_inspected_schema(dialect)
 
-migration files ->    replay baseline Schema
-                     diff desired vs baseline
-                     clarify risky operations
-                     write migration
+input Schema    + replayed Schema  -> diff  -> migration operations
+replayed Schema + inspected Schema -> drift -> verification findings
 
-migration graph ->    render SQL plan
-migration graph ->    apply SQL + record rows
-
-live database   ->    inspect Schema
-replayed Schema ->    verification registry -> drift findings
+migration graph -> render SQL -> apply -> record migration rows
 ```
 
-## Core Principles
+The central design rule is explicit guarantees. Gaman does not need to model
+every database feature to be useful, but it must be honest about what it models,
+what it treats as opaque, and what `verify` can or cannot detect.
 
-- `Schema` is the internal source of truth. SQL text is input/output, not the
-  primary model.
-- Every database-specific decision belongs behind a `DialectProcessor`, parser,
-  inspector, renderer, or verification registry.
-- Parsing SQL is for loading schema state from `CREATE` statements only. Gaman
-  does not parse arbitrary migration scripts into operations.
-- Offline diffing and live verification are different contracts. Offline diff
-  compares modeled schemas to generate migrations. Live verification compares
-  only properties that the selected dialect can inspect accurately.
-- Opaque objects are not invisible. Their presence and stable metadata can be
-  verified, but body/source text is verified only when a dialect explicitly
-  registers that property.
-- Backward compatibility is not a design constraint yet. Prefer clear APIs over
-  aliases or implicit defaults.
+## Core Guarantees
+
+Gaman has two representation classes and two independent guarantee dimensions.
+
+```text
+granular entities:
+  parsed into structured Gaman fields
+  diffed structurally at the migration granularity supported for that kind
+  verified through any dialect-registered stable property comparators
+
+opaque entities:
+  known EntityKind + name + raw SQL/source where available
+  diffed as whole objects
+  verified by presence only
+```
+
+Granular guarantees are intentionally narrow:
+
+- tables and table structure;
+- columns;
+- primary keys where modeled;
+- foreign keys where modeled;
+- enum/type label changes;
+- supported type/null/default/generated/check details where registered by the
+  dialect.
+
+Everything else may be parsed internally on a best-effort basis, but its public
+migration guarantee is coarse: create, drop, or replace. A modeled non-table
+entity may still have stable properties registered for live drift even when its
+repair operation remains coarse. Its opaque form is always presence-only.
+
+Opaque does not mean unknown or ignored. It means Gaman knows the object kind and
+identity, but does not promise property-level migrations or drift detection for
+its body/source.
 
 ## Crate Boundaries
 
 ```text
 gaman-core
-  Schema model, parser boundary, dialect processors, diff, replay, clarifier,
-  migration graph, SQL plan rendering, and offline planner.
+  Schema model, parser boundary, SQL segmentation, dialect processors, diff,
+  replay, clarifier, drift contracts, repair planning, migration graph, SQL
+  plan rendering, and offline planner.
 
 gaman
-  Native CLI/runtime, file loading, executors, live inspection, verification,
-  migration application, and test harnesses.
+  CLI/runtime, config, schema file loading, executors, live catalog inspection,
+  migration application, tracking table I/O, and online test harnesses.
 ```
 
-`gaman-core` must remain usable without a live database. Live database work stays
-in the native crate and executor layer.
+`gaman-core` is database-I/O-free. Live database work belongs in the native crate
+and executor layer.
 
-## Schema Lifecycle
+## EntityKind Boundary
+
+`EntityKind` is the closed set of schema objects Gaman recognizes. Input SQL must
+classify to a known `EntityKind` and have an object name. SQL outside this set is
+rejected immediately.
+
+Allowed known kinds are currently:
+
+- table;
+- column;
+- primary key / constraint;
+- foreign key;
+- index;
+- trigger;
+- function;
+- view;
+- enum/type;
+- extension.
+
+Objects such as policies, event triggers, grants, procedures, sequences, rules,
+and materialized views are not accepted unless they are deliberately promoted
+into `EntityKind` and given lifecycle behavior.
+
+## Schema Sources
+
+Gaman has three schema sources.
 
 ```text
-load input
-  -> parse or deserialize
-  -> normalize
-  -> prepare(dialect)
-  -> diff/render/inspect/verify
+Input Schema
+  authored YAML/JSON/SQL/Rust schema
+  normalized and prepared before migration diff
+
+Replayed Schema
+  migration files replayed into Schema
+  expected to be normalized already
+  prepared defensively before drift
+
+Inspected Schema
+  live database catalog reflected into Schema
+  normalized as inspected state before drift
 ```
+
+Input schemas are the desired state. Replayed schemas are the current migration
+history state. Inspected schemas are what the live database actually contains.
+
+## YAML, JSON, Rust, And SQL Input
+
+YAML, JSON, and Rust builder input are structured Gaman schema inputs. They
+should contain only modeled structures. Raw/opaque metadata is reserved for SQL
+input lowering, inspection, and migration history replay.
+
+SQL is the escape hatch for dialect-specific definitions.
+
+```text
+SQL input
+  -> segment_sql(sql, dialect)
+  -> lexical classification: EntityKind + name
+  -> attempt full parser/lowering
+  -> modeled entity if lowering succeeds
+  -> raw opaque entity if classification succeeds but lowering fails
+  -> error if outside EntityKind or missing name
+```
+
+A SQL statement is therefore always either fully modeled or raw opaque. There is
+no partial entity state.
+
+Raw SQL created from input is untrusted until the clarifier accepts it. Raw SQL
+created by inspection or replay is trusted because the database or migration
+history has already accepted it. Authored YAML, JSON, and Rust builders cannot
+set raw source, trust, fingerprints, or unmanaged table option metadata.
+
+## Normalization And Preparation
 
 `normalize` performs dialect-neutral structural cleanup:
 
-- stable map keys and generated names;
+- stable names and map keys;
 - table-owned child attachment;
-- inline column references/checks lowered into modeled child metadata;
+- inline column references/checks lowered into modeled table metadata;
 - schema consistency that does not require dialect-specific aliases.
 
 `prepare(dialect)` performs dialect-specific lifecycle work:
 
-- canonical type aliases;
+- type normalization/canonicalization;
 - dialect validation;
-- migration validation where applicable;
-- dialect-specific schema constraints.
+- migration validation;
+- dialect-specific capability checks.
 
-Parsing does not canonicalize dialect type aliases. Parser output is normalized;
-schema loading prepares it with the explicit dialect supplied by the caller.
+Parser output does not choose a default dialect. Every schema load path supplies
+an explicit `Dialect`.
 
 ## Parser Boundary
 
@@ -89,40 +167,26 @@ The `parsers` module is the only SQL parsing boundary.
 ```text
 SQL file
   -> segments::segment_sql(sql, dialect)
-  -> sqlparser parses each segment privately
-  -> dialect lowerer accepts modeled CREATE statements
+  -> per-segment classification
+  -> private sqlparser parse when useful
+  -> dialect lowerer
   -> Schema
 ```
 
 Rules:
 
-- Public parser APIs expose only Gaman-owned types.
-- `sqlparser` AST, tokenizer, parser errors, and dialect types do not escape the
-  `parsers` module.
-- `parse_sql(sql, dialect)` requires an explicit `Dialect`; there is no parser
-  default dialect.
-- Only `CREATE` statements for modeled `EntityKind` values are lowered.
-- `ALTER`, `DROP`, DML, transactions, grants, policies, and other statements are
-  not schema-loading inputs.
-- Unsupported parsed statements return structured Gaman parser errors.
-
-Modeled parser targets are:
-
-- `Table`, including columns, primary keys, unique/check constraints, generated
-  columns, and foreign keys;
-- `Index`, including unique and partial indexes where modeled;
-- `Trigger`;
-- `Function` where the dialect can lower it;
-- `View`;
-- PostgreSQL `Enum` and `Extension`.
-
-SQLite lowers its supported subset. MySQL currently has segmentation and dialect
-selection only; schema lowering/rendering/validation remain unsupported.
+- public parser APIs expose only Gaman-owned types;
+- `sqlparser` AST/tokenizer/parser types do not escape `parsers`;
+- schema loading accepts `CREATE` statements for known `EntityKind` values only;
+- `ALTER`, `DROP`, DML, transactions, grants, policies, event triggers, and
+  unclassified statements are not schema input;
+- if a known `CREATE` cannot be lowered, SQL input may preserve it as an
+  untrusted raw opaque entity.
 
 ## SQL Segmentation
 
-`parsers::segments` splits SQL source into statement slices before any AST
-parsing. It is a boundary detector, not a parser.
+`parsers::segments` splits SQL source before AST parsing. It is a boundary
+detector, not a schema lowerer.
 
 `SqlSegment` carries:
 
@@ -132,29 +196,93 @@ parsing. It is a boundary detector, not a parser.
 - source line/column range;
 - optional lexical statement classification.
 
-Segmentation preserves leading whitespace and comments as part of the following
-statement. Terminators and MySQL `DELIMITER` directives are excluded from the
-returned slice. The invariant is:
+The segment invariant is:
 
 ```text
 segment.sql == &source[segment.start_byte..segment.end_byte]
 ```
 
-The segmenter is intentionally independent of downstream parsing. It tracks
-strings, quoted identifiers, comments, dollar quotes, bracket depth, SQLite
-trigger bodies, PostgreSQL dollar bodies, and MySQL custom delimiters so parser
-errors can be reported against the original source segment.
+Segmentation preserves leading whitespace and comments with the following
+statement. Terminators and MySQL `DELIMITER` directives are excluded from
+returned SQL slices.
 
-Classification is lexical and conservative:
+Classification is conservative and lexical:
 
 ```text
-DDL(EntityKind) | DML(Select | Insert | Update | Delete) | None
+DDL(EntityKind + object name) | DML(Select | Insert | Update | Delete) | None
 ```
 
-It identifies broad-stroke top-level statement intent and object name when it is
-confident. It does not validate SQL syntax.
+It identifies broad intent and object identity. It does not validate SQL syntax.
 
-## Migration Model
+## Schema Model
+
+`Schema` remains the central model. Entity structs such as `Table`, `Column`,
+`Index`, `FunctionDef`, `TriggerDef`, and `ViewDef` remain the working shapes for
+diff, replay, rendering, inspection, and drift.
+
+Internally, entity structs may carry skipped metadata for raw/opaque lifecycle
+state. That metadata is not user schema syntax and must not be deserializable
+from YAML/JSON input.
+
+The invariant is:
+
+```text
+modeled entity:
+  structured fields are authoritative
+
+opaque entity:
+  kind + name are authoritative
+  raw SQL/source may be available for create/replace
+  structured fields are not compared semantically
+```
+
+## Diff
+
+Diff compares input schema against replayed schema to produce migrations.
+
+```text
+input Schema + replayed Schema -> DiffEngine -> operations
+```
+
+Granular entities use structural diff. For example, column add/drop/rename,
+type/null/default changes, and enum label changes can produce fine-grained
+operations.
+
+Opaque entities use whole-object diff:
+
+- missing opaque object -> create raw object;
+- removed opaque object -> drop raw object;
+- raw-vs-raw with equal canonical token hash -> no operation;
+- raw-vs-raw with different canonical token hash -> clarification before
+  replace/drop-create;
+- raw-vs-modeled -> clarification before choosing a coarse operation.
+
+The token fingerprint is a versioned SHA-256 digest of length-delimited lexical
+tokens. It ignores whitespace and comments outside protected regions, preserves
+literal and quoted content, and does not attempt semantic SQL equivalence.
+
+Unparsed table modifiers are tracked separately from granular table/column
+structure. Table/column diff remains granular, but changes to unparsed table
+modifiers require clarification to ignore because Gaman cannot safely generate a
+fine-grained operation for them yet.
+
+## Clarifier
+
+The `clarifier` module handles choices that are unsafe or ambiguous.
+
+It owns interaction for:
+
+- rename vs drop/create choices;
+- destructive changes;
+- unknown or dialect-sensitive types;
+- untrusted raw opaque entities;
+- opaque definition changes that would require coarse replacement;
+- unparsed table modifier changes that Gaman cannot migrate granularly.
+
+Accepted raw entities become trusted in migration history. Rejected raw entities
+block migration generation.
+
+## Migration Model And Replay
 
 A migration is an append-only file containing:
 
@@ -164,109 +292,72 @@ A migration is an append-only file containing:
 - atomic flag;
 - optional description/metadata.
 
-The migration graph determines ordering and dependency relationships. Replay
-uses migration operations to reconstruct schema state without connecting to a
-live database.
+`ReplayEngine` reconstructs schema state from migration operations without a
+live database. It also provides source metadata used for dependency calculation.
 
-`ReplayEngine` owns shared replay behavior:
+Replay treats accepted raw opaque operations as trusted because they already
+entered migration history.
 
-- replay a graph/order into `Schema`;
-- apply one migration with contextual replay errors;
-- expose source metadata such as last migration per namespace and entity source
-  mapping for dependency calculation.
+## SQL Rendering
 
-## Offline Planning
+SQL rendering is dialect-owned. Dialect processors render operations into SQL and
+validate capability limits.
 
-The offline planner creates new migrations from desired schema state.
+Granular operations render structured SQL. Opaque operations render raw SQL for
+create/replace when raw source is available. Drops for opaque objects are
+dialect-specific and supported only when Gaman can safely identify the object.
 
-```text
-current migration graph
-  -> replay baseline Schema
-  -> load desired Schema
-  -> diff baseline vs desired
-  -> Clarifier.process(raw operations)
-  -> resolved operations or pending clarifications
-  -> write migration file
-```
-
-The diff engine remains generic over schemas. It does not know about live
-inspection policy or verification registries.
-
-## Clarifier
-
-The `clarifier` module handles operation-risk clarification. It turns ambiguous
-or risky raw operations into either resolved operations or pending
-clarifications.
-
-It owns the interaction model for:
-
-- rename vs drop/create choices;
-- destructive changes;
-- unknown or dialect-sensitive types;
-- user decisions and answers.
-
-Clarification ids remain stable fixture-friendly strings such as
-`rename_col:...`, `notnull_add:...`, and `unknown_type:...`.
-
-## SQL Rendering And Plans
-
-SQL rendering is dialect-owned. `SqlPlanRenderer` renders migration operations
-for a selected dialect without connecting to a database.
-
-```text
-migration graph/order
-  -> replay baseline as needed
-  -> render operation SQL using DialectProcessor
-  -> SQL plan
-```
-
-Rendering must not duplicate parsing or inspection logic. Dialect processors own
-SQL syntax, type names, capability checks, and migration validation.
+`Operation::Statement` remains for unmanaged arbitrary SQL and is not the primary
+representation for known raw `EntityKind` objects.
 
 ## Native Runtime
 
-The native crate adds live database behavior:
+The native crate adds live database behavior.
 
 ```text
 Config + Environment
   -> Executor
   -> Migrator
-  -> apply / inspect / verify
+  -> apply / inspect / verify / repair
 ```
 
-Executors own database I/O:
+Executors own:
 
-- connection handling;
-- migration lock behavior where supported;
-- execution of rendered SQL;
-- migration tracking table reads/writes;
+- connections;
+- SQL execution;
+- migration locks;
+- tracking table reads/writes;
 - catalog queries used by inspection.
 
-The tracking table records applied migrations. A migration is recorded only
-after its operations succeed. Atomic migrations run inside one transaction where
-the dialect and executor support it.
+The tracking table records applied migrations only after successful application.
+Atomic migrations run inside a transaction where supported.
 
 ## Inspection
 
-The `inspection` module owns live reflection:
+Inspection reflects a live database into `Schema`.
 
 ```text
-live database catalog -> reflected Schema -> prepare(dialect)
+live catalog -> inspected Schema
 ```
 
-`inspect_db` uses inspection directly. Its contract is onboarding fidelity: emit
-the most useful Gaman schema the dialect can recover from the database.
+Inspection is onboarding-oriented and should be as faithful as possible. For
+known `EntityKind` objects, inspection should not fail merely because the object
+contains unmodeled syntax.
 
-Inspection should:
+Inspection rules:
 
-- preserve useful catalog metadata;
-- preserve opaque source text when the database exposes it;
-- canonicalize only when it improves stable output without losing meaning;
-- avoid inventing fake semantics for unsupported or lossy catalog facts;
-- expose diagnostics internally for lossy reflection cases.
+- if the object is fully recoverable as modeled schema, emit modeled fields;
+- if only kind, name, and raw/source are recoverable, emit trusted opaque entity;
+- preserve source text where the database exposes it;
+- avoid inventing fake structured semantics;
+- never silently coerce advanced opaque details into modeled fields.
 
-PostgreSQL inspection canonicalizes owned sequence-backed integer columns into
-serial-like types only when catalog dependencies prove sequence ownership:
+For example, an expression index should not put `lower(email)` into `columns`.
+It should be represented as a known opaque index with name and raw source where
+available.
+
+PostgreSQL inspection may canonicalize owned sequence-backed integer columns into
+serial-like types only when catalog dependency proves ownership:
 
 ```text
 integer + owned nextval  -> serial
@@ -274,94 +365,85 @@ bigint + owned nextval   -> bigserial
 smallint + owned nextval -> smallserial
 ```
 
-Foreign key `on_delete` is modeled, parsed, rendered, inspected, and verified
-when present.
+## Drift And Verify
 
-## Verification
-
-The `verification` module owns drift detection for live databases.
+Drift compares replayed schema against inspected schema.
 
 ```text
-replayed Schema
-live inspected Schema
-  -> scope to owned/requested objects
-  -> dialect verification registry
-  -> property comparators
+replayed Schema + inspected Schema
+  -> dialect drift registry
   -> VerificationReport
 ```
 
-`verify_db` does not compare full schemas with `PartialEq`. It uses a
-static dialect-specific registry of properties that can be inspected accurately
-and deterministically.
+Drift is semantic and property-based. It does not compare full schemas with
+`PartialEq`. Each dialect owns a registry of properties that can be inspected
+accurately and deterministically.
 
-A `VerificationReport` contains:
+Granular drift detects registered property changes, such as column type,
+nullability, default, foreign-key target, or enum values.
 
-- `DriftFinding` values with operation, entity kind, entity identity, property,
-  expected value, actual value, and optional note;
-- repair-oriented `Operation` values for existing callers.
+Opaque drift is intentionally limited:
 
-CLI output is actionable:
+- expected opaque object present -> no drift;
+- expected opaque object missing -> drift;
+- live-only opaque object outside ownership -> ignored;
+- opaque raw/body/source changed in place -> not detected;
+- opaque raw/body/source text is never a live drift input unless explicitly
+  promoted into a registered property later.
+
+This is an explicit guarantee boundary. `verify` must not claim source/body drift
+for opaque objects because database reflection may rewrite SQL and because
+semantic equivalence is dialect-specific.
+
+## Repair
+
+Repair is local drift recovery, not migration authoring.
 
 ```text
-drift: alter_column preferences.posts_per_page
-  default: expected <none>, found 10
+VerificationReport
+  -> repair plan
+  -> one-off SQL
+  -> optional apply
+  -> verify again
 ```
 
-Unregistered properties are outside the verification contract and must not
-produce drift.
+Repair may fix granular drift where operations are safe and renderable. For
+opaque objects, repair can only handle missing owned objects when trusted raw
+source is available. It cannot repair changed opaque definitions because drift
+does not assert such changes.
 
-## Verified Properties
+Repair never writes migration files and never records tracking-table rows.
 
-PostgreSQL registry:
+## Drift Contract
+
+The drift registry is the user-facing verification contract. Unregistered
+properties are ignored by `verify`.
+
+PostgreSQL currently verifies stable modeled properties such as:
 
 | Entity | Verified properties |
 |---|---|
 | Table | name, schema, owned presence |
 | Column | name, type, nullable, default, primary_key, references, check, generated |
 | Primary key | name, ordered columns |
-| Foreign key | name, source columns, target table, target columns, on_delete |
-| Index | name, ordered columns, unique, predicate where stable |
-| Constraint | kind and stable definition |
-| Trigger | name, timing, events, scope, function_name, language |
-| Function | name, schema, arguments, returns, language, volatility, security_definer |
-| View | name, schema |
+| Foreign key | name, source columns, target table, target columns, on_delete, on_update |
 | Enum | name, schema, ordered values |
-| Extension | name, schema, version |
+| Opaque entities | owned presence only |
 
-SQLite registry:
+SQLite verifies its stable modeled subset:
 
 | Entity | Verified properties |
 |---|---|
 | Table | name, owned presence |
 | Column | name, type/affinity, nullable, default, primary_key, generated |
 | Primary key | ordered columns |
-| Foreign key | name, source columns, target table, target columns, on_delete |
-| Index | name, ordered columns, unique, predicate where stable |
-| Constraint | stable definition |
-| Trigger | name, timing, events, scope, language |
-| View | name |
-| Function, Enum, Extension | none |
+| Foreign key | name, source columns, target table, target columns, on_delete, on_update |
+| Opaque entities | owned presence only |
 
-MySQL verification is unsupported until MySQL schema lowering, rendering,
-inspection, and execution exist.
-
-## Opaque Objects
-
-Opaque objects include functions, views, triggers, and raw SQL-like bodies whose
-semantic equivalence cannot be reliably proven from reflected text.
-
-Rules:
-
-- Missing owned opaque objects produce drift.
-- Stable registered metadata changes produce drift.
-- Body/source-only changes do not produce live drift unless the dialect registry
-  explicitly verifies that body/source property.
-- Live-only opaque objects outside replay ownership are ignored.
-- `inspect_db` may export source text for onboarding even when `verify_db`
-  ignores it.
-
-Offline diff may compare opaque source text for migration generation. Live
-verification uses the registry contract instead.
+Modeled indexes, functions, triggers, views, constraints, and extensions may
+have stable registered properties even though their migration repair is coarse.
+When any of these entities is represented as opaque raw SQL, verification is
+presence-only regardless of which properties its modeled form registers.
 
 ## Dialect Boundary
 
@@ -371,62 +453,65 @@ A dialect owns:
 - type normalization and canonicalization;
 - schema validation;
 - migration validation;
-- parser lowering behavior;
+- parser lowering;
 - inspection interpretation;
-- verification registry and comparators;
+- drift registry and comparators;
 - capability errors for unsupported features.
 
-PostgreSQL is the primary dialect. SQLite supports a smaller feature set and may
-need table rebuilds for some changes. MySQL is currently a dialect-selection and
-segmentation stub, not a schema lifecycle implementation.
+PostgreSQL is the primary dialect. SQLite supports a smaller lifecycle and may
+need table rebuilds for some changes. MySQL currently has segmentation and
+dialect selection, but not schema lowering, rendering, inspection, or drift.
 
-## File Loading And CLI Inputs
+## CLI Lifecycle
 
-Schema loading is dialect-explicit:
+The CLI command model follows the schema lifecycle:
 
 ```text
-from_yaml_str(content, dialect)
-from_json_str(content, dialect)
-from_sql_str(content, dialect)
-load_schema_file(path, dialect)
+gaman inspect   # database -> schema
+gaman make      # schema -> migration
+gaman status    # migration application status
+gaman show      # migration artifact inspection
+gaman sql       # migration -> SQL
+gaman apply     # apply pending migrations
+gaman verify    # replayed schema vs database
+gaman repair    # one-off drift repair
+gaman config    # resolved configuration
 ```
 
-A schema path may be a file or directory. SQL/YAML/JSON inputs all prepare with
-the explicit dialect supplied by configuration or caller.
-
-The CLI loads `.env` files only when requested with `--env`. Environment
-variables remain configuration overrides, not hidden unconditional input.
+`.env` files are loaded only when requested with `--env`. Environment variables
+are configuration overrides, not hidden unconditional input.
 
 ## Testing And Evidence
 
-The test suite is layered by lifecycle boundary:
+Testing follows lifecycle boundaries:
 
-- core unit tests for schema, diff, replay, parser, segmenter, and dialect code;
-- parser YAML fixtures for accepted SQL-to-`Schema` lowering evidence;
-- offline fixtures for migration planning, clarification, and SQL rendering;
-- online fixtures for live apply, inspect, and verify behavior;
-- support matrix and results files for recorded feature evidence.
+- core unit tests for schema, diff, replay, parser, segmenter, dialects, and
+  drift;
+- parser YAML fixtures for SQL segmentation/classification/lowering evidence;
+- offline fixtures for planning, clarification, diff, and rendering;
+- online fixtures for live apply, inspect, verify, and repair behavior;
+- generated evidence docs and result files for supported behavior claims.
 
 Important result files include:
 
 - `results/parser-results.yaml`;
 - `results/online-results.yaml`.
 
-Parser fixtures track what SQL is successfully lowered into Gaman entities.
-Online fixtures track what live dialect behavior is applied, inspected, and
-verified.
+README support claims should be backed by fixture evidence, not by aspirational
+implementation notes.
 
 ## Current Limits
 
-- Parser loading accepts modeled `CREATE` statements only.
-- MySQL schema lowering, rendering, validation, inspection, and verification are
-  not implemented.
-- Foreign key `on_update`, match type, deferrability, and validation status are
-  not modeled yet.
-- Function bodies, view definitions, trigger bodies, and trigger `WHEN` clauses
-  are not live verification inputs unless promoted into a dialect registry.
-- Primary-key mutation generation is limited and may require manual/raw SQL for
-  some cases.
-- Exact round-trip equality between input SQL and `inspect_db` output is not a
-  goal. Canonical schema equivalence under the verification registry is the goal
-  for drift detection.
+- YAML/JSON input is structured only; raw/opaque metadata is not part of normal
+  authored schema syntax.
+- SQL input accepts only `CREATE` statements for known `EntityKind` values.
+- Opaque live drift detects presence only, not definition changes.
+- Opaque migration changes are coarse and require clarification before
+  replacement.
+- MySQL schema lifecycle support is not implemented.
+- Foreign-key match type, deferrability, and validation status are not modeled.
+- Function bodies, view definitions, trigger bodies, advanced index semantics,
+  and table modifiers are not granular drift inputs unless promoted into modeled
+  registry properties later.
+- Exact round-trip equality between input SQL and `inspect` output is not a
+  goal. Honest guarantees and deterministic supported behavior are the goal.

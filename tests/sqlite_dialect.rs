@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use gaman::core::{
     BoxFuture, Dialect, DialectError, Environment, EnvironmentError, EnvironmentExecutor, Executor,
-    Migrator, SqliteExecutor, VecAdapter,
+    Migrator, SqliteExecutor, TRACKING_TABLE, VecAdapter,
 };
 use gaman::schema::{
     Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, Operation,
@@ -108,12 +108,14 @@ fn table(name: &str) -> Table {
             columns: vec!["id".to_string()],
             unique: false,
             predicate: None,
+            opaque: Default::default(),
         }],
         constraints: vec![Constraint::Check {
             name: format!("{name}_id_check"),
             expression: "id > 0".to_string(),
         }],
         triggers: vec![],
+        options: Default::default(),
     }
 }
 
@@ -171,6 +173,7 @@ fn create_table_composite_primary_key() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
 
     let sql = operation_to_sql(Operation::CreateTable { table }).unwrap();
@@ -204,6 +207,7 @@ fn create_table_composite_foreign_key() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
 
     let sql = operation_to_sql(Operation::CreateTable { table }).unwrap();
@@ -230,6 +234,7 @@ fn create_query_trigger_sqlite() {
         when: None,
         query: Some("INSERT INTO audit_log(order_id) VALUES (NEW.id);".to_string()),
         language: None,
+        opaque: Default::default(),
     };
 
     let sql = operation_to_sql(Operation::CreateTrigger {
@@ -262,6 +267,7 @@ fn sqlite_trigger_function_name_is_unsupported() {
         when: None,
         query: None,
         language: None,
+        opaque: Default::default(),
     };
 
     let err = operation_to_sql(Operation::CreateTrigger {
@@ -284,6 +290,7 @@ fn sqlite_trigger_language_is_unsupported() {
         when: None,
         query: Some("INSERT INTO audit_log(order_id) VALUES (NEW.id);".to_string()),
         language: Some("plpgsql".to_string()),
+        opaque: Default::default(),
     };
 
     let err = operation_to_sql(Operation::CreateTrigger {
@@ -306,6 +313,7 @@ fn sqlite_trigger_truncate_is_unsupported() {
         when: None,
         query: Some("INSERT INTO audit_log(action) VALUES ('truncate');".to_string()),
         language: None,
+        opaque: Default::default(),
     };
 
     let err = operation_to_sql(Operation::CreateTrigger {
@@ -328,6 +336,7 @@ fn sqlite_renders_alter_trigger_as_create_trigger() {
         when: None,
         query: Some("INSERT INTO audit_log(action) VALUES ('old');".to_string()),
         language: None,
+        opaque: Default::default(),
     };
     let new = TriggerDef {
         name: Some("orders_insert_after_trg".to_string()),
@@ -338,6 +347,7 @@ fn sqlite_renders_alter_trigger_as_create_trigger() {
         when: None,
         query: Some("INSERT INTO audit_log(action) VALUES ('new');".to_string()),
         language: None,
+        opaque: Default::default(),
     };
 
     let sql = operation_to_sql(Operation::AlterTrigger {
@@ -367,6 +377,7 @@ fn sqlite_renders_drop_trigger() {
         when: None,
         query: Some("INSERT INTO audit_log(order_id) VALUES (OLD.id);".to_string()),
         language: None,
+        opaque: Default::default(),
     };
 
     let sql = operation_to_sql(Operation::DropTrigger {
@@ -447,6 +458,7 @@ fn sqlite_unsupported_function(name: &str) -> FunctionDef {
         body: "SELECT 1".to_string(),
         volatility: Volatility::Volatile,
         security_definer: false,
+        opaque: Default::default(),
     }
 }
 
@@ -455,6 +467,7 @@ fn sqlite_unsupported_enum() -> EnumDef {
         name: "status".to_string(),
         schema: None,
         values: vec!["draft".to_string(), "published".to_string()],
+        opaque: Default::default(),
     }
 }
 
@@ -467,6 +480,7 @@ fn sqlite_rejects_unsupported_opaque_operations() {
         name: "pgcrypto".to_string(),
         schema: None,
         version: None,
+        opaque: Default::default(),
     };
     let operations = vec![
         Operation::CreateFunction {
@@ -640,6 +654,7 @@ fn sqlite_renders_add_index() {
             columns: vec!["email".to_string()],
             unique: false,
             predicate: None,
+            opaque: Default::default(),
         },
         concurrent: false,
     })
@@ -661,6 +676,7 @@ fn sqlite_renders_drop_index() {
             columns: vec!["email".to_string()],
             unique: false,
             predicate: None,
+            opaque: Default::default(),
         },
         concurrent: false,
     })
@@ -688,11 +704,13 @@ fn sqlite_renders_view_operations() {
         name: "active_users".to_string(),
         schema: None,
         definition: "SELECT id FROM users".to_string(),
+        opaque: Default::default(),
     };
     let new = ViewDef {
         name: "active_users".to_string(),
         schema: None,
         definition: "SELECT id FROM users WHERE active = 1".to_string(),
+        opaque: Default::default(),
     };
 
     assert_eq!(
@@ -723,6 +741,7 @@ fn sqlite_errors_for_unsupported_extension_operations() {
             name: "pgcrypto".to_string(),
             schema: None,
             version: None,
+            opaque: Default::default(),
         },
     })
     .unwrap_err();
@@ -772,9 +791,11 @@ fn sqlite_rebuilds_drop_column_and_recreates_indexes() {
             columns: vec!["username".to_string()],
             unique: false,
             predicate: None,
+            opaque: Default::default(),
         }],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let mut target_users = users.clone();
     target_users.columns.pop();
@@ -831,6 +852,7 @@ fn sqlite_batches_same_table_rebuild_ops() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let mut new_age = col("age", "integer", false);
     new_age.default = Some("0".to_string());
@@ -892,6 +914,7 @@ fn sqlite_rebuilds_foreign_key_and_unique_constraint_changes() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let users = Table {
         name: "users".to_string(),
@@ -902,6 +925,7 @@ fn sqlite_rebuilds_foreign_key_and_unique_constraint_changes() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
 
     let sql = sql_for(vec![
@@ -953,6 +977,7 @@ fn sqlite_rebuild_adds_generated_column_without_copying_it() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let mut slug = col("slug", "text", false);
     slug.generated = Some("lower(name)".to_string());
@@ -990,6 +1015,7 @@ fn sqlite_rebuild_rejects_unsafe_cases() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
 
     let mut new_id = pk_col("id");
@@ -1113,6 +1139,7 @@ fn sqlite_rebuild_rejects_temp_collision_triggers_and_views() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let temp = Table {
         name: "__gaman_rebuild_users".to_string(),
@@ -1123,6 +1150,7 @@ fn sqlite_rebuild_rejects_temp_collision_triggers_and_views() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let fk_temp = Table {
         name: "__gaman_fk_check_users".to_string(),
@@ -1133,6 +1161,7 @@ fn sqlite_rebuild_rejects_temp_collision_triggers_and_views() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let drop_name = Operation::DropColumn {
         table_name: "users".to_string(),
@@ -1182,6 +1211,7 @@ fn sqlite_rebuild_rejects_temp_collision_triggers_and_views() {
         when: None,
         query: Some("INSERT INTO audit_log(user_id) VALUES (NEW.id);".to_string()),
         language: None,
+        opaque: Default::default(),
     });
     let err = sql_for_result(vec![
         migration(
@@ -1205,6 +1235,7 @@ fn sqlite_rebuild_rejects_temp_collision_triggers_and_views() {
                     name: "active_users".to_string(),
                     schema: None,
                     definition: r#"SELECT id FROM "users""#.to_string(),
+                    opaque: Default::default(),
                 },
             }],
         ),
@@ -1225,6 +1256,7 @@ fn sqlite_dependent_view_detection_is_identifier_aware() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let drop_name = Operation::DropColumn {
         table_name: "users".to_string(),
@@ -1246,6 +1278,7 @@ fn sqlite_dependent_view_detection_is_identifier_aware() {
                     name: "user_summary".to_string(),
                     schema: None,
                     definition: r#"SELECT 1 AS users_count"#.to_string(),
+                    opaque: Default::default(),
                 },
             }],
         ),
@@ -1265,6 +1298,7 @@ fn sqlite_dependent_view_detection_is_identifier_aware() {
                     name: "quoted_users".to_string(),
                     schema: None,
                     definition: r#"SELECT id FROM "users""#.to_string(),
+                    opaque: Default::default(),
                 },
             }],
         ),
@@ -1294,6 +1328,7 @@ async fn sqlite_rebuild_live_preserves_data_and_constraints() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let mut new_age = col("age", "integer", false);
     new_age.default = Some("0".to_string());
@@ -1337,7 +1372,7 @@ async fn sqlite_rebuild_live_preserves_data_and_constraints() {
     let migrator = migrator(migrations);
     let mut executor = sqlite_executor().await;
     migrator
-        .migrate_with(&mut executor, None, false)
+        .apply_with(&mut executor, None, false)
         .await
         .unwrap();
 
@@ -1366,6 +1401,7 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let users = Table {
         name: "users".to_string(),
@@ -1378,9 +1414,11 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
             columns: vec!["account_id".to_string()],
             unique: false,
             predicate: None,
+            opaque: Default::default(),
         }],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let fk = ForeignKey::single("users_account_id_fkey", "account_id", "accounts", "id");
 
@@ -1407,7 +1445,7 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
     let migrator = migrator(migrations);
     let mut executor = sqlite_executor().await;
     migrator
-        .migrate_with(&mut executor, None, false)
+        .apply_with(&mut executor, None, false)
         .await
         .unwrap();
     executor
@@ -1425,7 +1463,7 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
     assert!(err.to_string().contains("FOREIGN KEY"));
 
     migrator
-        .migrate_with(&mut executor, Some("0002_create_users"), false)
+        .apply_with(&mut executor, Some("0002_create_users"), false)
         .await
         .unwrap();
     executor
@@ -1454,6 +1492,7 @@ async fn sqlite_rebuild_live_preserves_child_rows_when_parent_is_rebuilt() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let users = Table {
         name: "users".to_string(),
@@ -1469,12 +1508,14 @@ async fn sqlite_rebuild_live_preserves_child_rows_when_parent_is_rebuilt() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     accounts_v1.indexes.push(Index {
         name: "accounts_id_idx".to_string(),
         columns: vec!["id".to_string()],
         unique: false,
         predicate: None,
+        opaque: Default::default(),
     });
 
     let migrations = vec![
@@ -1501,7 +1542,7 @@ async fn sqlite_rebuild_live_preserves_child_rows_when_parent_is_rebuilt() {
     let migrator = migrator(migrations);
     let mut executor = sqlite_executor().await;
     migrator
-        .migrate_with(&mut executor, Some("0002_create_users"), false)
+        .apply_with(&mut executor, Some("0002_create_users"), false)
         .await
         .unwrap();
     executor
@@ -1514,7 +1555,7 @@ async fn sqlite_rebuild_live_preserves_child_rows_when_parent_is_rebuilt() {
         .unwrap();
 
     let err = migrator
-        .migrate_with(&mut executor, None, false)
+        .apply_with(&mut executor, None, false)
         .await
         .unwrap_err();
 
@@ -1550,6 +1591,7 @@ async fn sqlite_rebuild_live_fails_foreign_key_check_for_existing_bad_data() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let users = Table {
         name: "users".to_string(),
@@ -1560,6 +1602,7 @@ async fn sqlite_rebuild_live_fails_foreign_key_check_for_existing_bad_data() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let migrations = vec![
         migration(
@@ -1597,7 +1640,7 @@ async fn sqlite_rebuild_live_fails_foreign_key_check_for_existing_bad_data() {
     let migrator = migrator(migrations);
     let mut executor = sqlite_executor().await;
     let err = migrator
-        .migrate_with(&mut executor, None, false)
+        .apply_with(&mut executor, None, false)
         .await
         .unwrap_err();
 
@@ -1692,6 +1735,7 @@ async fn sqlite_rebuild_uses_existing_migrator_transaction_and_record_flow() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let migrations = vec![
         migration(
@@ -1712,7 +1756,7 @@ async fn sqlite_rebuild_uses_existing_migrator_transaction_and_record_flow() {
     let mut executor = RecordingExecutor::default();
 
     migrator
-        .migrate_with(&mut executor, None, false)
+        .apply_with(&mut executor, None, false)
         .await
         .unwrap();
 
@@ -1729,7 +1773,7 @@ async fn sqlite_rebuild_uses_existing_migrator_transaction_and_record_flow() {
     let record_pos = executor
         .log
         .iter()
-        .rposition(|entry| entry.contains("INSERT INTO gaman_migrations"))
+        .rposition(|entry| entry.contains(&format!("INSERT INTO {TRACKING_TABLE}")))
         .unwrap();
     let commit_pos = executor
         .log
@@ -1758,6 +1802,7 @@ async fn sqlite_rebuild_failure_rolls_back_without_recording_and_releases_lock()
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let migrations = vec![
         migration(
@@ -1778,19 +1823,16 @@ async fn sqlite_rebuild_failure_rolls_back_without_recording_and_releases_lock()
     let mut executor = RecordingExecutor::failing(r#"INSERT INTO "__gaman_rebuild_users""#);
 
     let err = migrator
-        .migrate_with(&mut executor, None, false)
+        .apply_with(&mut executor, None, false)
         .await
         .unwrap_err();
 
     assert!(err.to_string().contains("forced failure"));
     assert!(executor.log.iter().any(|entry| entry == "ROLLBACK"));
-    assert!(
-        !executor
-            .log
-            .iter()
-            .any(|entry| entry.contains("INSERT INTO gaman_migrations")
-                && entry.contains("0002_drop_email"))
-    );
+    assert!(!executor.log.iter().any(|entry| {
+        entry.contains(&format!("INSERT INTO {TRACKING_TABLE}"))
+            && entry.contains("0002_drop_email")
+    }));
     assert_eq!(executor.lock_count, 0);
     assert_eq!(
         executor.log.last().map(String::as_str),
@@ -1809,6 +1851,7 @@ async fn sqlite_rebuild_render_failure_preflights_before_install_lock_or_begin()
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let migrations = vec![
         migration(
@@ -1830,7 +1873,7 @@ async fn sqlite_rebuild_render_failure_preflights_before_install_lock_or_begin()
     let mut executor = RecordingExecutor::default();
 
     let err = migrator
-        .migrate_with(&mut executor, None, false)
+        .apply_with(&mut executor, None, false)
         .await
         .unwrap_err();
 

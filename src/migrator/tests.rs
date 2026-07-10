@@ -85,6 +85,7 @@ fn simple_table(name: &str, cols: &[&str]) -> Table {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     }
 }
 
@@ -121,6 +122,7 @@ fn verify_function(name: &str) -> FunctionDef {
         body: "SELECT 1".to_string(),
         volatility: Volatility::Volatile,
         security_definer: false,
+        opaque: Default::default(),
     }
 }
 
@@ -134,6 +136,7 @@ fn verify_trigger(name: &str, function_name: &str) -> TriggerDef {
         when: None,
         query: None,
         language: None,
+        opaque: Default::default(),
     }
 }
 
@@ -253,14 +256,14 @@ async fn live_apply_executes_same_operation_sql_as_sql_migrate() {
     let mut executor = RecordingExecutor::empty();
 
     migrator
-        .migrate_with(&mut executor, None, false)
+        .apply_with(&mut executor, None, false)
         .await
         .unwrap();
 
     let operation_sql: Vec<String> = executor
         .executed
         .into_iter()
-        .filter(|sql| !sql.contains("gaman_migrations"))
+        .filter(|sql| !sql.contains(crate::tracking::TRACKING_TABLE))
         .collect();
     assert_eq!(operation_sql, expected);
 }
@@ -287,8 +290,8 @@ fn migrator_and_live_futures_are_send() {
     assert_send_sync::<Migrator>();
 
     let migrator = migrator_from(vec![]);
-    assert_send(migrator.migrate(None, false));
-    assert_send(migrator.inspect_db(&[]));
+    assert_send(migrator.apply(None, false));
+    assert_send(migrator.inspect(&[]));
     assert_send(migrator.verify("public"));
 }
 
@@ -296,7 +299,7 @@ fn migrator_and_live_futures_are_send() {
 #[tokio::test]
 async fn migrate_future_can_be_spawned() {
     let migrator = migrator_from(vec![]);
-    let result = tokio::spawn(async move { migrator.migrate(None, false).await })
+    let result = tokio::spawn(async move { migrator.apply(None, false).await })
         .await
         .expect("spawned migration task should not panic");
 
@@ -492,7 +495,7 @@ async fn migrate_succeeds_on_multi_migration_chain() {
             vec![Operation::CreateTable { table: posts }],
         ),
     ]);
-    m.migrate_with(&mut NullExecutor::empty(), None, false)
+    m.apply_with(&mut NullExecutor::empty(), None, false)
         .await
         .expect("migrate must succeed on a valid multi-migration chain");
 }
@@ -508,7 +511,7 @@ async fn migrate_acquires_and_releases_lock() {
         }],
     )]);
     let mut ex = NullExecutor::empty();
-    m.migrate_with(&mut ex, None, false)
+    m.apply_with(&mut ex, None, false)
         .await
         .expect("migrate should succeed");
     assert_eq!(
@@ -529,7 +532,7 @@ async fn migrate_releases_lock_when_operation_fails() {
     )]);
     let mut ex = FailingExecutor::new("FAIL");
 
-    let err = m.migrate_with(&mut ex, None, false).await.unwrap_err();
+    let err = m.apply_with(&mut ex, None, false).await.unwrap_err();
 
     assert!(err.to_string().contains("forced failure"));
     assert_eq!(ex.lock_count, 0, "lock must be released after failure");
@@ -548,7 +551,7 @@ async fn migrate_releases_lock_when_tracking_table_has_unknown_applied_id() {
     let mut ex = FailingExecutor::new("never");
     ex.applied = vec!["0009_missing".to_string()];
 
-    let err = m.migrate_with(&mut ex, None, false).await.unwrap_err();
+    let err = m.apply_with(&mut ex, None, false).await.unwrap_err();
 
     assert!(err.to_string().contains("not present locally"));
     assert_eq!(
@@ -571,7 +574,7 @@ async fn migrate_does_not_rollback_non_atomic_failure() {
     let m = migrator_from(vec![migration]);
     let mut ex = FailingExecutor::new("FAIL");
 
-    let err = m.migrate_with(&mut ex, None, false).await.unwrap_err();
+    let err = m.apply_with(&mut ex, None, false).await.unwrap_err();
 
     assert!(err.to_string().contains("forced failure"));
     assert_eq!(ex.lock_count, 0, "lock must be released after failure");
@@ -994,6 +997,7 @@ async fn verify_ignores_live_only_table_children() {
         columns: vec!["rogue".to_string()],
         unique: false,
         predicate: None,
+        opaque: Default::default(),
     });
     live_users.constraints.push(Constraint::Check {
         name: "users_rogue_check".to_string(),
@@ -1039,6 +1043,7 @@ async fn verify_ignores_live_only_opaque_objects() {
             name: "user_summary".to_string(),
             schema: None,
             definition: "SELECT id FROM users".to_string(),
+            opaque: Default::default(),
         },
     );
     live.enums.insert(
@@ -1047,6 +1052,7 @@ async fn verify_ignores_live_only_opaque_objects() {
             name: "status".to_string(),
             schema: None,
             values: vec!["pending".to_string()],
+            opaque: Default::default(),
         },
     );
     live.extensions.insert(
@@ -1055,6 +1061,7 @@ async fn verify_ignores_live_only_opaque_objects() {
             name: "pgcrypto".to_string(),
             schema: None,
             version: Some("1.0".to_string()),
+            opaque: Default::default(),
         },
     );
     let mut executor = InspectingExecutor { live };
@@ -1107,6 +1114,7 @@ async fn verify_detects_owned_table_child_metadata_drift() {
         columns: vec!["email".to_string()],
         unique: false,
         predicate: None,
+        opaque: Default::default(),
     });
     users.constraints.push(Constraint::Check {
         name: "users_email_check".to_string(),
@@ -1185,16 +1193,19 @@ async fn verify_detects_missing_owned_opaque_objects() {
         name: "user_summary".to_string(),
         schema: None,
         definition: "SELECT 1".to_string(),
+        opaque: Default::default(),
     };
     let enum_def = EnumDef {
         name: "status".to_string(),
         schema: None,
         values: vec!["pending".to_string()],
+        opaque: Default::default(),
     };
     let extension = ExtensionDef {
         name: "pgcrypto".to_string(),
         schema: None,
         version: Some("1.0".to_string()),
+        opaque: Default::default(),
     };
     let migrator = migrator_from(vec![migration_with_ops(
         "0001_create_opaque",
@@ -1351,6 +1362,7 @@ async fn verify_detects_enum_label_drift() {
         name: "status".to_string(),
         schema: None,
         values: vec!["pending".to_string(), "done".to_string()],
+        opaque: Default::default(),
     };
     let migrator = migrator_from(vec![migration_with_ops(
         "0001_create_enum",
@@ -1392,6 +1404,7 @@ async fn verify_detects_extension_version_drift() {
         name: "pgcrypto".to_string(),
         schema: None,
         version: Some("1.0".to_string()),
+        opaque: Default::default(),
     };
     let migrator = migrator_from(vec![migration_with_ops(
         "0001_create_extension",
@@ -1457,6 +1470,7 @@ fn make_migrations_accepts_composite_pk_columns() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let mut current = Schema::default();
     current.tables.insert("users".to_string(), table);
@@ -1586,6 +1600,7 @@ fn validate_plan_rejects_fk_to_unknown_table() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let migrations = vec![Migration {
         id: "0001_x".into(),
@@ -1617,6 +1632,7 @@ fn validate_plan_accepts_fk_to_existing_table_in_prior_migration() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let migrations = vec![
         Migration {
@@ -1658,6 +1674,7 @@ fn validate_plan_rejects_invalid_composite_fk_metadata() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let migrations = vec![
         Migration {
@@ -1704,6 +1721,7 @@ fn validate_plan_rejects_duplicate_index_name() {
                     columns: vec!["id".into()],
                     unique: false,
                     predicate: None,
+                    opaque: Default::default(),
                 },
                 concurrent: false,
             }],
@@ -1719,6 +1737,7 @@ fn validate_plan_rejects_duplicate_index_name() {
                     columns: vec!["id".into()],
                     unique: false,
                     predicate: None,
+                    opaque: Default::default(),
                 },
                 concurrent: false,
             }],
@@ -1766,6 +1785,7 @@ fn validate_duplicate_column_in_schema_state() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let mut state = Schema::default();
     state.tables.insert("users".into(), table);
@@ -1774,7 +1794,7 @@ fn validate_duplicate_column_in_schema_state() {
 }
 
 #[tokio::test]
-async fn show_migrations_marks_applied_and_pending() {
+async fn status_marks_applied_and_pending() {
     let users = simple_table("users", &["id"]);
     let m = migrator_from(vec![
         migration_with_ops(
@@ -1788,17 +1808,17 @@ async fn show_migrations_marks_applied_and_pending() {
         applied: vec!["0001_create_users".to_string()],
         lock_count: 0,
     };
-    let rows = m.show_migrations_with(&mut exec).await.unwrap();
+    let rows = m.status_with(&mut exec).await.unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0], ("0001_create_users".to_string(), true));
     assert_eq!(rows[1], ("0002_add_email".to_string(), false));
 }
 
 #[tokio::test]
-async fn show_migrations_empty_graph() {
+async fn status_empty_graph() {
     let m = migrator_from(vec![]);
     let mut exec = NullExecutor::empty();
-    let rows = m.show_migrations_with(&mut exec).await.unwrap();
+    let rows = m.status_with(&mut exec).await.unwrap();
     assert!(rows.is_empty());
 }
 
@@ -1818,6 +1838,7 @@ fn table_with_fk(name: &str, fk_to: &str) -> Table {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     }
 }
 
@@ -1965,6 +1986,7 @@ fn deps_multiple_cross_namespace_fks_include_all() {
             indexes: vec![],
             constraints: vec![],
             triggers: vec![],
+            options: Default::default(),
         }
     };
     let current = state_with_tables(&[
@@ -2073,9 +2095,12 @@ fn make_empty_migration_deps_on_last_root() {
 /// namespace_of correctly strips the last segment, including nested namespaces.
 #[test]
 fn namespace_of_handles_nested_and_root() {
-    assert_eq!(namespace_of("0001_init"), "");
-    assert_eq!(namespace_of("auth/0001_users"), "auth");
-    assert_eq!(namespace_of("auth/sub/0001_users"), "auth/sub");
+    assert_eq!(gaman_core::replay::namespace_of("0001_init"), "");
+    assert_eq!(gaman_core::replay::namespace_of("auth/0001_users"), "auth");
+    assert_eq!(
+        gaman_core::replay::namespace_of("auth/sub/0001_users"),
+        "auth/sub"
+    );
 }
 
 /// A new migration that only modifies existing root-ns entities still gets

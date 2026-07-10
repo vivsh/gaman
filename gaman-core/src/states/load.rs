@@ -2,21 +2,49 @@ use crate::dialects::Dialect;
 
 use super::*;
 
+fn yaml_input_schema(s: &str) -> Result<Schema, SchemaLoadError> {
+    Ok(serde_yaml::from_str::<InputSchema>(s)?.into_schema())
+}
+
+fn json_input_schema(s: &str) -> Result<Schema, SchemaLoadError> {
+    Ok(serde_json::from_str::<InputSchema>(s)?.into_schema())
+}
+
 impl Schema {
+    /// Prepare a schema loaded from any authored source.
+    ///
+    /// This is the shared ingestion boundary for YAML, JSON, SQL lowering, and
+    /// Rust builder input. It normalizes model shape, canonicalizes
+    /// dialect-specific names/types, and validates the result exactly once.
+    pub fn prepare_loaded(self, dialect: Dialect) -> Result<Self, SchemaLoadError> {
+        Ok(self.prepare(dialect)?)
+    }
+
     pub fn from_yaml_str(s: &str, dialect: Dialect) -> Result<Self, SchemaLoadError> {
-        let mut state: Self = serde_yaml::from_str(s)?;
-        state.normalize();
-        Ok(state.prepare(dialect)?)
+        yaml_input_schema(s)?.prepare_loaded(dialect)
     }
 
     pub fn from_json_str(s: &str, dialect: Dialect) -> Result<Self, SchemaLoadError> {
-        let mut state: Self = serde_json::from_str(s)?;
-        state.normalize();
-        Ok(state.prepare(dialect)?)
+        json_input_schema(s)?.prepare_loaded(dialect)
     }
 
     pub fn from_sql_str(s: &str, dialect: Dialect) -> Result<Self, SchemaLoadError> {
-        Ok(crate::parsers::parse_sql(s, dialect)?.prepare(dialect)?)
+        Ok(crate::parsers::parse_sql(s, dialect)?)
+    }
+
+    #[doc(hidden)]
+    pub fn from_sql_str_raw(s: &str, dialect: Dialect) -> Result<Self, SchemaLoadError> {
+        Ok(crate::parsers::parse_sql_raw(s, dialect)?)
+    }
+
+    #[doc(hidden)]
+    pub fn from_yaml_str_input_raw(s: &str) -> Result<Self, SchemaLoadError> {
+        yaml_input_schema(s)
+    }
+
+    #[doc(hidden)]
+    pub fn from_json_str_input_raw(s: &str) -> Result<Self, SchemaLoadError> {
+        json_input_schema(s)
     }
 
     /// Merge `other` into `self`. Duplicate table names are an error; other objects (views,

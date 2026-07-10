@@ -1,6 +1,7 @@
 use super::{
     Column, ColumnRef, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index,
-    PrimaryKey, Schema, SchemaLoadError, Table, TriggerDef, ViewDef, names, schema_qualified_key,
+    OpaqueMeta, PrimaryKey, Schema, SchemaLoadError, Table, TableOptionsMeta, TriggerDef, ViewDef,
+    names, schema_qualified_key,
 };
 use crate::column_type::ColumnType;
 use crate::dialects::Dialect;
@@ -26,6 +27,7 @@ impl ColumnBuilder {
             column: column.into(),
             name,
             on_delete: None,
+            on_update: None,
         });
         self
     }
@@ -51,6 +53,15 @@ impl ColumnBuilder {
         self
     }
 
+    /// Set a generated column expression.
+    pub fn generated(mut self, expr: impl Into<String>) -> Self {
+        let expr = expr.into();
+        if !expr.trim().is_empty() {
+            self.col.generated = Some(expr);
+        }
+        self
+    }
+
     pub fn references(self, table: impl Into<String>, column: impl Into<String>) -> Self {
         self.with_reference(None, table, column)
     }
@@ -62,6 +73,28 @@ impl ColumnBuilder {
         column: impl Into<String>,
     ) -> Self {
         self.with_reference(Some(name.into()), table, column)
+    }
+
+    /// Set the inline foreign-key `ON DELETE` action.
+    pub fn on_delete(mut self, action: impl Into<String>) -> Self {
+        if let Some(reference) = &mut self.col.references {
+            let action = action.into();
+            if !action.trim().is_empty() {
+                reference.on_delete = Some(action);
+            }
+        }
+        self
+    }
+
+    /// Set the inline foreign-key `ON UPDATE` action.
+    pub fn on_update(mut self, action: impl Into<String>) -> Self {
+        if let Some(reference) = &mut self.col.references {
+            let action = action.into();
+            if !action.trim().is_empty() {
+                reference.on_update = Some(action);
+            }
+        }
+        self
     }
 
     pub fn check(mut self, expr: impl Into<String>) -> Self {
@@ -98,7 +131,26 @@ impl TableBuilder {
             columns: columns.iter().map(|s| s.to_string()).collect(),
             unique,
             predicate: None,
+            opaque: OpaqueMeta::default(),
         });
+        self
+    }
+
+    fn push_index_with(
+        mut self,
+        name: impl Into<String>,
+        columns: &[&str],
+        unique: bool,
+        f: impl FnOnce(Index) -> Index,
+    ) -> Self {
+        let index = Index {
+            name: name.into(),
+            columns: columns.iter().map(|s| s.to_string()).collect(),
+            unique,
+            predicate: None,
+            opaque: OpaqueMeta::default(),
+        };
+        self.table.indexes.push(f(index));
         self
     }
 
@@ -114,6 +166,7 @@ impl TableBuilder {
                 indexes: vec![],
                 constraints: vec![],
                 triggers: vec![],
+                options: TableOptionsMeta::default(),
             },
         }
     }
@@ -180,6 +233,20 @@ impl TableBuilder {
         self.push_foreign_key(name, [from], to_table, [to_column.into()])
     }
 
+    /// Add a foreign key and let the caller set advanced metadata.
+    pub fn foreign_key_with(
+        self,
+        from: impl Into<String>,
+        to_table: impl Into<String>,
+        to_column: impl Into<String>,
+        f: impl FnOnce(ForeignKey) -> ForeignKey,
+    ) -> Self {
+        let from = from.into();
+        let name = names::foreign_key(&self.table.name, &[from.as_str()]);
+        let foreign_key = ForeignKey::single(name, from, to_table, to_column);
+        self.foreign_key_obj(f(foreign_key))
+    }
+
     pub fn foreign_key_named(
         self,
         fk_name: impl Into<String>,
@@ -188,6 +255,19 @@ impl TableBuilder {
         to_column: impl Into<String>,
     ) -> Self {
         self.push_foreign_key(fk_name.into(), [from.into()], to_table, [to_column.into()])
+    }
+
+    /// Add a named foreign key and let the caller set advanced metadata.
+    pub fn foreign_key_named_with(
+        self,
+        fk_name: impl Into<String>,
+        from: impl Into<String>,
+        to_table: impl Into<String>,
+        to_column: impl Into<String>,
+        f: impl FnOnce(ForeignKey) -> ForeignKey,
+    ) -> Self {
+        let foreign_key = ForeignKey::single(fk_name, from, to_table, to_column);
+        self.foreign_key_obj(f(foreign_key))
     }
 
     pub fn foreign_key_columns(
@@ -205,6 +285,24 @@ impl TableBuilder {
         )
     }
 
+    /// Add a composite foreign key and let the caller set advanced metadata.
+    pub fn foreign_key_columns_with(
+        self,
+        from_columns: &[&str],
+        to_table: impl Into<String>,
+        to_columns: &[&str],
+        f: impl FnOnce(ForeignKey) -> ForeignKey,
+    ) -> Self {
+        let name = names::foreign_key(&self.table.name, from_columns);
+        let foreign_key = ForeignKey::new(
+            name,
+            from_columns.iter().copied(),
+            to_table,
+            to_columns.iter().copied(),
+        );
+        self.foreign_key_obj(f(foreign_key))
+    }
+
     pub fn foreign_key_named_columns(
         self,
         fk_name: impl Into<String>,
@@ -220,9 +318,39 @@ impl TableBuilder {
         )
     }
 
+    /// Add a named composite foreign key and let the caller set advanced metadata.
+    pub fn foreign_key_named_columns_with(
+        self,
+        fk_name: impl Into<String>,
+        from_columns: &[&str],
+        to_table: impl Into<String>,
+        to_columns: &[&str],
+        f: impl FnOnce(ForeignKey) -> ForeignKey,
+    ) -> Self {
+        let foreign_key = ForeignKey::new(
+            fk_name,
+            from_columns.iter().copied(),
+            to_table,
+            to_columns.iter().copied(),
+        );
+        self.foreign_key_obj(f(foreign_key))
+    }
+
+    /// Add a fully constructed foreign key.
+    pub fn foreign_key_obj(mut self, foreign_key: ForeignKey) -> Self {
+        self.table.foreign_keys.push(foreign_key);
+        self
+    }
+
     pub fn index_columns(self, columns: &[&str]) -> Self {
         let name = names::index(&self.table.name, columns);
         self.push_index(name, columns, false)
+    }
+
+    /// Add an index with generated name and advanced metadata.
+    pub fn index_columns_with(self, columns: &[&str], f: impl FnOnce(Index) -> Index) -> Self {
+        let name = names::index(&self.table.name, columns);
+        self.push_index_with(name, columns, false, f)
     }
 
     pub fn unique_index_columns(self, columns: &[&str]) -> Self {
@@ -230,12 +358,42 @@ impl TableBuilder {
         self.push_index(name, columns, true)
     }
 
+    /// Add a unique index with generated name and advanced metadata.
+    pub fn unique_index_columns_with(
+        self,
+        columns: &[&str],
+        f: impl FnOnce(Index) -> Index,
+    ) -> Self {
+        let name = names::index(&self.table.name, columns);
+        self.push_index_with(name, columns, true, f)
+    }
+
     pub fn index(self, name: impl Into<String>, columns: &[&str]) -> Self {
         self.push_index(name, columns, false)
     }
 
+    /// Add an index and let the caller set advanced metadata.
+    pub fn index_with(
+        self,
+        name: impl Into<String>,
+        columns: &[&str],
+        f: impl FnOnce(Index) -> Index,
+    ) -> Self {
+        self.push_index_with(name, columns, false, f)
+    }
+
     pub fn unique_index(self, name: impl Into<String>, columns: &[&str]) -> Self {
         self.push_index(name, columns, true)
+    }
+
+    /// Add a unique index and let the caller set advanced metadata.
+    pub fn unique_index_with(
+        self,
+        name: impl Into<String>,
+        columns: &[&str],
+        f: impl FnOnce(Index) -> Index,
+    ) -> Self {
+        self.push_index_with(name, columns, true, f)
     }
 
     pub fn check(mut self, name: impl Into<String>, expression: impl Into<String>) -> Self {
@@ -325,6 +483,7 @@ impl SchemaBuilder {
                 name,
                 schema: None,
                 version,
+                opaque: OpaqueMeta::default(),
             },
         );
         self
@@ -345,12 +504,26 @@ impl SchemaBuilder {
         self
     }
 
+    /// Add a fully constructed modeled table definition.
+    pub fn table_def(mut self, table: Table) -> Self {
+        let key = schema_qualified_key(&table.name, table.schema.as_deref());
+        self.state.tables.insert(key, table);
+        self
+    }
+
     pub fn extension(self, name: impl Into<String>) -> Self {
         self.insert_extension(name, None)
     }
 
     pub fn extension_versioned(self, name: impl Into<String>, version: impl Into<String>) -> Self {
         self.insert_extension(name, Some(version.into()))
+    }
+
+    /// Add a fully constructed extension definition.
+    pub fn extension_def(mut self, extension: ExtensionDef) -> Self {
+        let key = schema_qualified_key(&extension.name, extension.schema.as_deref());
+        self.state.extensions.insert(key, extension);
+        self
     }
 
     pub fn view(mut self, name: impl Into<String>, definition: impl Into<String>) -> Self {
@@ -361,8 +534,16 @@ impl SchemaBuilder {
                 name,
                 schema: None,
                 definition: definition.into(),
+                opaque: OpaqueMeta::default(),
             },
         );
+        self
+    }
+
+    /// Add a fully constructed view definition.
+    pub fn view_def(mut self, view: ViewDef) -> Self {
+        let key = schema_qualified_key(&view.name, view.schema.as_deref());
+        self.state.views.insert(key, view);
         self
     }
 
@@ -380,37 +561,32 @@ impl SchemaBuilder {
                 name,
                 schema: None,
                 values: values.iter().map(|s| s.to_string()).collect(),
+                opaque: OpaqueMeta::default(),
             },
         );
         self
     }
 
-    pub fn build(self) -> Schema {
-        let mut state = self.state;
-        state.normalize();
-        state
-    }
-
-    pub fn build_checked(self) -> Result<Schema, SchemaLoadError> {
-        let dialect = self.dialect;
-        Ok(self.build().prepare(dialect)?)
-    }
-}
-
-/// Allows both `Schema` and `Result<Schema, E>` to be returned from the `with_schema` closure.
-/// `Schema` is treated as infallible; `Result<Schema, E>` propagates the error.
-pub trait IntoSchema {
-    fn into_schema(self) -> Result<Schema, SchemaLoadError>;
-}
-
-impl IntoSchema for Schema {
-    fn into_schema(self) -> Result<Schema, SchemaLoadError> {
-        Ok(self)
-    }
-}
-
-impl IntoSchema for Result<Schema, SchemaLoadError> {
-    fn into_schema(self) -> Result<Schema, SchemaLoadError> {
+    /// Add a fully constructed enum definition.
+    pub fn enum_def(mut self, enum_def: EnumDef) -> Self {
+        let key = schema_qualified_key(&enum_def.name, enum_def.schema.as_deref());
+        self.state.enums.insert(key, enum_def);
         self
+    }
+
+    /// Build a schema through the same normalize and prepare lifecycle as file
+    /// and SQL ingestion.
+    pub fn build(self) -> Result<Schema, SchemaLoadError> {
+        let dialect = self.dialect;
+        self.build_raw().prepare_loaded(dialect)
+    }
+
+    /// Build a raw normalized schema without dialect preparation.
+    ///
+    /// This is intended for internal tests and low-level tooling that need to
+    /// inspect pre-validation model state. User-facing builder paths should use
+    /// [`SchemaBuilder::build`].
+    pub(crate) fn build_raw(self) -> Schema {
+        self.state
     }
 }

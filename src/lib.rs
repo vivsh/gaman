@@ -1,3 +1,9 @@
+//! Native database execution, filesystem integration, and CLI APIs for Gaman.
+//!
+//! The root crate connects the database-I/O-free `gaman-core` lifecycle to
+//! migration sources, live database executors, inspection, and user-facing
+//! commands. Offline-only builds re-export the core planning API.
+
 #[cfg(all(not(feature = "native"), not(feature = "offline")))]
 compile_error!("enable either the 'offline' feature or a native feature set");
 
@@ -37,12 +43,16 @@ pub(crate) mod prompter;
 pub mod schema_file;
 #[cfg(feature = "db")]
 pub(crate) mod tracking;
-#[cfg(feature = "db")]
-pub mod verification;
 
 #[cfg(feature = "native")]
 pub mod parsers {
     pub use gaman_core::parsers::*;
+}
+
+/// Semantic drift reports, contracts, comparison, and formatting.
+#[cfg(feature = "native")]
+pub mod drift {
+    pub use gaman_core::drift::*;
 }
 
 // Everyday API.
@@ -52,6 +62,8 @@ pub use conf::{Config, ConfigError, TlsMode};
 pub use engine::{EmbeddedMigrations, EngineError, MigrationEngine};
 #[cfg(feature = "native")]
 pub use gaman_core::Migration;
+#[cfg(all(feature = "cli", feature = "db"))]
+pub use migrator::{RepairOptions, RepairReport};
 
 /// Schema types and builders.
 #[cfg(feature = "native")]
@@ -60,10 +72,12 @@ pub mod schema {
     pub use gaman_core::operations::Operation;
     pub use gaman_core::parsers::ParseError;
     pub use gaman_core::states::{
-        Column, ColumnBuilder, ColumnRef, Constraint, EnumDef, ExtensionDef, ForeignKey,
-        FunctionDef, Index, IntoSchema, IntoTable, PrimaryKey, ReplayError, Schema, SchemaBuilder,
-        SchemaLoadError, SchemaValidationError, Table, TableBuilder, TriggerDef, TriggerEvent,
-        TriggerScope, TriggerTiming, ViewDef, Volatility, is_volatile, schema_qualified_key,
+        Column, ColumnBuilder, ColumnRef, Constraint, ConstraintInput, EnumDef, EnumInput,
+        ExtensionDef, ExtensionInput, ForeignKey, FunctionDef, FunctionInput, Index, IndexInput,
+        InputSchema, IntoTable, PrimaryKey, ReplayError, Schema, SchemaBuilder, SchemaLoadError,
+        SchemaValidationError, Table, TableBuilder, TableInput, TriggerDef, TriggerEvent,
+        TriggerInput, TriggerScope, TriggerTiming, ViewDef, ViewInput, Volatility, is_volatile,
+        schema_qualified_key,
     };
 }
 
@@ -80,17 +94,19 @@ pub mod core {
     #[cfg(feature = "db")]
     pub use crate::executor::{BoxFuture, Executor, ExecutorError, Introspectable};
     #[cfg(feature = "db")]
-    pub use crate::migrator::{Migrator, MigratorError};
+    pub use crate::migrator::{Migrator, MigratorError, RepairOptions, RepairReport};
     #[cfg(feature = "cli")]
     pub use crate::prompter::CliPromptEngine;
     #[cfg(feature = "db")]
-    pub use crate::tracking::{DatabaseTrackingStore, TrackingError, TrackingStore};
-    #[cfg(feature = "db")]
-    pub use crate::verification::{DriftFinding, VerificationReport};
+    pub use crate::tracking::{
+        DatabaseTrackingStore, TRACKING_TABLE, TrackingError, TrackingStore,
+    };
     pub use gaman_core::clarifier::{
         Answer, Clarification, ClarificationKind, ClarificationMessage, ClarificationOption,
         Decision, OptionAction, PromptEngine, Severity, clarification_message,
     };
     pub use gaman_core::dialects::{Dialect, DialectError};
+    #[cfg(feature = "db")]
+    pub use gaman_core::drift::{DriftFinding, VerificationReport};
     pub use gaman_core::graphs::{GraphError, MigrationGraph, MigrationNode};
 }

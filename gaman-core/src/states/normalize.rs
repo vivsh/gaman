@@ -21,11 +21,8 @@ impl Schema {
                         .unwrap_or_else(|| names::foreign_key(&table_name, &[col.name.as_str()]));
                     let mut foreign_key =
                         ForeignKey::single(fk_name, col.name.clone(), r.table, r.column);
-                    foreign_key.on_delete = r
-                        .on_delete
-                        .as_deref()
-                        .and_then(canonical_foreign_key_action)
-                        .map(str::to_string);
+                    foreign_key.on_delete = normalize_foreign_key_action(r.on_delete);
+                    foreign_key.on_update = normalize_foreign_key_action(r.on_update);
                     table.foreign_keys.push(foreign_key);
                 }
                 if let Some(expr) = col.check.take() {
@@ -68,6 +65,20 @@ impl Schema {
                 func.name = key.clone();
             }
         }
+    }
+}
+
+fn normalize_foreign_key_action(action: Option<String>) -> Option<String> {
+    let action = action?;
+    let trimmed = action.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(
+            canonical_foreign_key_action(trimmed)
+                .unwrap_or(trimmed)
+                .to_string(),
+        )
     }
 }
 

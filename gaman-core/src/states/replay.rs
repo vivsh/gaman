@@ -43,6 +43,16 @@ impl Schema {
                 rename_fk_table_references(self, old_name, new_name);
             }
 
+            Operation::AcknowledgeTableOptions {
+                table_name, new, ..
+            } => {
+                let table = self
+                    .tables
+                    .get_mut(table_name)
+                    .ok_or_else(|| ReplayError::TableNotFound(table_name.clone()))?;
+                table.options = new.clone();
+            }
+
             Operation::AddColumn { table_name, column } => {
                 let table = self
                     .tables

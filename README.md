@@ -32,7 +32,7 @@ compatibility mode.
 ## Why Use It
 
 - Migration generation is deterministic and offline.
-- `sql_migrate` renders the SQL plan without opening a database connection.
+- `sql` renders the SQL plan without opening a database connection.
 - YAML, JSON, SQL DDL, Rust builders, and live inspection all feed one schema model.
 - Ambiguous or risky changes are surfaced before files are written.
 - Rust applications can use the same `MigrationEngine` API as the CLI.
@@ -46,10 +46,10 @@ export DATABASE_URL=postgres://localhost/myapp
 export MIGRATIONS_DIR=migrations
 export SCHEMA=schema.yaml
 
-gaman make_migration initial
-gaman sql_migrate
-gaman migrate
-gaman verify_db
+gaman make initial
+gaman sql
+gaman apply
+gaman verify
 ```
 
 The installed CLI includes all currently supported live dialects: PostgreSQL and
@@ -59,14 +59,14 @@ profile yet.
 The loop is intentionally small:
 
 ```text
-schema.yaml -> make_migration -> migration.yaml -> sql_migrate -> SQL -> migrate
+schema.yaml -> make -> migration.yaml -> sql -> SQL -> apply
 ```
 
 Offline commands can run without `DATABASE_URL` when the dialect is explicit:
 
 ```bash
-gaman make_migration add_posts --dialect postgres
-gaman sql_migrate --dialect sqlite
+gaman make add_posts --dialect postgres
+gaman sql --dialect sqlite
 ```
 
 For smaller custom builds, select dialect features explicitly:
@@ -95,31 +95,35 @@ Global flags come before the subcommand:
 Everyday commands:
 
 ```bash
-gaman make_migration [name]       # diff schema and write the next migration
-gaman make_migration --check      # CI check; never prompts or writes
-gaman make_migration --dry-run    # print the migration that would be written
-gaman make_migration --empty name # write an empty migration shell
-gaman make_migration --merge name # merge multiple graph heads
+gaman make [name]       # diff schema and write the next migration
+gaman make --check      # CI check; never prompts or writes
+gaman make --dry-run    # print the migration that would be written
+gaman make --empty name # write an empty migration shell
+gaman make --merge name # merge multiple graph heads
 
-gaman sql_migrate [id]            # print offline operation SQL
-gaman sql_migrate --backwards id  # print rollback SQL
+gaman sql [id]            # print offline operation SQL
+gaman sql --backwards id  # print rollback SQL
 
-gaman migrate                     # apply pending migrations
-gaman migrate --target id         # migrate forward or backward to id
-gaman migrate --fake              # record as applied without running DDL
-gaman migrate --plan              # print the live migration plan
-gaman migrate --check             # fail if anything is pending
+gaman apply                     # apply pending migrations
+gaman apply --target id         # apply forward or backward to id
+gaman apply --fake              # record as applied without running DDL
+gaman apply --plan              # print the live migration plan
+gaman apply --check             # fail if anything is pending
+gaman rollback id               # roll back to a target migration
 
-gaman inspect_db                  # export live schema
-gaman inspect_db --table users    # export one table
-gaman verify_db                   # compare live DB against replayed history
-gaman show_migrations             # list applied/pending migrations
+gaman inspect                  # export live schema
+gaman inspect --table users    # export one table
+gaman verify                   # compare live DB against replayed history
+gaman repair                   # plan one-off drift repair SQL
+gaman repair --apply           # apply one-off drift repair SQL
+gaman status                   # list applied/pending migrations
+gaman show [id]                # show canonical migration YAML
 gaman config                      # print resolved config
 ```
 
 Environment variables:
 
-- `DATABASE_URL`: required for `migrate`, `inspect_db`, and `verify_db`.
+- `DATABASE_URL`: required for `apply`, `inspect`, and `verify`.
 - `MIGRATIONS_DIR`: defaults to `migrations`.
 - `SCHEMA`: defaults to `schema.yaml`; may be YAML, JSON, SQL, or a directory.
 
@@ -135,8 +139,8 @@ fixture results; live rows require database-backed evidence.
 Legend: ✅ accepted evidence, ◐ bounded support, 🚧 planned or not evidenced
 yet, ❌ unsupported by design or by the database engine.
 
-`inspect_db` is the high-fidelity reflection path for onboarding existing
-projects into Gaman. `verify_db` is narrower by design: each dialect owns a
+`inspect` is the high-fidelity reflection path for onboarding existing
+projects into Gaman. `verify` is narrower by design: each dialect owns a
 static registry of entity properties that live inspection can recover accurately
 and deterministically. Opaque objects are still tracked by presence and stable
 metadata, but their bodies are not drift inputs unless a dialect-specific
@@ -289,11 +293,11 @@ let engine = MigrationEngine::new(Config::default(), &MIGRATIONS)
 Common methods:
 
 ```rust
-engine.sql_migrate()?;                         // offline operation SQL
-engine.sql_migrate_id("0002_add_posts")?;      // one migration
+engine.sql()?;                         // offline operation SQL
+engine.sql_id("0002_add_posts")?;      // one migration
 engine.sql_rollback(&["0002_add_posts"])?;     // offline rollback SQL
-engine.make_migration_non_interactive(None)?;  // CI-safe generation
-engine.make_migration_check()?;                // fail if schema changed
+engine.make_non_interactive(None)?;  // CI-safe generation
+engine.make_check()?;                // fail if schema changed
 engine.inspect_table(&["public"], "users").await?;
 engine.verify("public").await?;
 ```
@@ -331,9 +335,9 @@ Gaman is not a universal DDL modeler or a live-database-first planner.
   `Statement` operations for backend-specific PK surgery.
 - Opaque source text is preserved exactly. Lexical canonicalization is used only
   to suppress formatting-only diff churn.
-- `inspect_db` preserves useful reflected catalog state for onboarding existing
+- `inspect` preserves useful reflected catalog state for onboarding existing
   projects, even when that state is not part of drift verification.
-- `verify_db` compares deterministic inspected properties only and reports the
+- `verify` compares deterministic inspected properties only and reports the
   entity property that drifted. It does not prove function, trigger, or view
   body equivalence from live catalog text.
 - PostgreSQL trigger `query` source is wrapped in generated trigger functions

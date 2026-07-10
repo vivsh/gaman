@@ -20,6 +20,8 @@ impl From<&str> for SchemaValidationError {
 
 #[derive(Debug, Error, PartialEq)]
 pub enum ReplayError {
+    #[error("migration '{0}' not found in graph")]
+    MigrationNotFound(String),
     #[error("table '{0}' already exists")]
     TableAlreadyExists(String),
     #[error("table '{0}' not found")]
@@ -81,6 +83,12 @@ pub enum ReplayError {
 pub enum SchemaLoadError {
     #[error("cannot read '{0}': {1}")]
     Io(String, #[source] std::io::Error),
+    #[error("in schema '{path}': {source}")]
+    Path {
+        path: String,
+        #[source]
+        source: Box<SchemaLoadError>,
+    },
     #[error("invalid YAML: {0}")]
     Yaml(#[from] serde_yaml::Error),
     #[error("invalid JSON: {0}")]
@@ -92,5 +100,11 @@ pub enum SchemaLoadError {
     #[error("schema validation failed: {0}")]
     Validation(#[from] SchemaValidationError),
     #[error(transparent)]
-    Sql(#[from] crate::parsers::ParseError),
+    Sql(Box<crate::parsers::ParseError>),
+}
+
+impl From<crate::parsers::ParseError> for SchemaLoadError {
+    fn from(error: crate::parsers::ParseError) -> Self {
+        Self::Sql(Box::new(error))
+    }
 }

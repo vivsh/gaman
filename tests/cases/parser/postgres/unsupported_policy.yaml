@@ -3,4 +3,4 @@ description: PostgreSQL CREATE POLICY is rejected because Schema does not model 
 dialect: postgres
 sql: |
   CREATE POLICY users_policy ON users USING (true);
-expect_error: only CREATE statements for modeled schema entities are parsed
+expect_error: known Gaman entity kind

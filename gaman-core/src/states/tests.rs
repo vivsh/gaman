@@ -12,6 +12,7 @@ fn basic_table(name: &str) -> Table {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     }
 }
 
@@ -87,12 +88,117 @@ tables:
     .expect("sql");
     let builder = Schema::builder(Dialect::Postgres)
         .table::<PreparedUser>()
-        .build_checked()
+        .build()
         .expect("builder");
 
     assert_eq!(yaml, json);
     assert_eq!(yaml, sql);
     assert_eq!(yaml, builder);
+}
+
+/// Verifies SQL, YAML, JSON, and builder ingestion preserve FK actions identically.
+#[test]
+fn checked_frontends_prepare_foreign_key_actions_to_the_same_schema() {
+    let yaml = Schema::from_yaml_str(
+        r#"
+tables:
+  users:
+    columns:
+      - name: id
+        type: integer
+        primary_key: true
+  posts:
+    columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: user_id
+        type: integer
+        references:
+          table: users
+          column: id
+          on_delete: cascade
+          on_update: restrict
+"#,
+        Dialect::Postgres,
+    )
+    .expect("yaml");
+    let json = Schema::from_json_str(
+        r#"{"tables":{"users":{"columns":[{"name":"id","type":"integer","primary_key":true}]},"posts":{"columns":[{"name":"id","type":"integer","primary_key":true},{"name":"user_id","type":"integer","references":{"table":"users","column":"id","on_delete":"cascade","on_update":"restrict"}}]}}}"#,
+        Dialect::Postgres,
+    )
+    .expect("json");
+    let sql = Schema::from_sql_str(
+        r#"
+CREATE TABLE users (id integer PRIMARY KEY);
+CREATE TABLE posts (
+  id integer PRIMARY KEY,
+  user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE ON UPDATE RESTRICT
+);
+"#,
+        Dialect::Postgres,
+    )
+    .expect("sql");
+    let builder = Schema::builder(Dialect::Postgres)
+        .table::<PreparedFkUsers>()
+        .table::<PreparedFkPosts>()
+        .build()
+        .expect("builder");
+
+    assert_eq!(yaml, json);
+    assert_eq!(yaml, sql);
+    assert_eq!(yaml, builder);
+}
+
+struct PreparedFkUsers;
+
+impl IntoTable for PreparedFkUsers {
+    fn into_table(_dialect: &Dialect) -> Table {
+        TableBuilder::new("users")
+            .column("id", "integer", |column| column.primary_key())
+            .build()
+    }
+}
+
+struct PreparedFkPosts;
+
+impl IntoTable for PreparedFkPosts {
+    fn into_table(_dialect: &Dialect) -> Table {
+        TableBuilder::new("posts")
+            .column("id", "integer", |column| column.primary_key())
+            .column("user_id", "integer", |column| {
+                column
+                    .references("users", "id")
+                    .on_delete("cascade")
+                    .on_update("restrict")
+            })
+            .build()
+    }
+}
+
+/// Verifies builder ingestion validates FK actions through the shared prepared path.
+#[test]
+fn builder_build_rejects_invalid_foreign_key_action() {
+    let err = Schema::builder(Dialect::Postgres)
+        .table::<InvalidFkActionPost>()
+        .table::<PreparedFkUsers>()
+        .build()
+        .expect_err("invalid FK action should fail");
+
+    assert!(err.to_string().contains("unsupported on_delete action"));
+}
+
+struct InvalidFkActionPost;
+
+impl IntoTable for InvalidFkActionPost {
+    fn into_table(_dialect: &Dialect) -> Table {
+        TableBuilder::new("posts")
+            .column("id", "integer", |column| column.primary_key())
+            .column("user_id", "integer", |column| {
+                column.references("users", "id").on_delete("explode")
+            })
+            .build()
+    }
 }
 
 struct PreparedUser;
@@ -701,6 +807,7 @@ fn add_index() {
         columns: vec!["email".to_string()],
         unique: true,
         predicate: None,
+        opaque: Default::default(),
     };
     apply_ok(
         &mut s,
@@ -728,6 +835,7 @@ fn add_index_duplicate() {
         columns: vec!["email".to_string()],
         unique: true,
         predicate: None,
+        opaque: Default::default(),
     };
     apply_ok(
         &mut s,
@@ -762,6 +870,7 @@ fn drop_index() {
         columns: vec!["email".to_string()],
         unique: true,
         predicate: None,
+        opaque: Default::default(),
     };
     apply_ok(
         &mut s,
@@ -780,6 +889,7 @@ fn drop_index() {
                 columns: vec!["email".to_string()],
                 unique: true,
                 predicate: None,
+                opaque: Default::default(),
             },
             concurrent: false,
         },
@@ -992,6 +1102,7 @@ fn create_table_with_multiple_pk_creates_composite_primary_key() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     s.apply(&Operation::CreateTable { table }).unwrap();
     let table = &s.tables["users"];
@@ -1020,6 +1131,7 @@ fn add_pk_column_when_pk_exists_returns_error() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     s.apply(&Operation::CreateTable { table }).unwrap();
     let second_pk = Column {
@@ -1068,6 +1180,7 @@ fn alter_column_to_pk_when_pk_exists_returns_error() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     s.apply(&Operation::CreateTable { table }).unwrap();
     let promoted = Column {
@@ -1110,6 +1223,7 @@ fn validate_single_pk_ok() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     s.tables.insert("users".to_string(), table);
     assert!(s.validate().is_ok());
@@ -1145,6 +1259,7 @@ fn validate_multiple_pk_returns_err() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     s.tables.insert("users".to_string(), table);
     s.normalize();
@@ -1167,6 +1282,7 @@ fn normalize_moves_inline_fk_to_foreign_keys() {
             column: "id".to_string(),
             name: None,
             on_delete: None,
+            on_update: None,
         }),
         check: None,
         generated: None,
@@ -1180,6 +1296,7 @@ fn normalize_moves_inline_fk_to_foreign_keys() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let mut s = Schema::default();
     s.tables.insert("posts".to_string(), table);
@@ -1207,6 +1324,7 @@ fn normalize_inline_fk_uses_explicit_name_when_provided() {
             column: "id".to_string(),
             name: Some("fk_posts_user".to_string()),
             on_delete: None,
+            on_update: None,
         }),
         check: None,
         generated: None,
@@ -1220,6 +1338,7 @@ fn normalize_inline_fk_uses_explicit_name_when_provided() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let mut s = Schema::default();
     s.tables.insert("posts".to_string(), table);
@@ -1400,6 +1519,45 @@ fn builder_composite_foreign_key_preserves_order() {
     assert_eq!(fk.to_columns, ["tenant_id", "id"]);
 }
 
+/// Verifies builder helpers preserve foreign-key actions, generated columns, and partial indexes.
+#[test]
+fn builder_exposes_modeled_action_generated_and_partial_index_fields() {
+    let table = TableBuilder::new("posts")
+        .column("user_id", "integer", |c| {
+            c.references("users", "id")
+                .on_delete("cascade")
+                .on_update("restrict")
+        })
+        .column("slug", "text", |c| c.generated("lower(title)"))
+        .foreign_key_with("author_id", "users", "id", |fk| {
+            fk.on_delete("set_null").on_update("cascade")
+        })
+        .index_columns_with(&["slug"], |idx| idx.predicate("slug IS NOT NULL"))
+        .build();
+
+    assert_eq!(
+        table.columns[0]
+            .references
+            .as_ref()
+            .and_then(|reference| reference.on_delete.as_deref()),
+        Some("cascade")
+    );
+    assert_eq!(
+        table.columns[0]
+            .references
+            .as_ref()
+            .and_then(|reference| reference.on_update.as_deref()),
+        Some("restrict")
+    );
+    assert_eq!(table.columns[1].generated.as_deref(), Some("lower(title)"));
+    assert_eq!(table.foreign_keys[0].on_delete.as_deref(), Some("set_null"));
+    assert_eq!(table.foreign_keys[0].on_update.as_deref(), Some("cascade"));
+    assert_eq!(
+        table.indexes[0].predicate.as_deref(),
+        Some("slug IS NOT NULL")
+    );
+}
+
 /// TableBuilder::column_from_type uses ColumnType metadata and then applies overrides.
 #[test]
 fn builder_column_from_type_infers_type_and_allows_overrides() {
@@ -1461,6 +1619,7 @@ fn builder_trigger_accepts_model_and_normalize_derives_name() {
             when: None,
             query: Some("INSERT INTO audit_log(order_id) VALUES (NEW.id);".to_string()),
             language: None,
+            opaque: Default::default(),
         })
         .build();
     let mut schema = Schema::default();
@@ -1518,6 +1677,7 @@ fn normalize_moves_inline_check_to_constraints() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let mut s = Schema::default();
     s.tables.insert("results".to_string(), table);
@@ -1544,6 +1704,7 @@ fn normalize_is_idempotent() {
             column: "id".to_string(),
             name: None,
             on_delete: None,
+            on_update: None,
         }),
         check: None,
         generated: None,
@@ -1557,6 +1718,7 @@ fn normalize_is_idempotent() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let mut s = Schema::default();
     s.tables.insert("posts".to_string(), table);
@@ -1601,6 +1763,7 @@ fn basic_function(name: &str) -> FunctionDef {
         body: "SELECT 1".to_string(),
         volatility: Volatility::Volatile,
         security_definer: false,
+        opaque: Default::default(),
     }
 }
 
@@ -1614,6 +1777,7 @@ fn basic_trigger(name: &str) -> TriggerDef {
         when: None,
         query: None,
         language: None,
+        opaque: Default::default(),
     }
 }
 
@@ -1904,7 +2068,9 @@ fn validate_trigger_empty_events() {
             when: None,
             query: None,
             language: None,
+            opaque: Default::default(),
         }],
+        options: Default::default(),
     };
     s.tables.insert("users".to_string(), table);
     assert!(s.validate().unwrap_err().contains("no events"));
@@ -1931,7 +2097,9 @@ fn validate_trigger_no_source() {
             when: None,
             query: None,
             language: None,
+            opaque: Default::default(),
         }],
+        options: Default::default(),
     };
     s.tables.insert("users".to_string(), table);
     assert!(
@@ -1962,7 +2130,9 @@ fn validate_trigger_rejects_query_and_function_name() {
             when: None,
             query: Some("SELECT 1".to_string()),
             language: None,
+            opaque: Default::default(),
         }],
+        options: Default::default(),
     };
     s.tables.insert("users".to_string(), table);
     assert!(s.validate().unwrap_err().contains("not both"));
@@ -1989,7 +2159,9 @@ fn validate_trigger_rejects_empty_query() {
             when: None,
             query: Some("   ".to_string()),
             language: None,
+            opaque: Default::default(),
         }],
+        options: Default::default(),
     };
     s.tables.insert("users".to_string(), table);
     assert!(
@@ -2094,6 +2266,7 @@ fn create_table_inline_vs_incremental_are_equal() {
                 indexes: vec![],
                 constraints: vec![],
                 triggers: vec![],
+                options: Default::default(),
             },
         },
     );
@@ -2127,6 +2300,7 @@ fn inverse_restores_state_for_all_invertible_ops() {
         columns: vec!["col".to_string()],
         unique: true,
         predicate: None,
+        opaque: Default::default(),
     };
     let chk = Constraint::Check {
         name: "chk_col".to_string(),
@@ -2413,6 +2587,7 @@ fn full_replay_produces_exact_state() {
                 columns: vec!["email".to_string()],
                 unique: true,
                 predicate: None,
+                opaque: Default::default(),
             },
             concurrent: false,
         },
@@ -2506,6 +2681,7 @@ fn create_view_key_respects_schema() {
                 name: "active_users".to_string(),
                 schema: None,
                 definition: "SELECT 1".to_string(),
+                opaque: Default::default(),
             },
         },
     );
@@ -2516,6 +2692,7 @@ fn create_view_key_respects_schema() {
                 name: "summary".to_string(),
                 schema: Some("reporting".to_string()),
                 definition: "SELECT 2".to_string(),
+                opaque: Default::default(),
             },
         },
     );
@@ -2588,7 +2765,10 @@ fn builder_table_via_into_table() {
         }
     }
 
-    let state = Schema::builder(Dialect::Postgres).table::<Posts>().build();
+    let state = Schema::builder(Dialect::Postgres)
+        .table::<Posts>()
+        .build()
+        .expect("builder");
     assert!(state.tables.contains_key("posts"));
     assert_eq!(state.tables["posts"].columns.len(), 2);
     assert_eq!(state.tables["posts"].columns[0].name, "id");
@@ -2600,7 +2780,8 @@ fn builder_table_via_into_table() {
 fn builder_extension() {
     let state = Schema::builder(Dialect::Postgres)
         .extension("pgcrypto")
-        .build();
+        .build()
+        .expect("builder");
     assert!(state.extensions.contains_key("pgcrypto"));
     assert!(state.extensions["pgcrypto"].version.is_none());
 }
@@ -2610,7 +2791,8 @@ fn builder_extension() {
 fn builder_enum_type() {
     let state = Schema::builder(Dialect::Postgres)
         .enum_type("status", &["active", "inactive"])
-        .build();
+        .build()
+        .expect("builder");
     assert!(state.enums.contains_key("status"));
     assert_eq!(state.enums["status"].values, vec!["active", "inactive"]);
 }
@@ -2654,6 +2836,7 @@ fn qualified_name_all_entities() {
         body: String::new(),
         volatility: Volatility::Volatile,
         security_definer: false,
+        opaque: Default::default(),
     };
     assert_eq!(f.qualified_name(), "utils.my_fn");
 
@@ -2661,6 +2844,7 @@ fn qualified_name_all_entities() {
         name: "v1".to_string(),
         schema: None,
         definition: "SELECT 1".to_string(),
+        opaque: Default::default(),
     };
     assert_eq!(v.qualified_name(), "v1");
 
@@ -2668,6 +2852,7 @@ fn qualified_name_all_entities() {
         name: "pgcrypto".to_string(),
         schema: Some("public".to_string()),
         version: None,
+        opaque: Default::default(),
     };
     assert_eq!(e.qualified_name(), "pgcrypto");
 
@@ -2675,6 +2860,7 @@ fn qualified_name_all_entities() {
         name: "status".to_string(),
         schema: Some("core".to_string()),
         values: vec![],
+        opaque: Default::default(),
     };
     assert_eq!(en.qualified_name(), "core.status");
 }
@@ -2704,6 +2890,7 @@ fn canonicalize_pg_catalog_extension() {
             name: "plpgsql".to_string(),
             schema: Some("pg_catalog".to_string()),
             version: None,
+            opaque: Default::default(),
         },
     );
     s.canonicalize(&Dialect::Postgres);
@@ -2739,6 +2926,7 @@ fn canonicalize_rekeys_btreemap() {
             name: "status".to_string(),
             schema: Some("public".to_string()),
             values: vec!["active".to_string()],
+            opaque: Default::default(),
         },
     );
     s.canonicalize(&Dialect::Postgres);
@@ -2790,6 +2978,7 @@ fn normalize_inline_fk_preserves_on_delete() {
                     column: "id".to_string(),
                     name: None,
                     on_delete: Some("CASCADE".to_string()),
+                    on_update: Some("CASCADE".to_string()),
                 }),
                 ..Default::default()
             }],
@@ -2801,6 +2990,10 @@ fn normalize_inline_fk_preserves_on_delete() {
 
     assert_eq!(
         schema.tables["posts"].foreign_keys[0].on_delete.as_deref(),
+        Some("cascade")
+    );
+    assert_eq!(
+        schema.tables["posts"].foreign_keys[0].on_update.as_deref(),
         Some("cascade")
     );
 }
@@ -2843,6 +3036,46 @@ fn validate_rejects_invalid_foreign_key_on_delete() {
         .expect_err("invalid on_delete should fail");
 
     assert!(err.contains("unsupported on_delete action 'explode'"));
+}
+
+/// Verifies schema validation rejects unsupported foreign-key update actions.
+#[test]
+fn validate_rejects_invalid_foreign_key_on_update() {
+    let mut schema = Schema::default();
+    schema.tables.insert(
+        "users".to_string(),
+        Table {
+            name: "users".to_string(),
+            columns: vec![Column {
+                name: "id".to_string(),
+                col_type: "integer".to_string(),
+                primary_key: true,
+                ..Default::default()
+            }],
+            ..basic_table("users")
+        },
+    );
+    let mut foreign_key = ForeignKey::single("posts_user_id_fkey", "user_id", "users", "id");
+    foreign_key.on_update = Some("explode".to_string());
+    schema.tables.insert(
+        "posts".to_string(),
+        Table {
+            name: "posts".to_string(),
+            columns: vec![Column {
+                name: "user_id".to_string(),
+                col_type: "integer".to_string(),
+                ..Default::default()
+            }],
+            foreign_keys: vec![foreign_key],
+            ..basic_table("posts")
+        },
+    );
+
+    let err = schema
+        .validate()
+        .expect_err("invalid on_update should fail");
+
+    assert!(err.contains("unsupported on_update action 'explode'"));
 }
 
 mod property_states {
@@ -2907,6 +3140,7 @@ mod property_states {
                     indexes: vec![],
                     constraints: vec![],
                     triggers: vec![],
+                    options: Default::default(),
                 }
             })
             .prop_filter("table must retain at least one unique column", |table| {
@@ -3009,6 +3243,7 @@ mod property_states {
                 indexes: vec![],
                 constraints: vec![],
                 triggers: vec![],
+            options: Default::default(),
             };
 
             let mut schema = Schema::default();

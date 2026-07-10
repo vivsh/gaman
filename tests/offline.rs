@@ -7,12 +7,13 @@ use gaman::core::MigratorError;
 use gaman::schema::Schema;
 
 use support::{
-    LoweringExpectation, OfflineCase, OfflineEvidence, OfflineFeatureCatalog, OfflineFeatureResult,
-    OfflineResultStatus, OfflineSpec, OfflineSupportResults, ParseExpectation,
-    ParserFixtureDialect, SqlDirection, TestSupportError, assert_clarifications_match,
-    assert_error_contains, assert_ops_match, assert_schema_matches_with_dialect,
-    assert_sql_matches, build_migrator, case_label, offline_cases_root, offline_features_path,
-    ordered_migrations, read_case_file, replay_schema, selected_cases,
+    ExpectedDriftFinding, LoweringExpectation, OfflineCase, OfflineEvidence, OfflineFeatureCatalog,
+    OfflineFeatureResult, OfflineResultStatus, OfflineSpec, OfflineSupportResults,
+    ParseExpectation, ParserFixtureDialect, SqlDirection, TestSupportError,
+    assert_clarifications_match, assert_error_contains, assert_ops_match,
+    assert_schema_matches_with_dialect, assert_sql_matches, build_migrator, case_label,
+    offline_cases_root, offline_features_path, ordered_migrations, read_case_file, replay_schema,
+    selected_cases,
 };
 
 struct OfflineArgs {
@@ -211,6 +212,7 @@ fn offline_kind(spec: &OfflineSpec) -> &'static str {
         OfflineSpec::SchemaToMigration { .. } => "schema_to_migration",
         OfflineSpec::MigrationToReplay { .. } => "migration_to_replay",
         OfflineSpec::MigrationToSql { .. } => "migration_to_sql",
+        OfflineSpec::Verify { .. } => "verify",
         OfflineSpec::EndToEnd { .. } => "end_to_end",
     }
 }
@@ -412,6 +414,25 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
             })?;
             assert_sql_matches(name, &actual, expected)
         }
+        OfflineSpec::Verify {
+            schema,
+            replayed,
+            inspected,
+            expect_findings,
+            expect_operations,
+            expect_report,
+            expect_error,
+        } => run_verify_case(
+            name,
+            dialect,
+            schema,
+            replayed,
+            inspected,
+            expect_findings,
+            expect_operations,
+            expect_report,
+            expect_error.as_deref(),
+        ),
         OfflineSpec::EndToEnd {
             name: migration_name,
             migrations,
@@ -434,6 +455,113 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
             expect_error.as_deref(),
         ),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_verify_case(
+    name: &str,
+    dialect: gaman::core::Dialect,
+    schema: &str,
+    replayed: &Schema,
+    inspected: &Schema,
+    expect_findings: &Option<Vec<ExpectedDriftFinding>>,
+    expect_operations: &Option<Vec<gaman::schema::Operation>>,
+    expect_report: &Option<Vec<String>>,
+    expect_error: Option<&str>,
+) -> Result<(), TestSupportError> {
+    let result = prepare_verify_inputs(dialect, replayed.clone(), inspected.clone())
+        .map(|(replayed, inspected)| gaman::drift::diff(replayed, inspected, schema, dialect));
+
+    if let Some(expected) = expect_error {
+        return assert_error_contains(name, result.map(|_| ()), expected);
+    }
+
+    let report = result.map_err(|error| {
+        TestSupportError::message(format!("{name}: verify setup failed unexpectedly: {error}"))
+    })?;
+    if let Some(expected) = expect_findings {
+        assert_drift_findings_match(name, &report.findings, expected)?;
+    }
+    if let Some(expected) = expect_operations {
+        assert_ops_match(name, "verify operations", &report.operations, expected)?;
+    }
+    if let Some(expected) = expect_report {
+        let actual = gaman::drift::format_report(&report);
+        if &actual != expected {
+            return Err(TestSupportError::message(format!(
+                "{name}: verify report mismatch\nexpected:\n{}\nactual:\n{}",
+                expected.join("\n"),
+                actual.join("\n")
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn prepare_verify_inputs(
+    dialect: gaman::core::Dialect,
+    replayed: Schema,
+    inspected: Schema,
+) -> Result<(Schema, Schema), String> {
+    let replayed = replayed
+        .prepare(dialect)
+        .map_err(|error| format!("failed to prepare replayed schema: {error}"))?;
+    let inspected = dialect
+        .normalize_inspected_schema(inspected)
+        .map_err(|error| format!("failed to normalize inspected schema: {error}"))?;
+    Ok((replayed, inspected))
+}
+
+fn assert_drift_findings_match(
+    name: &str,
+    actual: &[gaman::drift::DriftFinding],
+    expected: &[ExpectedDriftFinding],
+) -> Result<(), TestSupportError> {
+    let actual: Vec<ExpectedDriftFinding> = actual
+        .iter()
+        .map(|finding| ExpectedDriftFinding {
+            operation: finding.operation.to_string(),
+            entity_kind: drift_entity_kind_name(finding.entity_kind).to_string(),
+            entity_name: finding.entity_name.clone(),
+            property: finding.property.to_string(),
+            expected: finding.expected.clone(),
+            observed: finding.observed.clone(),
+            note: finding.note.clone(),
+        })
+        .collect();
+    if actual == expected {
+        return Ok(());
+    }
+
+    let actual_yaml = serde_yaml::to_string(&actual).map_err(|error| {
+        TestSupportError::message(format!(
+            "{name}: failed to serialize actual findings: {error}"
+        ))
+    })?;
+    let expected_yaml = serde_yaml::to_string(expected).map_err(|error| {
+        TestSupportError::message(format!(
+            "{name}: failed to serialize expected findings: {error}"
+        ))
+    })?;
+    Err(TestSupportError::message(format!(
+        "{name}: verify findings mismatch\nexpected:\n{expected_yaml}\nactual:\n{actual_yaml}",
+    )))
+}
+
+fn drift_entity_kind_name(kind: impl std::fmt::Debug) -> String {
+    let debug = format!("{kind:?}");
+    let mut name = String::new();
+    for (index, ch) in debug.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index > 0 {
+                name.push('_');
+            }
+            name.push(ch.to_ascii_lowercase());
+        } else {
+            name.push(ch);
+        }
+    }
+    name
 }
 
 fn selected_migrations(
@@ -470,6 +598,7 @@ fn render_migration_sql_case(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_end_to_end_case(
     name: &str,
     fixture_dialect: support::FixtureDialect,

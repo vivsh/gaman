@@ -3,4 +3,4 @@ dialect: postgres
 sql: |
   ALTER TABLE users ADD COLUMN email text;
 
-expect_error: only CREATE statements for modeled schema entities are parsed
+expect_error: known Gaman entity kind

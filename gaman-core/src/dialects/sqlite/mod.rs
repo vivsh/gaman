@@ -69,6 +69,14 @@ impl DialectProcessor for SqliteProcessor {
         validate_schema(schema)
     }
 
+    fn drift_registry(&self) -> &'static crate::drift::DriftRegistry {
+        crate::drift::sqlite::registry()
+    }
+
+    fn normalize_inspected_schema(&self, schema: Schema) -> Result<Schema, SchemaValidationError> {
+        schema.prepare(crate::dialects::Dialect::Sqlite)
+    }
+
     fn validate_migration(&self, migration: &Migration) -> Result<(), DialectError> {
         validate_migration(migration)
     }
@@ -141,6 +149,7 @@ fn inline_constraint_def(c: &Constraint) -> String {
         Constraint::Check { name, expression } => {
             format!("CONSTRAINT {} CHECK ({})", quote_ident(name), expression)
         }
+        Constraint::Opaque { .. } => c.raw_sql().unwrap_or_default().to_string(),
     }
 }
 
@@ -154,12 +163,16 @@ fn foreign_key_clause(foreign_key: &crate::states::ForeignKey) -> Result<String,
     );
     if let Some(action) = foreign_key.on_delete.as_deref() {
         clause.push_str(" ON DELETE ");
-        clause.push_str(delete_action_sql(action)?);
+        clause.push_str(foreign_key_action_sql(action, "on_delete")?);
+    }
+    if let Some(action) = foreign_key.on_update.as_deref() {
+        clause.push_str(" ON UPDATE ");
+        clause.push_str(foreign_key_action_sql(action, "on_update")?);
     }
     Ok(clause)
 }
 
-fn delete_action_sql(action: &str) -> Result<&'static str, DialectError> {
+fn foreign_key_action_sql(action: &str, field: &str) -> Result<&'static str, DialectError> {
     match action {
         "cascade" => Ok("CASCADE"),
         "restrict" => Ok("RESTRICT"),
@@ -167,7 +180,7 @@ fn delete_action_sql(action: &str) -> Result<&'static str, DialectError> {
         "set_default" => Ok("SET DEFAULT"),
         other => Err(unsupported(
             "foreign_key",
-            &format!("unsupported on_delete action '{other}'"),
+            format!("unsupported {field} action '{other}'"),
         )),
     }
 }
@@ -239,11 +252,29 @@ fn create_table_sql(table: &Table, name: &str) -> Result<String, DialectError> {
     for c in &table.constraints {
         parts.push(inline_constraint_def(c));
     }
+    let header = table_options_prefix(table);
+    let tail = table_options_suffix(table);
     Ok(format!(
-        "CREATE TABLE {} ({})",
+        "CREATE {header}TABLE {} ({}){tail}",
         quote_table_name(name)?,
         parts.join(", ")
     ))
+}
+
+fn table_options_prefix(table: &Table) -> String {
+    if table.options.header_raw.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", table.options.header_raw.join(" "))
+    }
+}
+
+fn table_options_suffix(table: &Table) -> String {
+    if table.options.tail_raw.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", table.options.tail_raw.join(" "))
+    }
 }
 
 fn primary_key_def(name: &str, columns: &[String]) -> String {
@@ -263,6 +294,9 @@ fn create_index_sql(
     table_name: &str,
     concurrent: bool,
 ) -> Result<String, DialectError> {
+    if let Some(raw) = index.raw_sql() {
+        return Ok(trim_sql_terminator(raw).to_string());
+    }
     if concurrent {
         return Err(unsupported(
             "add_index",
@@ -283,6 +317,10 @@ fn create_index_sql(
         quoted_columns(&index.columns),
         predicate,
     ))
+}
+
+fn trim_sql_terminator(sql: &str) -> &str {
+    sql.trim().trim_end_matches(';').trim_end()
 }
 
 fn drop_index_sql(index: &Index, concurrent: bool) -> Result<String, DialectError> {
@@ -749,6 +787,7 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             quote_table_name(old_name)?,
             quote_ident(new_name)
         )]),
+        Operation::AcknowledgeTableOptions { .. } => Ok(vec![]),
         Operation::AddColumn { table_name, column } => Ok(vec![format!(
             "ALTER TABLE {} ADD COLUMN {}",
             quote_table_name(table_name)?,
@@ -773,16 +812,26 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             index, concurrent, ..
         } => Ok(vec![drop_index_sql(index, *concurrent)?]),
         Operation::Statement { up, .. } => Ok(vec![up.clone()]),
-        Operation::CreateView { view } => Ok(vec![format!(
-            "CREATE VIEW {} AS {}",
-            qualified_view(view)?,
-            view.definition
-        )]),
+        Operation::CreateView { view } => {
+            if let Some(raw) = view.raw_sql() {
+                Ok(vec![trim_sql_terminator(raw).to_string()])
+            } else {
+                Ok(vec![format!(
+                    "CREATE VIEW {} AS {}",
+                    qualified_view(view)?,
+                    view.definition
+                )])
+            }
+        }
         Operation::DropView { view } => Ok(vec![format!("DROP VIEW {}", qualified_view(view)?)]),
-        Operation::ReplaceView { old, new } => Ok(vec![
-            format!("DROP VIEW {}", qualified_view(old)?),
-            format!("CREATE VIEW {} AS {}", qualified_view(new)?, new.definition),
-        ]),
+        Operation::ReplaceView { old, new } => {
+            let create = if let Some(raw) = new.raw_sql() {
+                trim_sql_terminator(raw).to_string()
+            } else {
+                format!("CREATE VIEW {} AS {}", qualified_view(new)?, new.definition)
+            };
+            Ok(vec![format!("DROP VIEW {}", qualified_view(old)?), create])
+        }
         Operation::CreateTrigger {
             table_name,
             trigger,
@@ -825,6 +874,9 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
 }
 
 fn create_trigger_sql(table_name: &str, trigger: &TriggerDef) -> Result<String, DialectError> {
+    if let Some(raw) = trigger.raw_sql() {
+        return Ok(trim_sql_terminator(raw).to_string());
+    }
     if trigger.function_name.is_some() {
         return Err(unsupported(
             "create_trigger",

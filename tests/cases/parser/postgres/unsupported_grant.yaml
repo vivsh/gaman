@@ -3,4 +3,4 @@ description: PostgreSQL GRANT is rejected because parser input is CREATE-only.
 dialect: postgres
 sql: |
   GRANT SELECT ON users TO app_user;
-expect_error: only CREATE statements for modeled schema entities are parsed
+expect_error: known Gaman entity kind

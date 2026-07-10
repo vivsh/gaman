@@ -1,9 +1,10 @@
 use sqlx::{Row, SqliteConnection};
 
 use super::{BoxFuture, Executor, ExecutorError, Introspectable};
+use crate::tracking::TRACKING_TABLE;
 use gaman_core::states::{
-    Column, Constraint, ForeignKey, Index, PrimaryKey, Schema, Table, TriggerDef, TriggerEvent,
-    TriggerScope, TriggerTiming, ViewDef,
+    Column, Constraint, ForeignKey, Index, OpaqueMeta, PrimaryKey, Schema, Table, TableOptionsMeta,
+    TriggerDef, TriggerEvent, TriggerScope, TriggerTiming, ViewDef,
 };
 
 /// Wraps a live SQLite connection and manages transaction boundaries explicitly.
@@ -86,7 +87,8 @@ fn synth_fk_name(table: &str, from_column: &str) -> String {
 }
 
 type SqliteFkColumns = Vec<(i64, String, String)>;
-type SqliteFkGroups = std::collections::BTreeMap<i64, (String, SqliteFkColumns, Option<String>)>;
+type SqliteFkGroups =
+    std::collections::BTreeMap<i64, (String, SqliteFkColumns, Option<String>, Option<String>)>;
 
 struct MasterRow {
     kind: String,
@@ -114,21 +116,21 @@ struct ParsedTableSql {
 
 #[derive(Default)]
 struct ParsedIndexSql {
-    columns: Vec<String>,
     predicate: Option<String>,
 }
 
 async fn fetch_master_rows(conn: &mut SqliteConnection) -> Result<Vec<MasterRow>, ExecutorError> {
-    let rows = sqlx::query(
+    let query = format!(
         "SELECT type, name, tbl_name, sql FROM sqlite_master \
          WHERE type IN ('table', 'index', 'view', 'trigger') \
          AND name NOT LIKE 'sqlite_%' \
-         AND name != 'gaman_migrations' \
+         AND name != '{TRACKING_TABLE}' \
          ORDER BY type, name",
-    )
-    .fetch_all(conn)
-    .await
-    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+    );
+    let rows = sqlx::query(&query)
+        .fetch_all(conn)
+        .await
+        .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
     rows.into_iter()
         .map(|row| {
@@ -173,6 +175,7 @@ impl Introspectable for SqliteExecutor {
                     indexes: vec![],
                     constraints: vec![],
                     triggers: vec![],
+                    options: TableOptionsMeta::default(),
                 };
 
                 let col_rows = sqlx::query(&format!("PRAGMA table_xinfo({quoted_table})"))
@@ -250,12 +253,20 @@ impl Introspectable for SqliteExecutor {
                     let on_delete: String = fkr
                         .try_get("on_delete")
                         .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
-                    let entry = fk_map
-                        .entry(id)
-                        .or_insert_with(|| (to_table, Vec::new(), sqlite_fk_action(&on_delete)));
+                    let on_update: String = fkr
+                        .try_get("on_update")
+                        .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                    let entry = fk_map.entry(id).or_insert_with(|| {
+                        (
+                            to_table,
+                            Vec::new(),
+                            sqlite_fk_action(&on_delete),
+                            sqlite_fk_action(&on_update),
+                        )
+                    });
                     entry.1.push((seq, from_column, to_column));
                 }
-                for (_, (to_table, mut columns, on_delete)) in fk_map {
+                for (_, (to_table, mut columns, on_delete, on_update)) in fk_map {
                     columns.sort_by_key(|(seq, _, _)| *seq);
                     let from_columns: Vec<String> = columns
                         .iter()
@@ -272,6 +283,7 @@ impl Introspectable for SqliteExecutor {
                         to_columns,
                     );
                     foreign_key.on_delete = on_delete;
+                    foreign_key.on_update = on_update;
                     table.foreign_keys.push(foreign_key);
                 }
 
@@ -320,24 +332,31 @@ impl Introspectable for SqliteExecutor {
                     }
                     keyed_columns.sort_by_key(|(seqno, _)| *seqno);
                     let mut columns = Vec::new();
-                    for (idx, (_, name)) in keyed_columns.into_iter().enumerate() {
+                    let mut opaque_index = None;
+                    for (_, name) in keyed_columns {
                         match name {
                             Some(name) => columns.push(name),
                             None => {
-                                let Some(expr) = parsed_index.columns.get(idx) else {
-                                    return Err(ExecutorError::Fetch(format!(
-                                        "unsupported SQLite expression index '{idx_name}' without recoverable expression SQL"
-                                    )));
-                                };
-                                columns.push(expr.clone());
+                                let raw = index_sql.unwrap_or_default();
+                                let mut index = Index::from_raw(idx_name.clone(), raw.to_string());
+                                index.unique = unique != 0;
+                                index.predicate = parsed_index.predicate.clone();
+                                index.mark_trusted();
+                                opaque_index = Some(index);
+                                break;
                             }
                         }
+                    }
+                    if let Some(index) = opaque_index {
+                        table.indexes.push(index);
+                        continue;
                     }
                     table.indexes.push(Index {
                         name: idx_name,
                         columns,
                         unique: unique != 0,
                         predicate: parsed_index.predicate,
+                        opaque: OpaqueMeta::default(),
                     });
                 }
 
@@ -352,6 +371,7 @@ impl Introspectable for SqliteExecutor {
                         name,
                         schema: None,
                         definition: parse_view_definition(row.sql.as_deref().unwrap_or_default()),
+                        opaque: OpaqueMeta::default(),
                     },
                 );
             }
@@ -395,15 +415,10 @@ fn parse_create_index_sql(sql: &str) -> ParsedIndexSql {
         return ParsedIndexSql::default();
     };
     let after_on = &sql[on_pos + "ON".len()..];
-    let Some(body) = parenthesized_body(after_on) else {
+    let Some(_body) = parenthesized_body(after_on) else {
         return ParsedIndexSql::default();
     };
     ParsedIndexSql {
-        columns: split_top_level(body, ',')
-            .into_iter()
-            .map(|part| part.trim().to_string())
-            .filter(|part| !part.is_empty())
-            .collect(),
         predicate: find_top_level_keyword(sql, "WHERE")
             .map(|pos| {
                 sql[pos + "WHERE".len()..]
@@ -433,6 +448,12 @@ fn parse_named_constraint(input: &str, parsed: &mut ParsedTableSql) {
             name,
             expression: inner.trim().to_string(),
         });
+    } else if strip_keyword(rest, "PRIMARY").is_some() || strip_keyword(rest, "FOREIGN").is_some() {
+    } else {
+        parsed.constraints.push(Constraint::from_trusted_raw(
+            name.clone(),
+            format!("CONSTRAINT {name} {rest}"),
+        ));
     }
 }
 
@@ -664,6 +685,7 @@ fn parse_trigger_sql(name: &str, sql: &str) -> Option<TriggerDef> {
         when: None,
         query,
         language: None,
+        opaque: OpaqueMeta::default(),
     })
 }
 
@@ -688,7 +710,7 @@ mod tests {
     #[test]
     fn parse_create_table_sql_recovers_generated_columns_and_constraints() {
         let parsed = parse_create_table_sql(
-            r#"CREATE TABLE "items" ("id" integer PRIMARY KEY, "total" integer GENERATED ALWAYS AS (price * qty) STORED, CONSTRAINT "items_sku_key" UNIQUE ("sku"), CONSTRAINT "items_price_check" CHECK (price >= 0))"#,
+            r#"CREATE TABLE "items" ("id" integer, "parent_id" integer, "total" integer GENERATED ALWAYS AS (price * qty) STORED, CONSTRAINT "items_pkey" PRIMARY KEY ("id"), CONSTRAINT "items_parent_fkey" FOREIGN KEY ("parent_id") REFERENCES "parents" ("id"), CONSTRAINT "items_sku_key" UNIQUE ("sku"), CONSTRAINT "items_price_check" CHECK (price >= 0))"#,
         );
 
         assert_eq!(

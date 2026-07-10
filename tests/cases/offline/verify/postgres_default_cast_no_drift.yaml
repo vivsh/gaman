@@ -1,0 +1,27 @@
+description: PostgreSQL inspected literal cast default semantically matches replayed schema
+
+group: verify
+features:
+- verify.postgres_default_cast_no_drift
+dialect: postgres
+kind: verify
+schema: public
+replayed:
+  tables:
+    preferences:
+      columns:
+      - name: theme
+        type: text
+        nullable: false
+        default: '''light'''
+inspected:
+  tables:
+    preferences:
+      columns:
+      - name: theme
+        type: text
+        nullable: false
+        default: '''light''::text'
+expect_findings: []
+expect_operations: []
+expect_report: []

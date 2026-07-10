@@ -69,7 +69,7 @@ cases:
       name: email_norm
       table: users
   materialized_view_tail_parse_error:
-    description: PostgreSQL materialized view WITH DATA tail is reported as parser error.
+    description: PostgreSQL materialized views are rejected outside EntityKind.
     dialect: postgres
     status: success
     entities: []
@@ -115,7 +115,7 @@ cases:
       name: users_age_check
       table: users
   sqlite_expression_index:
-    description: SQLite expression CREATE INDEX records expression columns.
+    description: SQLite expression CREATE INDEX is preserved as an opaque index.
     dialect: sqlite
     status: success
     entities:

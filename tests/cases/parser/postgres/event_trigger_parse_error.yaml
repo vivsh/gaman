@@ -3,4 +3,4 @@ description: PostgreSQL event triggers are reported as parser errors.
 dialect: postgres
 sql: |
   CREATE EVENT TRIGGER ddl_audit ON ddl_command_end EXECUTE FUNCTION audit_ddl();
-expect_error: SQL parse error
+expect_error: known Gaman entity kind

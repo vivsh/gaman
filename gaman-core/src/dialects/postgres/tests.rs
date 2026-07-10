@@ -54,6 +54,7 @@ fn empty_table(name: &str) -> Table {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     }
 }
 
@@ -62,6 +63,7 @@ fn enum_def(values: &[&str]) -> EnumDef {
         name: "status".to_string(),
         schema: None,
         values: values.iter().map(|value| value.to_string()).collect(),
+        opaque: Default::default(),
     }
 }
 
@@ -167,6 +169,7 @@ fn create_table_basic() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let sql = operation_to_sql(&Operation::CreateTable { table }).unwrap();
     assert_eq!(sql.len(), 1);
@@ -193,6 +196,7 @@ fn create_table_composite_primary_key() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
 
     let sql = operation_to_sql(&Operation::CreateTable { table }).unwrap();
@@ -217,6 +221,7 @@ fn create_table_reserved_word_name() {
         indexes: vec![],
         constraints: vec![],
         triggers: vec![],
+        options: Default::default(),
     };
     let sql = operation_to_sql(&Operation::CreateTable { table }).unwrap();
     assert!(
@@ -354,7 +359,9 @@ fn alter_column_drops_schema_qualified_primary_key_by_bare_table_name() {
 
 #[test]
 fn add_foreign_key_sql() {
-    let fk = ForeignKey::single("posts_user_id_fkey", "user_id", "users", "id");
+    let fk = ForeignKey::single("posts_user_id_fkey", "user_id", "users", "id")
+        .on_delete("cascade")
+        .on_update("restrict");
     let sql = operation_to_sql(&Operation::AddForeignKey {
         table_name: "posts".to_string(),
         foreign_key: fk,
@@ -363,7 +370,7 @@ fn add_foreign_key_sql() {
     assert_eq!(
         sql,
         vec![
-            "ALTER TABLE \"posts\" ADD CONSTRAINT \"posts_user_id_fkey\" FOREIGN KEY (\"user_id\") REFERENCES \"users\" (\"id\")"
+            "ALTER TABLE \"posts\" ADD CONSTRAINT \"posts_user_id_fkey\" FOREIGN KEY (\"user_id\") REFERENCES \"users\" (\"id\") ON DELETE CASCADE ON UPDATE RESTRICT"
         ]
     );
 }
@@ -426,6 +433,7 @@ fn add_index_sql() {
         columns: vec!["email".to_string()],
         unique: false,
         predicate: None,
+        opaque: Default::default(),
     };
     let sql = operation_to_sql(&Operation::AddIndex {
         table_name: "users".to_string(),
@@ -446,6 +454,7 @@ fn add_unique_index_sql() {
         columns: vec!["email".to_string()],
         unique: true,
         predicate: None,
+        opaque: Default::default(),
     };
     let sql = operation_to_sql(&Operation::AddIndex {
         table_name: "users".to_string(),
@@ -467,6 +476,7 @@ fn add_partial_concurrent_index_sql() {
         columns: vec!["email".to_string()],
         unique: false,
         predicate: Some("deleted_at IS NULL".to_string()),
+        opaque: Default::default(),
     };
 
     let sql = operation_to_sql(&Operation::AddIndex {
@@ -545,6 +555,7 @@ fn drop_index_sql() {
         columns: vec!["email".to_string()],
         unique: false,
         predicate: None,
+        opaque: Default::default(),
     };
     let sql = operation_to_sql(&Operation::DropIndex {
         table_name: "users".to_string(),
@@ -562,6 +573,7 @@ fn drop_index_sql_schema_qualifies_index_from_table_schema() {
         columns: vec!["email".to_string()],
         unique: false,
         predicate: None,
+        opaque: Default::default(),
     };
     let sql = operation_to_sql(&Operation::DropIndex {
         table_name: "app.users".to_string(),
@@ -595,6 +607,7 @@ fn create_extension_sql() {
             name: "pgcrypto".to_string(),
             schema: Some("extensions".to_string()),
             version: Some("1.3".to_string()),
+            opaque: Default::default(),
         },
     })
     .unwrap();
@@ -613,6 +626,7 @@ fn drop_extension_sql() {
             name: "pgcrypto".to_string(),
             schema: None,
             version: None,
+            opaque: Default::default(),
         },
     })
     .unwrap();
@@ -709,6 +723,7 @@ fn basic_function(name: &str) -> crate::states::FunctionDef {
         body: "SELECT 1".to_string(),
         volatility: crate::states::Volatility::Volatile,
         security_definer: false,
+        opaque: Default::default(),
     }
 }
 
@@ -722,6 +737,7 @@ fn basic_trigger(name: &str) -> crate::states::TriggerDef {
         when: None,
         query: None,
         language: None,
+        opaque: Default::default(),
     }
 }
 
@@ -1069,6 +1085,7 @@ fn create_view_sql() {
             name: "active_users".to_string(),
             schema: Some("app".to_string()),
             definition: "SELECT id FROM app.users WHERE active".to_string(),
+            opaque: Default::default(),
         },
     })
     .unwrap();
@@ -1089,6 +1106,7 @@ fn drop_view_sql() {
             name: "active_users".to_string(),
             schema: Some("app".to_string()),
             definition: String::new(),
+            opaque: Default::default(),
         },
     })
     .unwrap();
@@ -1103,11 +1121,13 @@ fn replace_view_sql() {
         name: "active_users".to_string(),
         schema: Some("app".to_string()),
         definition: "SELECT id FROM app.users".to_string(),
+        opaque: Default::default(),
     };
     let new = ViewDef {
         name: "active_users".to_string(),
         schema: Some("app".to_string()),
         definition: "SELECT id FROM app.users WHERE active".to_string(),
+        opaque: Default::default(),
     };
 
     let sql = operation_to_sql(&Operation::ReplaceView { old, new }).unwrap();

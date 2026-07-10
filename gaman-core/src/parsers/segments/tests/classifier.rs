@@ -13,9 +13,12 @@ fn kinds(sql: &str, dialect: Dialect) -> Vec<Option<SqlStatementKind>> {
 }
 
 fn ddl(entity: EntityKind, name: &str) -> Option<SqlStatementKind> {
+    let owner =
+        matches!(entity, EntityKind::Index | EntityKind::Trigger).then(|| name_obj("users"));
     Some(SqlStatementKind::Ddl(DdlStatementKind {
         entity,
         name: Some(name_obj(name)),
+        owner,
     }))
 }
 
@@ -126,7 +129,7 @@ fn ddl_classification_with_create_modifiers() {
             ddl(EntityKind::Table, "temp_users"),
             ddl(EntityKind::Table, "events"),
             ddl(EntityKind::Table, "users"),
-            ddl(EntityKind::View, "active_users"),
+            None,
         ]
     );
 }
@@ -180,6 +183,7 @@ fn quoted_identifier_names_preserve_raw_and_unquote_parts() {
                 "\"public\".\"User\"",
                 vec!["public", "User"]
             )),
+            owner: None,
         }))
     );
     assert_eq!(
@@ -187,6 +191,7 @@ fn quoted_identifier_names_preserve_raw_and_unquote_parts() {
         Some(SqlStatementKind::Ddl(DdlStatementKind {
             entity: EntityKind::Table,
             name: Some(name_obj_parts("`app`.`order`", vec!["app", "order"])),
+            owner: None,
         }))
     );
 }
@@ -377,7 +382,7 @@ fn create_non_table_modifier_variants_classify() {
         vec![
             ddl(EntityKind::View, "active_users"),
             ddl(EntityKind::View, "public.active_users"),
-            ddl(EntityKind::View, "user_counts"),
+            None,
             ddl(EntityKind::Function, "audit_users"),
             ddl(EntityKind::Function, "public.audit_users"),
             ddl(EntityKind::Trigger, "users_ai"),
@@ -408,6 +413,7 @@ fn create_enum_variants_classify_only_as_enum() {
                     "\"public\".\"Mood\"",
                     vec!["public", "Mood"]
                 )),
+                owner: None,
             })),
             None,
             None,
@@ -432,18 +438,22 @@ fn create_classification_is_dialect_agnostic_for_mysql_style_sql() {
             Some(SqlStatementKind::Ddl(DdlStatementKind {
                 entity: EntityKind::Table,
                 name: Some(name_obj_parts("`users`", vec!["users"])),
+                owner: None,
             })),
             Some(SqlStatementKind::Ddl(DdlStatementKind {
                 entity: EntityKind::Index,
                 name: Some(name_obj_parts("`users_email_idx`", vec!["users_email_idx"])),
+                owner: Some(name_obj_parts("`users`", vec!["users"])),
             })),
             Some(SqlStatementKind::Ddl(DdlStatementKind {
                 entity: EntityKind::Function,
                 name: Some(name_obj_parts("`audit_users`", vec!["audit_users"])),
+                owner: None,
             })),
             Some(SqlStatementKind::Ddl(DdlStatementKind {
                 entity: EntityKind::Trigger,
                 name: Some(name_obj_parts("`users_ai`", vec!["users_ai"])),
+                owner: Some(name_obj_parts("`users`", vec!["users"])),
             })),
         ]
     );

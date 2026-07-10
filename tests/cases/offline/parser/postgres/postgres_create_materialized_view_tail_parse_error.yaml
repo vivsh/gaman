@@ -11,6 +11,6 @@ sql: |
   CREATE MATERIALIZED VIEW active_users
   AS SELECT * FROM users WHERE deleted_at IS NULL
   WITH DATA;
-expect_parse: error
+expect_parse: ok
 expect_lowering: error
 expect_error: WITH

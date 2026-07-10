@@ -60,6 +60,14 @@ impl DialectProcessor for MysqlProcessor {
         ))
     }
 
+    fn drift_registry(&self) -> &'static crate::drift::DriftRegistry {
+        crate::drift::mysql::registry()
+    }
+
+    fn normalize_inspected_schema(&self, schema: Schema) -> Result<Schema, SchemaValidationError> {
+        schema.prepare(crate::dialects::Dialect::Mysql)
+    }
+
     fn validate_migration(&self, _migration: &Migration) -> Result<(), DialectError> {
         Err(unsupported())
     }

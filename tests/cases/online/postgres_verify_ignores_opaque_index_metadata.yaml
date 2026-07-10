@@ -1,0 +1,32 @@
+description: PostgreSQL verify ignores unregistered opaque metadata on advanced live indexes
+features:
+  - live_inspect_verify
+  - ownership_scoped_verify
+  - opaque_index_metadata
+
+migrations:
+  - id: 0001_create_users
+    operations:
+      - type: create_table
+        table:
+          name: users
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email
+              type: varchar(255)
+            - name: created_at
+              type: timestamp with time zone
+            - name: body
+              type: tsvector
+
+mutate_sql: |
+  CREATE INDEX users_email_like_idx ON users (email varchar_pattern_ops);
+  CREATE INDEX users_created_at_sort_idx ON users (created_at DESC NULLS LAST);
+  CREATE INDEX users_body_gin_idx ON users USING gin (body);
+
+dialects:
+  postgres:
+    checks: [verify]
+    expect_verify: []

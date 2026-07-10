@@ -11,6 +11,6 @@ sql: |
   CREATE EVENT TRIGGER ddl_audit
   ON ddl_command_end
   EXECUTE FUNCTION audit.log_ddl();
-expect_parse: error
+expect_parse: ok
 expect_lowering: error
 expect_error: EVENT

@@ -221,6 +221,32 @@ pub fn clarification_message(clar: &Clarification) -> ClarificationMessage {
                 options,
             }
         }
+        ClarificationKind::OpaqueEntity { kind, name } => {
+            let description = format!(
+                "{} {:?} '{}' is managed as opaque SQL; changes use coarse create/drop/replace semantics.",
+                tag, kind, name
+            );
+            ClarificationMessage {
+                description,
+                options: vec![ClarificationOption {
+                    label: "Accept opaque SQL management for this object".to_string(),
+                    action: OptionAction::Fixed(Answer::AcceptRisk),
+                }],
+            }
+        }
+        ClarificationKind::UnmanagedTableOptions { table } => {
+            let description = format!(
+                "{} Table '{}' has unmanaged table options that Gaman will preserve but not model granularly.",
+                tag, table
+            );
+            ClarificationMessage {
+                description,
+                options: vec![ClarificationOption {
+                    label: "Accept unmanaged table options".to_string(),
+                    action: OptionAction::Fixed(Answer::AcceptRisk),
+                }],
+            }
+        }
     }
 }
 

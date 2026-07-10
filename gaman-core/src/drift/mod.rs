@@ -5,37 +5,24 @@
 //! replayed and reflected entities, runs the registered comparators, and returns
 //! structured findings plus repair operations.
 
-mod mysql;
-mod postgres;
-mod sqlite;
+mod contract;
+pub(crate) mod mysql;
+pub(crate) mod postgres;
+mod report;
+pub(crate) mod sqlite;
 
-use gaman_core::dialects::Dialect;
-use gaman_core::operations::Operation;
-use gaman_core::states::types::EntityKind;
-use gaman_core::states::{
+use std::sync::OnceLock;
+
+use crate::dialects::Dialect;
+use crate::operations::Operation;
+use crate::states::types::EntityKind;
+use crate::states::{
     Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, PrimaryKey, Schema,
     Table, TriggerDef, ViewDef,
 };
 
-/// Result of live drift verification.
-#[derive(Debug, Clone, Default)]
-pub struct VerificationReport {
-    pub findings: Vec<DriftFinding>,
-    pub operations: Vec<Operation>,
-    pub pending_migrations: Vec<String>,
-}
-
-/// A single property mismatch found by `verify_db`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DriftFinding {
-    pub operation: &'static str,
-    pub entity_kind: EntityKind,
-    pub entity_name: String,
-    pub property: &'static str,
-    pub expected: String,
-    pub actual: String,
-    pub note: Option<String>,
-}
+pub use contract::DriftPropertyDoc;
+pub use report::{DriftFinding, VerificationReport};
 
 /// Result of comparing one verified property.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,73 +30,73 @@ pub(crate) enum PropertyMatch {
     Match,
     Drift {
         expected: String,
-        actual: String,
+        observed: String,
         note: Option<String>,
     },
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct VerificationContext<'a> {
+pub(crate) struct DriftContext<'a> {
     pub dialect: Dialect,
     pub table_name: Option<&'a str>,
 }
 
 pub(crate) struct TableProperty {
     pub name: &'static str,
-    pub compare: fn(&Table, &Table, VerificationContext<'_>) -> PropertyMatch,
+    pub compare: fn(&Table, &Table, DriftContext<'_>) -> PropertyMatch,
 }
 
 pub(crate) struct ColumnProperty {
     pub name: &'static str,
-    pub compare: fn(&Column, &Column, VerificationContext<'_>) -> PropertyMatch,
+    pub compare: fn(&Column, &Column, DriftContext<'_>) -> PropertyMatch,
 }
 
 pub(crate) struct PrimaryKeyProperty {
     pub name: &'static str,
-    pub compare: fn(&PrimaryKey, &PrimaryKey, VerificationContext<'_>) -> PropertyMatch,
+    pub compare: fn(&PrimaryKey, &PrimaryKey, DriftContext<'_>) -> PropertyMatch,
 }
 
 pub(crate) struct ForeignKeyProperty {
     pub name: &'static str,
-    pub compare: fn(&ForeignKey, &ForeignKey, VerificationContext<'_>) -> PropertyMatch,
+    pub compare: fn(&ForeignKey, &ForeignKey, DriftContext<'_>) -> PropertyMatch,
 }
 
 pub(crate) struct IndexProperty {
     pub name: &'static str,
-    pub compare: fn(&Index, &Index, VerificationContext<'_>) -> PropertyMatch,
+    pub compare: fn(&Index, &Index, DriftContext<'_>) -> PropertyMatch,
 }
 
 pub(crate) struct ConstraintProperty {
     pub name: &'static str,
-    pub compare: fn(&Constraint, &Constraint, VerificationContext<'_>) -> PropertyMatch,
+    pub compare: fn(&Constraint, &Constraint, DriftContext<'_>) -> PropertyMatch,
 }
 
 pub(crate) struct TriggerProperty {
     pub name: &'static str,
-    pub compare: fn(&TriggerDef, &TriggerDef, VerificationContext<'_>) -> PropertyMatch,
+    pub compare: fn(&TriggerDef, &TriggerDef, DriftContext<'_>) -> PropertyMatch,
 }
 
 pub(crate) struct FunctionProperty {
     pub name: &'static str,
-    pub compare: fn(&FunctionDef, &FunctionDef, VerificationContext<'_>) -> PropertyMatch,
+    pub compare: fn(&FunctionDef, &FunctionDef, DriftContext<'_>) -> PropertyMatch,
 }
 
 pub(crate) struct ViewProperty {
     pub name: &'static str,
-    pub compare: fn(&ViewDef, &ViewDef, VerificationContext<'_>) -> PropertyMatch,
+    pub compare: fn(&ViewDef, &ViewDef, DriftContext<'_>) -> PropertyMatch,
 }
 
 pub(crate) struct EnumProperty {
     pub name: &'static str,
-    pub compare: fn(&EnumDef, &EnumDef, VerificationContext<'_>) -> PropertyMatch,
+    pub compare: fn(&EnumDef, &EnumDef, DriftContext<'_>) -> PropertyMatch,
 }
 
 pub(crate) struct ExtensionProperty {
     pub name: &'static str,
-    pub compare: fn(&ExtensionDef, &ExtensionDef, VerificationContext<'_>) -> PropertyMatch,
+    pub compare: fn(&ExtensionDef, &ExtensionDef, DriftContext<'_>) -> PropertyMatch,
 }
 
-pub(crate) struct VerificationRegistry {
+pub(crate) struct DriftRegistry {
     pub tables: &'static [TableProperty],
     pub columns: &'static [ColumnProperty],
     pub primary_keys: &'static [PrimaryKeyProperty],
@@ -123,8 +110,95 @@ pub(crate) struct VerificationRegistry {
     pub extensions: &'static [ExtensionProperty],
 }
 
+/// Returns the user-facing semantic drift contract for a dialect.
+pub fn contract_for(dialect: Dialect) -> &'static [DriftPropertyDoc] {
+    static POSTGRES: OnceLock<Vec<DriftPropertyDoc>> = OnceLock::new();
+    static SQLITE: OnceLock<Vec<DriftPropertyDoc>> = OnceLock::new();
+    static MYSQL: OnceLock<Vec<DriftPropertyDoc>> = OnceLock::new();
+
+    let contract = match dialect {
+        Dialect::Postgres => &POSTGRES,
+        Dialect::Sqlite => &SQLITE,
+        Dialect::Mysql => &MYSQL,
+    };
+    contract.get_or_init(|| registry_for(dialect).contract())
+}
+
+impl DriftRegistry {
+    pub(crate) fn contract(&self) -> Vec<DriftPropertyDoc> {
+        let mut docs = Vec::new();
+        push_docs(
+            &mut docs,
+            EntityKind::Table,
+            self.tables.iter().map(|p| p.name),
+        );
+        push_docs(
+            &mut docs,
+            EntityKind::Column,
+            self.columns.iter().map(|p| p.name),
+        );
+        push_docs(
+            &mut docs,
+            EntityKind::Table,
+            self.primary_keys.iter().map(|p| p.name),
+        );
+        push_docs(
+            &mut docs,
+            EntityKind::ForeignKey,
+            self.foreign_keys.iter().map(|p| p.name),
+        );
+        push_docs(
+            &mut docs,
+            EntityKind::Index,
+            self.indexes.iter().map(|p| p.name),
+        );
+        push_docs(
+            &mut docs,
+            EntityKind::Constraint,
+            self.constraints.iter().map(|p| p.name),
+        );
+        push_docs(
+            &mut docs,
+            EntityKind::Trigger,
+            self.triggers.iter().map(|p| p.name),
+        );
+        push_docs(
+            &mut docs,
+            EntityKind::Function,
+            self.functions.iter().map(|p| p.name),
+        );
+        push_docs(
+            &mut docs,
+            EntityKind::View,
+            self.views.iter().map(|p| p.name),
+        );
+        push_docs(
+            &mut docs,
+            EntityKind::Enum,
+            self.enums.iter().map(|p| p.name),
+        );
+        push_docs(
+            &mut docs,
+            EntityKind::Extension,
+            self.extensions.iter().map(|p| p.name),
+        );
+        docs
+    }
+}
+
+fn push_docs<I>(docs: &mut Vec<DriftPropertyDoc>, entity_kind: EntityKind, properties: I)
+where
+    I: IntoIterator<Item = &'static str>,
+{
+    docs.extend(
+        properties
+            .into_iter()
+            .map(|property| contract::property_doc(entity_kind, property)),
+    );
+}
+
 /// Verifies replayed migration state against live inspected state.
-pub(crate) fn verify(
+pub fn diff(
     mut replay: Schema,
     mut live: Schema,
     schema: &str,
@@ -135,7 +209,7 @@ pub(crate) fn verify(
 
     let registry = registry_for(dialect);
     let mut report = VerificationReport::default();
-    let context = VerificationContext {
+    let context = DriftContext {
         dialect,
         table_name: None,
     };
@@ -145,24 +219,19 @@ pub(crate) fn verify(
     report
 }
 
-fn registry_for(dialect: Dialect) -> &'static VerificationRegistry {
-    match dialect {
-        Dialect::Postgres => postgres::registry(),
-        #[cfg(feature = "sqlite")]
-        Dialect::Sqlite => sqlite::registry(),
-        Dialect::Mysql => mysql::registry(),
-    }
+pub(crate) fn registry_for(dialect: Dialect) -> &'static DriftRegistry {
+    dialect.drift_registry()
 }
 
 fn verify_tables(
     replay: &Schema,
     live: &Schema,
-    registry: &VerificationRegistry,
-    context: VerificationContext<'_>,
+    registry: &DriftRegistry,
+    context: DriftContext<'_>,
     report: &mut VerificationReport,
 ) {
     for (name, expected) in &replay.tables {
-        let Some(actual) = live.tables.get(name) else {
+        let Some(observed) = live.tables.get(name) else {
             report.operations.push(Operation::CreateTable {
                 table: expected.clone(),
             });
@@ -175,28 +244,28 @@ fn verify_tables(
             continue;
         };
 
-        compare_table_properties(expected, actual, registry, context, report);
-        verify_table_children(expected, actual, registry, context, report);
+        compare_table_properties(expected, observed, registry, context, report);
+        verify_table_children(expected, observed, registry, context, report);
     }
 }
 
 fn verify_table_children(
     expected: &Table,
-    actual: &Table,
-    registry: &VerificationRegistry,
-    context: VerificationContext<'_>,
+    observed: &Table,
+    registry: &DriftRegistry,
+    context: DriftContext<'_>,
     report: &mut VerificationReport,
 ) {
     let table_name = expected.qualified_name();
-    let context = VerificationContext {
+    let context = DriftContext {
         table_name: Some(&table_name),
         ..context
     };
-    verify_columns(expected, actual, registry, context, report);
-    verify_primary_key(expected, actual, registry, context, report);
+    verify_columns(expected, observed, registry, context, report);
+    verify_primary_key(expected, observed, registry, context, report);
     verify_named_items(
         &expected.foreign_keys,
-        &actual.foreign_keys,
+        &observed.foreign_keys,
         |fk| fk.name.as_str(),
         |fk| Operation::AddForeignKey {
             table_name: table_name.clone(),
@@ -225,7 +294,7 @@ fn verify_table_children(
     );
     verify_named_items(
         &expected.indexes,
-        &actual.indexes,
+        &observed.indexes,
         |index| index.name.as_str(),
         |index| Operation::AddIndex {
             table_name: table_name.clone(),
@@ -256,7 +325,7 @@ fn verify_table_children(
     );
     verify_named_items(
         &expected.constraints,
-        &actual.constraints,
+        &observed.constraints,
         Constraint::name,
         |constraint| Operation::AddConstraint {
             table_name: table_name.clone(),
@@ -284,7 +353,7 @@ fn verify_table_children(
     );
     verify_named_items(
         &expected.triggers,
-        &actual.triggers,
+        &observed.triggers,
         |trigger| trigger.name.as_deref().unwrap_or(""),
         |trigger| Operation::CreateTrigger {
             table_name: table_name.clone(),
@@ -309,13 +378,16 @@ fn verify_table_children(
 
 fn verify_columns(
     expected: &Table,
-    actual: &Table,
-    registry: &VerificationRegistry,
-    context: VerificationContext<'_>,
+    observed: &Table,
+    registry: &DriftRegistry,
+    context: DriftContext<'_>,
     report: &mut VerificationReport,
 ) {
     for column in &expected.columns {
-        let Some(actual_column) = actual.columns.iter().find(|item| item.name == column.name)
+        let Some(actual_column) = observed
+            .columns
+            .iter()
+            .find(|item| item.name == column.name)
         else {
             report.operations.push(Operation::AddColumn {
                 table_name: expected.qualified_name(),
@@ -345,16 +417,16 @@ fn verify_columns(
 
 fn verify_primary_key(
     expected: &Table,
-    actual: &Table,
-    registry: &VerificationRegistry,
-    context: VerificationContext<'_>,
+    observed: &Table,
+    registry: &DriftRegistry,
+    context: DriftContext<'_>,
     report: &mut VerificationReport,
 ) {
     let Some(expected_pk) = &expected.primary_key else {
         return;
     };
     let entity_name = format!("{}.{}", expected.qualified_name(), expected_pk.name);
-    let Some(actual_pk) = &actual.primary_key else {
+    let Some(actual_pk) = &observed.primary_key else {
         report.findings.push(missing_finding(
             "alter_primary_key",
             EntityKind::Constraint,
@@ -376,14 +448,14 @@ fn verify_primary_key(
 fn verify_top_level_objects(
     replay: &Schema,
     live: &Schema,
-    registry: &VerificationRegistry,
-    context: VerificationContext<'_>,
+    registry: &DriftRegistry,
+    context: DriftContext<'_>,
     report: &mut VerificationReport,
 ) {
     verify_top_map(
         &replay.functions,
         &live.functions,
-        |function| function_verify_key(function),
+        function_verify_key,
         |function| Operation::CreateFunction {
             function: sanitized_function(function),
         },
@@ -465,9 +537,10 @@ fn verify_top_level_objects(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn verify_top_map<T, P>(
     expected: &std::collections::BTreeMap<String, T>,
-    actual: &std::collections::BTreeMap<String, T>,
+    observed: &std::collections::BTreeMap<String, T>,
     key: fn(&T) -> String,
     create: impl Fn(&T) -> Operation,
     alter: impl Fn(&T, &T) -> Vec<Operation>,
@@ -475,21 +548,25 @@ fn verify_top_map<T, P>(
     create_op: &'static str,
     alter_op: &'static str,
     properties: &'static [P],
-    compare: fn(&T, &T, &'static [P], VerificationContext<'_>, &str) -> Vec<DriftFinding>,
-    context: VerificationContext<'_>,
+    compare: fn(&T, &T, &'static [P], DriftContext<'_>, &str) -> Vec<DriftFinding>,
+    context: DriftContext<'_>,
     report: &mut VerificationReport,
 ) where
     P: RegisteredProperty<T> + 'static,
+    T: DriftOpaque,
 {
     for expected_value in expected.values() {
         let expected_key = key(expected_value);
-        let Some(actual_value) = actual.values().find(|item| key(item) == expected_key) else {
+        let Some(actual_value) = observed.values().find(|item| key(item) == expected_key) else {
             report.operations.push(create(expected_value));
             report
                 .findings
                 .push(missing_finding(create_op, kind, &expected_key, "presence"));
             continue;
         };
+        if expected_value.is_drift_opaque() {
+            continue;
+        }
         let findings = compare(
             expected_value,
             actual_value,
@@ -565,9 +642,10 @@ fn column_for_operation(column: &Column, dialect: Dialect) -> Column {
     column
 }
 
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn verify_named_items<T, P>(
     expected: &[T],
-    actual: &[T],
+    observed: &[T],
     name: fn(&T) -> &str,
     create: impl Fn(&T) -> Operation,
     alter: impl Fn(&T, &T) -> Vec<Operation>,
@@ -579,24 +657,29 @@ fn verify_named_items<T, P>(
         &T,
         &T,
         &'static [P],
-        VerificationContext<'_>,
+        DriftContext<'_>,
         &str,
         &'static str,
         EntityKind,
     ) -> Vec<DriftFinding>,
-    context: VerificationContext<'_>,
+    context: DriftContext<'_>,
     report: &mut VerificationReport,
-) {
+) where
+    T: DriftOpaque,
+{
     for expected_value in expected {
         let expected_name = name(expected_value);
         let entity_name = scoped_child_name(context.table_name, expected_name);
-        let Some(actual_value) = actual.iter().find(|item| name(item) == expected_name) else {
+        let Some(actual_value) = observed.iter().find(|item| name(item) == expected_name) else {
             report.operations.push(create(expected_value));
             report
                 .findings
                 .push(missing_finding(create_op, kind, &entity_name, "presence"));
             continue;
         };
+        if expected_value.is_drift_opaque() {
+            continue;
+        }
         let findings = compare(
             expected_value,
             actual_value,
@@ -615,19 +698,63 @@ fn verify_named_items<T, P>(
     }
 }
 
+trait DriftOpaque {
+    fn is_drift_opaque(&self) -> bool {
+        false
+    }
+}
+
+impl DriftOpaque for ForeignKey {}
+impl DriftOpaque for Constraint {
+    fn is_drift_opaque(&self) -> bool {
+        self.is_opaque()
+    }
+}
+impl DriftOpaque for EnumDef {}
+
+impl DriftOpaque for Index {
+    fn is_drift_opaque(&self) -> bool {
+        self.is_opaque()
+    }
+}
+
+impl DriftOpaque for TriggerDef {
+    fn is_drift_opaque(&self) -> bool {
+        self.is_opaque()
+    }
+}
+
+impl DriftOpaque for FunctionDef {
+    fn is_drift_opaque(&self) -> bool {
+        self.is_opaque()
+    }
+}
+
+impl DriftOpaque for ViewDef {
+    fn is_drift_opaque(&self) -> bool {
+        self.is_opaque()
+    }
+}
+
+impl DriftOpaque for ExtensionDef {
+    fn is_drift_opaque(&self) -> bool {
+        self.is_opaque()
+    }
+}
+
 fn compare_table_properties(
     expected: &Table,
-    actual: &Table,
-    registry: &VerificationRegistry,
-    context: VerificationContext<'_>,
+    observed: &Table,
+    registry: &DriftRegistry,
+    context: DriftContext<'_>,
     report: &mut VerificationReport,
 ) {
     for property in registry.tables {
         if let PropertyMatch::Drift {
             expected: expected_value,
-            actual: actual_value,
+            observed: actual_value,
             note,
-        } = (property.compare)(expected, actual, context)
+        } = (property.compare)(expected, observed, context)
         {
             report.findings.push(finding(
                 "alter_table",
@@ -644,20 +771,20 @@ fn compare_table_properties(
 
 fn compare_column_properties(
     expected: &Column,
-    actual: &Column,
-    registry: &VerificationRegistry,
-    context: VerificationContext<'_>,
+    observed: &Column,
+    registry: &DriftRegistry,
+    context: DriftContext<'_>,
 ) -> Vec<DriftFinding> {
-    let entity_name = scoped_child_name(context.table_name, &actual.name);
+    let entity_name = scoped_child_name(context.table_name, &observed.name);
     registry
         .columns
         .iter()
         .filter_map(
-            |property| match (property.compare)(expected, actual, context) {
+            |property| match (property.compare)(expected, observed, context) {
                 PropertyMatch::Match => None,
                 PropertyMatch::Drift {
                     expected,
-                    actual,
+                    observed,
                     note,
                 } => Some(finding(
                     "alter_column",
@@ -665,7 +792,7 @@ fn compare_column_properties(
                     &entity_name,
                     property.name,
                     expected,
-                    actual,
+                    observed,
                     note,
                 )),
             },
@@ -675,19 +802,19 @@ fn compare_column_properties(
 
 fn compare_primary_key_properties(
     expected: &PrimaryKey,
-    actual: &PrimaryKey,
+    observed: &PrimaryKey,
     properties: &'static [PrimaryKeyProperty],
-    context: VerificationContext<'_>,
+    context: DriftContext<'_>,
     entity_name: &str,
 ) -> Vec<DriftFinding> {
     properties
         .iter()
         .filter_map(
-            |property| match (property.compare)(expected, actual, context) {
+            |property| match (property.compare)(expected, observed, context) {
                 PropertyMatch::Match => None,
                 PropertyMatch::Drift {
                     expected,
-                    actual,
+                    observed,
                     note,
                 } => Some(finding(
                     "alter_primary_key",
@@ -695,7 +822,7 @@ fn compare_primary_key_properties(
                     entity_name,
                     property.name,
                     expected,
-                    actual,
+                    observed,
                     note,
                 )),
             },
@@ -705,16 +832,16 @@ fn compare_primary_key_properties(
 
 fn compare_foreign_key_properties(
     expected: &ForeignKey,
-    actual: &ForeignKey,
+    observed: &ForeignKey,
     properties: &'static [ForeignKeyProperty],
-    context: VerificationContext<'_>,
+    context: DriftContext<'_>,
     entity_name: &str,
     operation: &'static str,
     kind: EntityKind,
 ) -> Vec<DriftFinding> {
     compare_properties(
         expected,
-        actual,
+        observed,
         properties,
         context,
         entity_name,
@@ -725,16 +852,16 @@ fn compare_foreign_key_properties(
 
 fn compare_index_properties(
     expected: &Index,
-    actual: &Index,
+    observed: &Index,
     properties: &'static [IndexProperty],
-    context: VerificationContext<'_>,
+    context: DriftContext<'_>,
     entity_name: &str,
     operation: &'static str,
     kind: EntityKind,
 ) -> Vec<DriftFinding> {
     compare_properties(
         expected,
-        actual,
+        observed,
         properties,
         context,
         entity_name,
@@ -745,16 +872,16 @@ fn compare_index_properties(
 
 fn compare_constraint_properties(
     expected: &Constraint,
-    actual: &Constraint,
+    observed: &Constraint,
     properties: &'static [ConstraintProperty],
-    context: VerificationContext<'_>,
+    context: DriftContext<'_>,
     entity_name: &str,
     operation: &'static str,
     kind: EntityKind,
 ) -> Vec<DriftFinding> {
     compare_properties(
         expected,
-        actual,
+        observed,
         properties,
         context,
         entity_name,
@@ -765,16 +892,16 @@ fn compare_constraint_properties(
 
 fn compare_trigger_properties(
     expected: &TriggerDef,
-    actual: &TriggerDef,
+    observed: &TriggerDef,
     properties: &'static [TriggerProperty],
-    context: VerificationContext<'_>,
+    context: DriftContext<'_>,
     entity_name: &str,
     operation: &'static str,
     kind: EntityKind,
 ) -> Vec<DriftFinding> {
     compare_properties(
         expected,
-        actual,
+        observed,
         properties,
         context,
         entity_name,
@@ -785,14 +912,14 @@ fn compare_trigger_properties(
 
 fn compare_function_properties(
     expected: &FunctionDef,
-    actual: &FunctionDef,
+    observed: &FunctionDef,
     properties: &'static [FunctionProperty],
-    context: VerificationContext<'_>,
+    context: DriftContext<'_>,
     entity_name: &str,
 ) -> Vec<DriftFinding> {
     compare_properties(
         expected,
-        actual,
+        observed,
         properties,
         context,
         entity_name,
@@ -803,14 +930,14 @@ fn compare_function_properties(
 
 fn compare_view_properties(
     expected: &ViewDef,
-    actual: &ViewDef,
+    observed: &ViewDef,
     properties: &'static [ViewProperty],
-    context: VerificationContext<'_>,
+    context: DriftContext<'_>,
     entity_name: &str,
 ) -> Vec<DriftFinding> {
     compare_properties(
         expected,
-        actual,
+        observed,
         properties,
         context,
         entity_name,
@@ -821,14 +948,14 @@ fn compare_view_properties(
 
 fn compare_enum_properties(
     expected: &EnumDef,
-    actual: &EnumDef,
+    observed: &EnumDef,
     properties: &'static [EnumProperty],
-    context: VerificationContext<'_>,
+    context: DriftContext<'_>,
     entity_name: &str,
 ) -> Vec<DriftFinding> {
     compare_properties(
         expected,
-        actual,
+        observed,
         properties,
         context,
         entity_name,
@@ -839,14 +966,14 @@ fn compare_enum_properties(
 
 fn compare_extension_properties(
     expected: &ExtensionDef,
-    actual: &ExtensionDef,
+    observed: &ExtensionDef,
     properties: &'static [ExtensionProperty],
-    context: VerificationContext<'_>,
+    context: DriftContext<'_>,
     entity_name: &str,
 ) -> Vec<DriftFinding> {
     compare_properties(
         expected,
-        actual,
+        observed,
         properties,
         context,
         entity_name,
@@ -857,7 +984,7 @@ fn compare_extension_properties(
 
 trait RegisteredProperty<T> {
     fn name(&self) -> &'static str;
-    fn compare(&self) -> fn(&T, &T, VerificationContext<'_>) -> PropertyMatch;
+    fn compare(&self) -> fn(&T, &T, DriftContext<'_>) -> PropertyMatch;
 }
 
 macro_rules! impl_registered_property {
@@ -866,7 +993,7 @@ macro_rules! impl_registered_property {
             fn name(&self) -> &'static str {
                 self.name
             }
-            fn compare(&self) -> fn(&$target, &$target, VerificationContext<'_>) -> PropertyMatch {
+            fn compare(&self) -> fn(&$target, &$target, DriftContext<'_>) -> PropertyMatch {
                 self.compare
             }
         }
@@ -884,9 +1011,9 @@ impl_registered_property!(ExtensionProperty, ExtensionDef);
 
 fn compare_properties<T, P>(
     expected: &T,
-    actual: &T,
+    observed: &T,
     properties: &'static [P],
-    context: VerificationContext<'_>,
+    context: DriftContext<'_>,
     entity_name: &str,
     operation: &'static str,
     kind: EntityKind,
@@ -897,11 +1024,11 @@ where
     properties
         .iter()
         .filter_map(
-            |property| match (property.compare())(expected, actual, context) {
+            |property| match (property.compare())(expected, observed, context) {
                 PropertyMatch::Match => None,
                 PropertyMatch::Drift {
                     expected,
-                    actual,
+                    observed,
                     note,
                 } => Some(finding(
                     operation,
@@ -909,7 +1036,7 @@ where
                     entity_name,
                     property.name(),
                     expected,
-                    actual,
+                    observed,
                     note,
                 )),
             },
@@ -1080,8 +1207,8 @@ pub fn format_report(report: &VerificationReport) -> Vec<String> {
                     let mut lines = vec![format!("  drift: {operation} {entity}")];
                     lines.extend(findings.into_iter().map(|finding| {
                         let mut line = format!(
-                            "    {}: expected {}, found {}",
-                            finding.property, finding.expected, finding.actual
+                            "    {}: expected {}, observed {}",
+                            finding.property, finding.expected, finding.observed
                         );
                         if let Some(note) = &finding.note {
                             line.push_str(&format!(" ({note})"));
@@ -1100,7 +1227,7 @@ fn finding(
     entity_name: &str,
     property: &'static str,
     expected: String,
-    actual: String,
+    observed: String,
     note: Option<String>,
 ) -> DriftFinding {
     DriftFinding {
@@ -1109,7 +1236,7 @@ fn finding(
         entity_name: entity_name.to_string(),
         property,
         expected,
-        actual,
+        observed,
         note,
     }
 }
@@ -1139,49 +1266,49 @@ fn scoped_child_name(table_name: Option<&str>, child_name: &str) -> String {
     }
 }
 
-pub(crate) fn exact_string(expected: &str, actual: &str) -> PropertyMatch {
-    if expected == actual {
+pub(crate) fn exact_string(expected: &str, observed: &str) -> PropertyMatch {
+    if expected == observed {
         PropertyMatch::Match
     } else {
         PropertyMatch::Drift {
             expected: display_str(expected),
-            actual: display_str(actual),
+            observed: display_str(observed),
             note: None,
         }
     }
 }
 
-pub(crate) fn exact_bool(expected: bool, actual: bool) -> PropertyMatch {
-    if expected == actual {
+pub(crate) fn exact_bool(expected: bool, observed: bool) -> PropertyMatch {
+    if expected == observed {
         PropertyMatch::Match
     } else {
         PropertyMatch::Drift {
             expected: expected.to_string(),
-            actual: actual.to_string(),
+            observed: observed.to_string(),
             note: None,
         }
     }
 }
 
-pub(crate) fn exact_option(expected: &Option<String>, actual: &Option<String>) -> PropertyMatch {
-    if expected == actual {
+pub(crate) fn exact_option(expected: &Option<String>, observed: &Option<String>) -> PropertyMatch {
+    if expected == observed {
         PropertyMatch::Match
     } else {
         PropertyMatch::Drift {
             expected: display_option(expected),
-            actual: display_option(actual),
+            observed: display_option(observed),
             note: None,
         }
     }
 }
 
-pub(crate) fn exact_vec(expected: &[String], actual: &[String]) -> PropertyMatch {
-    if expected == actual {
+pub(crate) fn exact_vec(expected: &[String], observed: &[String]) -> PropertyMatch {
+    if expected == observed {
         PropertyMatch::Match
     } else {
         PropertyMatch::Drift {
             expected: display_vec(expected),
-            actual: display_vec(actual),
+            observed: display_vec(observed),
             note: None,
         }
     }
@@ -1212,10 +1339,10 @@ pub(crate) fn display_vec(values: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use gaman_core::dialects::Dialect;
-    use gaman_core::states::{Column, FunctionDef, Schema, Table, Volatility};
+    use crate::dialects::Dialect;
+    use crate::states::{Column, FunctionDef, Schema, Table, Volatility};
 
-    use super::{format_report, verify};
+    use super::{diff, format_report};
 
     /// Verifies PostgreSQL literal casts do not create default drift.
     #[test]
@@ -1223,7 +1350,7 @@ mod tests {
         let replay = schema_with_column(defaulted_column("theme", Some("'light'")));
         let live = schema_with_column(defaulted_column("theme", Some("'light'::text")));
 
-        let report = verify(replay, live, "public", Dialect::Postgres);
+        let report = diff(replay, live, "public", Dialect::Postgres);
 
         assert!(report.findings.is_empty(), "unexpected drift: {:?}", report);
     }
@@ -1234,7 +1361,7 @@ mod tests {
         let replay = schema_with_column(defaulted_column("posts_per_page", None));
         let live = schema_with_column(defaulted_column("posts_per_page", Some("10")));
 
-        let report = verify(replay, live, "public", Dialect::Postgres);
+        let report = diff(replay, live, "public", Dialect::Postgres);
         let lines = format_report(&report);
 
         assert!(
@@ -1245,7 +1372,7 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|line| { line.contains("default: expected <none>, found 10") })
+                .any(|line| { line.contains("default: expected <none>, observed 10") })
         );
     }
 
@@ -1260,9 +1387,39 @@ mod tests {
         live.functions
             .insert("audit_users".to_string(), function("SELECT 2"));
 
-        let report = verify(replay, live, "public", Dialect::Postgres);
+        let report = diff(replay, live, "public", Dialect::Postgres);
 
         assert!(report.findings.is_empty(), "unexpected drift: {:?}", report);
+    }
+
+    /// Verifies the drift contract documents registered comparator properties.
+    #[test]
+    fn drift_contract_lists_registered_column_default() {
+        let docs = Dialect::Postgres.drift_contract();
+
+        assert!(docs.iter().any(|doc| {
+            doc.entity_kind == crate::states::types::EntityKind::Column
+                && doc.property == "default"
+                && !doc.compared.is_empty()
+                && !doc.ignored.is_empty()
+        }));
+    }
+
+    /// Verifies inspected-schema normalization is owned by the dialect lifecycle.
+    #[test]
+    fn normalize_inspected_schema_prepares_reflected_schema() {
+        let inspected = schema_with_column(defaulted_column("theme", Some("'light'::text")));
+
+        let normalized = Dialect::Postgres
+            .normalize_inspected_schema(inspected)
+            .expect("inspected schema should normalize");
+
+        assert_eq!(
+            normalized.tables["preferences"].columns[0]
+                .default
+                .as_deref(),
+            Some("'light'::text")
+        );
     }
 
     fn schema_with_column(column: Column) -> Schema {
@@ -1278,6 +1435,7 @@ mod tests {
                 indexes: Vec::new(),
                 constraints: Vec::new(),
                 triggers: Vec::new(),
+                options: Default::default(),
             },
         );
         schema
@@ -1306,6 +1464,7 @@ mod tests {
             body: body.to_string(),
             volatility: Volatility::Volatile,
             security_definer: false,
+            opaque: Default::default(),
         }
     }
 }

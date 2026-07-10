@@ -1,5 +1,3 @@
-use std::error::Error;
-
 use gaman::cli::{GamanArgs, handle_cmd};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -43,14 +41,16 @@ async fn main() {
     }
 
     let args: GamanArgs = argh::from_env();
+    let verbose = args.verbose || gaman_debug_enabled();
 
     if let Err(e) = handle_cmd(args).await {
-        eprintln!("error: {e}");
-        let mut source = e.source();
-        while let Some(s) = source {
-            eprintln!("  caused by: {s}");
-            source = s.source();
-        }
+        e.print(verbose);
         std::process::exit(1);
     }
+}
+
+fn gaman_debug_enabled() -> bool {
+    std::env::var("GAMAN_DEBUG")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
 }

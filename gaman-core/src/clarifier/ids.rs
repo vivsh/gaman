@@ -35,6 +35,13 @@ pub fn clarification_id(kind: &ClarificationKind) -> String {
                 encode_part(column)
             )
         }
+        ClarificationKind::OpaqueEntity { kind, name } => {
+            let kind = format!("{kind:?}").to_ascii_lowercase();
+            format!("opaque_entity:{}:{}", kind, encode_part(name))
+        }
+        ClarificationKind::UnmanagedTableOptions { table } => {
+            format!("unmanaged_table_options:{}", encode_part(table))
+        }
     }
 }
 

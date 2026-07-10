@@ -9,4 +9,4 @@ dialect: postgres
 sql: 'NOT VALID SQL !!
 
 '
-expect_error: SQL parse error
+expect_error: known Gaman entity kind

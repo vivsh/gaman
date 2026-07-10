@@ -6,7 +6,7 @@ use crate::dialects::Dialect;
 use crate::opaque::{opaque_option_sources_equal, opaque_sources_equal};
 use crate::operations::Operation;
 use crate::states::{
-    Column, EnumDef, ExtensionDef, FunctionDef, Schema, Table, TriggerDef, ViewDef,
+    Column, Constraint, EnumDef, ExtensionDef, FunctionDef, Schema, Table, TriggerDef, ViewDef,
 };
 
 #[derive(Debug, Error)]
@@ -25,10 +25,11 @@ pub enum DiffError {
 pub fn generate_diff(current: &Schema, previous: &Schema) -> Vec<Operation> {
     let mut ops: Vec<Operation> = Vec::new();
 
-    diff_map(
+    diff_map_with_eq(
         &current.extensions,
         &previous.extensions,
         &mut ops,
+        extension_equal,
         diff_extension,
     );
     diff_map(&current.enums, &previous.enums, &mut ops, diff_enum);
@@ -196,6 +197,13 @@ fn diff_table(curr: Option<&Table>, prev: Option<&Table>, ops: &mut Vec<Operatio
 
 fn diff_table_children(prev: &Table, curr: &Table, ops: &mut Vec<Operation>) {
     let table_name = curr.qualified_name();
+    if prev.unmanaged_options_fingerprint() != curr.unmanaged_options_fingerprint() {
+        ops.push(Operation::AcknowledgeTableOptions {
+            table_name: table_name.clone(),
+            old: prev.options.clone(),
+            new: curr.options.clone(),
+        });
+    }
 
     for change in diff_by_name(
         &prev.columns,
@@ -256,7 +264,7 @@ fn diff_table_children(prev: &Table, curr: &Table, ops: &mut Vec<Operation>) {
         &prev.indexes,
         &curr.indexes,
         |i| i.name.as_str(),
-        PartialEq::eq,
+        index_equal,
     ) {
         match change {
             SubChange::Removed(idx) => ops.push(Operation::DropIndex {
@@ -288,7 +296,7 @@ fn diff_table_children(prev: &Table, curr: &Table, ops: &mut Vec<Operation>) {
         &prev.constraints,
         &curr.constraints,
         |c| c.name(),
-        PartialEq::eq,
+        constraint_equal,
     ) {
         match change {
             SubChange::Removed(con) => ops.push(Operation::DropConstraint {
@@ -337,6 +345,10 @@ fn diff_table_children(prev: &Table, curr: &Table, ops: &mut Vec<Operation>) {
 }
 
 fn function_equal(left: &FunctionDef, right: &FunctionDef) -> bool {
+    if left.is_opaque() || right.is_opaque() {
+        return left.qualified_name() == right.qualified_name()
+            && opaque_option_sources_equal(&left.opaque.raw, &right.opaque.raw);
+    }
     left.name == right.name
         && left.schema == right.schema
         && left.arguments == right.arguments
@@ -348,12 +360,20 @@ fn function_equal(left: &FunctionDef, right: &FunctionDef) -> bool {
 }
 
 fn view_equal(left: &ViewDef, right: &ViewDef) -> bool {
+    if left.is_opaque() || right.is_opaque() {
+        return left.qualified_name() == right.qualified_name()
+            && opaque_option_sources_equal(&left.opaque.raw, &right.opaque.raw);
+    }
     left.name == right.name
         && left.schema == right.schema
         && opaque_sources_equal(&left.definition, &right.definition)
 }
 
 fn trigger_equal(left: &TriggerDef, right: &TriggerDef) -> bool {
+    if left.is_opaque() || right.is_opaque() {
+        return left.name == right.name
+            && opaque_option_sources_equal(&left.opaque.raw, &right.opaque.raw);
+    }
     left.name == right.name
         && left.timing == right.timing
         && left.events == right.events
@@ -362,6 +382,31 @@ fn trigger_equal(left: &TriggerDef, right: &TriggerDef) -> bool {
         && opaque_option_sources_equal(&left.when, &right.when)
         && opaque_option_sources_equal(&left.query, &right.query)
         && left.language == right.language
+}
+
+fn constraint_equal(left: &Constraint, right: &Constraint) -> bool {
+    if left.is_opaque() || right.is_opaque() {
+        let left_raw = left.raw_sql().map(ToOwned::to_owned);
+        let right_raw = right.raw_sql().map(ToOwned::to_owned);
+        return left.name() == right.name() && opaque_option_sources_equal(&left_raw, &right_raw);
+    }
+    left == right
+}
+
+fn extension_equal(left: &ExtensionDef, right: &ExtensionDef) -> bool {
+    if left.is_opaque() || right.is_opaque() {
+        return left.qualified_name() == right.qualified_name()
+            && opaque_option_sources_equal(&left.opaque.raw, &right.opaque.raw);
+    }
+    left == right
+}
+
+fn index_equal(left: &crate::states::Index, right: &crate::states::Index) -> bool {
+    if left.is_opaque() || right.is_opaque() {
+        return left.name == right.name
+            && opaque_option_sources_equal(&left.opaque.raw, &right.opaque.raw);
+    }
+    left == right
 }
 
 enum SubChange<'a, T> {
@@ -444,7 +489,7 @@ fn inject_orphan_triggers(ops: Vec<Operation>, previous: &Schema) -> Vec<Operati
             let references_dropped = trg
                 .function_name
                 .as_deref()
-                .map_or(false, |f| dropped_fns.contains(f));
+                .is_some_and(|f| dropped_fns.contains(f));
             if !references_dropped {
                 continue;
             }
@@ -803,6 +848,7 @@ fn tiebreak_priority(op: &Operation) -> (u8, u8) {
         Operation::DropEnum { .. } => (12, 0),
         Operation::DropExtension { .. } => (13, 0),
         Operation::Statement { .. }
+        | Operation::AcknowledgeTableOptions { .. }
         | Operation::RenameTable { .. }
         | Operation::RenameColumn { .. } => (8, 5),
     }
@@ -811,7 +857,6 @@ fn tiebreak_priority(op: &Operation) -> (u8, u8) {
 use crate::states::types::{Dep, EntityKind};
 
 fn build_dependency_edges(ops: &[Operation], adj: &mut [Vec<usize>], in_deg: &mut [usize]) {
-    let n = ops.len();
     let mut seen: HashSet<(usize, usize)> = HashSet::new();
 
     let entity_names: Vec<std::borrow::Cow<str>> = ops.iter().map(|op| op.entity_name()).collect();
@@ -864,8 +909,7 @@ fn build_dependency_edges(ops: &[Operation], adj: &mut [Vec<usize>], in_deg: &mu
         }
     };
 
-    for i in 0..n {
-        let op = &ops[i];
+    for (i, op) in ops.iter().enumerate() {
         if !op.is_drop() {
             for dep in op.forward_deps() {
                 for j in resolve_create(&dep) {
@@ -882,11 +926,10 @@ fn build_dependency_edges(ops: &[Operation], adj: &mut [Vec<usize>], in_deg: &mu
         }
     }
 
-    // Intra-table: within the same table, sub-entity drops come before adds.
     let mut by_table: HashMap<&str, Vec<usize>> = HashMap::new();
-    for i in 0..n {
-        if let Some(tn) = ops[i].table_name() {
-            let (tp, _) = tiebreak_priority(&ops[i]);
+    for (i, op) in ops.iter().enumerate() {
+        if let Some(tn) = op.table_name() {
+            let (tp, _) = tiebreak_priority(op);
             if tp == 8 {
                 by_table.entry(tn).or_default().push(i);
             }

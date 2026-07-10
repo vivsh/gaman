@@ -9,6 +9,9 @@ use gaman_core::operations::Operation;
 use gaman_core::sql_plan::{SqlPlanError, render_migration_sql};
 use gaman_core::states::{Schema, TableBuilder};
 
+/// Database table used by the built-in migration tracking store.
+pub const TRACKING_TABLE: &str = "gaman_migrations";
+
 #[derive(Debug, Error)]
 /// Errors returned by migration tracking storage.
 pub enum TrackingError {
@@ -25,7 +28,7 @@ pub enum TrackingError {
 
 /// Stores migration application state for a target environment.
 ///
-/// Database-backed migration application stores ids in `gaman_migrations`.
+/// Database-backed migration application stores ids in [`TRACKING_TABLE`].
 /// Browser or embedded hosts can provide a different store later, such as
 /// LocalStorage or IndexedDB, without changing offline planning.
 pub trait TrackingStore: Send + Sync {
@@ -79,11 +82,8 @@ impl TrackingStore for DatabaseTrackingStore {
         executor: &'a mut dyn Executor,
     ) -> BoxFuture<'a, Result<HashSet<String>, TrackingError>> {
         Box::pin(async move {
-            Ok(executor
-                .fetch_strings("SELECT id FROM gaman_migrations ORDER BY applied_at, id")
-                .await?
-                .into_iter()
-                .collect())
+            let sql = format!("SELECT id FROM {TRACKING_TABLE} ORDER BY applied_at, id");
+            Ok(executor.fetch_strings(&sql).await?.into_iter().collect())
         })
     }
 
@@ -131,13 +131,13 @@ fn tracking_table(dialect: Dialect) -> gaman_core::states::Table {
         Dialect::Sqlite => ("text", "CURRENT_TIMESTAMP"),
         Dialect::Mysql => ("datetime", "CURRENT_TIMESTAMP"),
     };
-    TableBuilder::new("gaman_migrations")
+    TableBuilder::new(TRACKING_TABLE)
         .column("id", "text", |column| column.not_null())
         .column("applied_at", applied_at_type, |column| {
             column.not_null().default(applied_at_default)
         })
-        .unique("gaman_migrations_id_key", &["id"])
-        .index("gaman_migrations_id_idx", &["id"])
+        .unique(format!("{TRACKING_TABLE}_id_key"), &["id"])
+        .index(format!("{TRACKING_TABLE}_id_idx"), &["id"])
         .build()
 }
 
@@ -153,12 +153,12 @@ fn make_install_sql_idempotent(sql: String) -> Result<String, TrackingError> {
 
 fn record_sql(id: &str) -> String {
     let escaped = id.replace('\'', "''");
-    format!("INSERT INTO gaman_migrations (id) VALUES ('{escaped}')")
+    format!("INSERT INTO {TRACKING_TABLE} (id) VALUES ('{escaped}')")
 }
 
 fn unrecord_sql(id: &str) -> String {
     let escaped = id.replace('\'', "''");
-    format!("DELETE FROM gaman_migrations WHERE id = '{escaped}'")
+    format!("DELETE FROM {TRACKING_TABLE} WHERE id = '{escaped}'")
 }
 
 impl From<DialectError> for TrackingError {
@@ -180,7 +180,7 @@ mod tests {
         let sql = tracking_install_sql(Dialect::Postgres).unwrap();
         assert!(sql[0].starts_with("CREATE TABLE IF NOT EXISTS"));
         assert!(sql[1].starts_with("CREATE INDEX IF NOT EXISTS"));
-        assert!(sql[0].contains("\"gaman_migrations\""));
+        assert!(sql[0].contains(&format!("\"{TRACKING_TABLE}\"")));
     }
 
     /// Verifies SQLite tracking install SQL remains idempotent.
@@ -189,6 +189,6 @@ mod tests {
         let sql = tracking_install_sql(Dialect::Sqlite).unwrap();
         assert!(sql[0].starts_with("CREATE TABLE IF NOT EXISTS"));
         assert!(sql[1].starts_with("CREATE INDEX IF NOT EXISTS"));
-        assert!(sql[0].contains("\"gaman_migrations\""));
+        assert!(sql[0].contains(&format!("\"{TRACKING_TABLE}\"")));
     }
 }

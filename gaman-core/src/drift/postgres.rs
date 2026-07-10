@@ -1,20 +1,20 @@
-use gaman_core::states::{
+use crate::states::{
     Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, PrimaryKey, Table,
     TriggerDef, ViewDef,
 };
 
 use super::{
-    ColumnProperty, ConstraintProperty, EnumProperty, ExtensionProperty, ForeignKeyProperty,
-    FunctionProperty, IndexProperty, PrimaryKeyProperty, PropertyMatch, TableProperty,
-    TriggerProperty, VerificationContext, VerificationRegistry, ViewProperty, exact_bool,
-    exact_option, exact_string, exact_vec,
+    ColumnProperty, ConstraintProperty, DriftContext, DriftRegistry, EnumProperty,
+    ExtensionProperty, ForeignKeyProperty, FunctionProperty, IndexProperty, PrimaryKeyProperty,
+    PropertyMatch, TableProperty, TriggerProperty, ViewProperty, exact_bool, exact_option,
+    exact_string, exact_vec,
 };
 
-pub(crate) fn registry() -> &'static VerificationRegistry {
+pub(crate) fn registry() -> &'static DriftRegistry {
     &REGISTRY
 }
 
-static REGISTRY: VerificationRegistry = VerificationRegistry {
+static REGISTRY: DriftRegistry = DriftRegistry {
     tables: TABLES,
     columns: COLUMNS,
     primary_keys: PRIMARY_KEYS,
@@ -101,6 +101,10 @@ static FOREIGN_KEYS: &[ForeignKeyProperty] = &[
     ForeignKeyProperty {
         name: "on_delete",
         compare: foreign_key_on_delete,
+    },
+    ForeignKeyProperty {
+        name: "on_update",
+        compare: foreign_key_on_update,
     },
 ];
 
@@ -233,165 +237,161 @@ static EXTENSIONS: &[ExtensionProperty] = &[
     },
 ];
 
-fn table_name(expected: &Table, actual: &Table, _: VerificationContext<'_>) -> PropertyMatch {
-    exact_string(&expected.name, &actual.name)
+fn table_name(expected: &Table, observed: &Table, _: DriftContext<'_>) -> PropertyMatch {
+    exact_string(&expected.name, &observed.name)
 }
 
-fn table_schema(expected: &Table, actual: &Table, _: VerificationContext<'_>) -> PropertyMatch {
-    exact_option(&expected.schema, &actual.schema)
+fn table_schema(expected: &Table, observed: &Table, _: DriftContext<'_>) -> PropertyMatch {
+    exact_option(&expected.schema, &observed.schema)
 }
 
-fn column_name(expected: &Column, actual: &Column, _: VerificationContext<'_>) -> PropertyMatch {
-    exact_string(&expected.name, &actual.name)
+fn column_name(expected: &Column, observed: &Column, _: DriftContext<'_>) -> PropertyMatch {
+    exact_string(&expected.name, &observed.name)
 }
 
-fn column_type(expected: &Column, actual: &Column, ctx: VerificationContext<'_>) -> PropertyMatch {
+fn column_type(expected: &Column, observed: &Column, ctx: DriftContext<'_>) -> PropertyMatch {
     let expected_type = ctx.dialect.normalize_type(&expected.col_type).to_string();
-    let actual_type = ctx.dialect.normalize_type(&actual.col_type).to_string();
+    let actual_type = ctx.dialect.normalize_type(&observed.col_type).to_string();
     if expected_type == actual_type || serial_type_matches(&expected_type, &actual_type) {
         PropertyMatch::Match
     } else {
         PropertyMatch::Drift {
             expected: expected_type,
-            actual: actual_type,
+            observed: actual_type,
             note: None,
         }
     }
 }
 
-fn column_nullable(
-    expected: &Column,
-    actual: &Column,
-    _: VerificationContext<'_>,
-) -> PropertyMatch {
-    exact_bool(expected.nullable, actual.nullable)
+fn column_nullable(expected: &Column, observed: &Column, _: DriftContext<'_>) -> PropertyMatch {
+    exact_bool(expected.nullable, observed.nullable)
 }
 
-fn column_default(expected: &Column, actual: &Column, _: VerificationContext<'_>) -> PropertyMatch {
+fn column_default(expected: &Column, observed: &Column, _: DriftContext<'_>) -> PropertyMatch {
     let expected_default = canonical_default(expected.default.as_deref());
-    let actual_default = canonical_default(actual.default.as_deref());
+    let actual_default = canonical_default(observed.default.as_deref());
     if expected_default == actual_default {
         PropertyMatch::Match
     } else {
         PropertyMatch::Drift {
             expected: expected_default.unwrap_or_else(|| "<none>".to_string()),
-            actual: actual_default.unwrap_or_else(|| "<none>".to_string()),
+            observed: actual_default.unwrap_or_else(|| "<none>".to_string()),
             note: None,
         }
     }
 }
 
-fn column_reference(
-    expected: &Column,
-    actual: &Column,
-    _: VerificationContext<'_>,
-) -> PropertyMatch {
-    if expected.references == actual.references {
+fn column_reference(expected: &Column, observed: &Column, _: DriftContext<'_>) -> PropertyMatch {
+    if expected.references == observed.references {
         PropertyMatch::Match
     } else {
         PropertyMatch::Drift {
             expected: format!("{:?}", expected.references),
-            actual: format!("{:?}", actual.references),
+            observed: format!("{:?}", observed.references),
             note: None,
         }
     }
 }
 
-fn column_check(expected: &Column, actual: &Column, _: VerificationContext<'_>) -> PropertyMatch {
-    exact_option(&expected.check, &actual.check)
+fn column_check(expected: &Column, observed: &Column, _: DriftContext<'_>) -> PropertyMatch {
+    exact_option(&expected.check, &observed.check)
 }
 
-fn column_generated(
-    expected: &Column,
-    actual: &Column,
-    _: VerificationContext<'_>,
-) -> PropertyMatch {
-    exact_option(&expected.generated, &actual.generated)
+fn column_generated(expected: &Column, observed: &Column, _: DriftContext<'_>) -> PropertyMatch {
+    exact_option(&expected.generated, &observed.generated)
 }
 
 fn primary_key_name(
     expected: &PrimaryKey,
-    actual: &PrimaryKey,
-    _: VerificationContext<'_>,
+    observed: &PrimaryKey,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_string(&expected.name, &actual.name)
+    exact_string(&expected.name, &observed.name)
 }
 
 fn primary_key_columns(
     expected: &PrimaryKey,
-    actual: &PrimaryKey,
-    _: VerificationContext<'_>,
+    observed: &PrimaryKey,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_vec(&expected.columns, &actual.columns)
+    exact_vec(&expected.columns, &observed.columns)
 }
 
 fn foreign_key_name(
     expected: &ForeignKey,
-    actual: &ForeignKey,
-    _: VerificationContext<'_>,
+    observed: &ForeignKey,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_string(&expected.name, &actual.name)
+    exact_string(&expected.name, &observed.name)
 }
 
 fn foreign_key_columns(
     expected: &ForeignKey,
-    actual: &ForeignKey,
-    _: VerificationContext<'_>,
+    observed: &ForeignKey,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_vec(&expected.columns, &actual.columns)
+    exact_vec(&expected.columns, &observed.columns)
 }
 
 fn foreign_key_table(
     expected: &ForeignKey,
-    actual: &ForeignKey,
-    _: VerificationContext<'_>,
+    observed: &ForeignKey,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_string(&expected.to_table, &actual.to_table)
+    exact_string(&expected.to_table, &observed.to_table)
 }
 
 fn foreign_key_to_columns(
     expected: &ForeignKey,
-    actual: &ForeignKey,
-    _: VerificationContext<'_>,
+    observed: &ForeignKey,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_vec(&expected.to_columns, &actual.to_columns)
+    exact_vec(&expected.to_columns, &observed.to_columns)
 }
 
 fn foreign_key_on_delete(
     expected: &ForeignKey,
-    actual: &ForeignKey,
-    _: VerificationContext<'_>,
+    observed: &ForeignKey,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_option(&expected.on_delete, &actual.on_delete)
+    exact_option(&expected.on_delete, &observed.on_delete)
 }
 
-fn index_name(expected: &Index, actual: &Index, _: VerificationContext<'_>) -> PropertyMatch {
-    exact_string(&expected.name, &actual.name)
+fn foreign_key_on_update(
+    expected: &ForeignKey,
+    observed: &ForeignKey,
+    _: DriftContext<'_>,
+) -> PropertyMatch {
+    exact_option(&expected.on_update, &observed.on_update)
 }
 
-fn index_columns(expected: &Index, actual: &Index, _: VerificationContext<'_>) -> PropertyMatch {
-    exact_vec(&expected.columns, &actual.columns)
+fn index_name(expected: &Index, observed: &Index, _: DriftContext<'_>) -> PropertyMatch {
+    exact_string(&expected.name, &observed.name)
 }
 
-fn index_unique(expected: &Index, actual: &Index, _: VerificationContext<'_>) -> PropertyMatch {
-    exact_bool(expected.unique, actual.unique)
+fn index_columns(expected: &Index, observed: &Index, _: DriftContext<'_>) -> PropertyMatch {
+    exact_vec(&expected.columns, &observed.columns)
 }
 
-fn index_predicate(expected: &Index, actual: &Index, _: VerificationContext<'_>) -> PropertyMatch {
-    exact_option(&expected.predicate, &actual.predicate)
+fn index_unique(expected: &Index, observed: &Index, _: DriftContext<'_>) -> PropertyMatch {
+    exact_bool(expected.unique, observed.unique)
+}
+
+fn index_predicate(expected: &Index, observed: &Index, _: DriftContext<'_>) -> PropertyMatch {
+    exact_option(&expected.predicate, &observed.predicate)
 }
 
 fn constraint_kind(
     expected: &Constraint,
-    actual: &Constraint,
-    _: VerificationContext<'_>,
+    observed: &Constraint,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    if std::mem::discriminant(expected) == std::mem::discriminant(actual) {
+    if std::mem::discriminant(expected) == std::mem::discriminant(observed) {
         PropertyMatch::Match
     } else {
         PropertyMatch::Drift {
             expected: constraint_kind_name(expected).to_string(),
-            actual: constraint_kind_name(actual).to_string(),
+            observed: constraint_kind_name(observed).to_string(),
             note: None,
         }
     }
@@ -399,10 +399,10 @@ fn constraint_kind(
 
 fn constraint_definition(
     expected: &Constraint,
-    actual: &Constraint,
-    _: VerificationContext<'_>,
+    observed: &Constraint,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    match (expected, actual) {
+    match (expected, observed) {
         (Constraint::Unique { columns: a, .. }, Constraint::Unique { columns: b, .. }) => {
             exact_vec(a, b)
         }
@@ -415,34 +415,34 @@ fn constraint_definition(
 
 fn trigger_name(
     expected: &TriggerDef,
-    actual: &TriggerDef,
-    _: VerificationContext<'_>,
+    observed: &TriggerDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_option(&expected.name, &actual.name)
+    exact_option(&expected.name, &observed.name)
 }
 
 fn trigger_timing(
     expected: &TriggerDef,
-    actual: &TriggerDef,
-    _: VerificationContext<'_>,
+    observed: &TriggerDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
     exact_string(
         &format!("{:?}", expected.timing),
-        &format!("{:?}", actual.timing),
+        &format!("{:?}", observed.timing),
     )
 }
 
 fn trigger_events(
     expected: &TriggerDef,
-    actual: &TriggerDef,
-    _: VerificationContext<'_>,
+    observed: &TriggerDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    if expected.events == actual.events {
+    if expected.events == observed.events {
         PropertyMatch::Match
     } else {
         PropertyMatch::Drift {
             expected: format!("{:?}", expected.events),
-            actual: format!("{:?}", actual.events),
+            observed: format!("{:?}", observed.events),
             note: None,
         }
     }
@@ -450,143 +450,143 @@ fn trigger_events(
 
 fn trigger_scope(
     expected: &TriggerDef,
-    actual: &TriggerDef,
-    _: VerificationContext<'_>,
+    observed: &TriggerDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
     exact_string(
         &format!("{:?}", expected.scope),
-        &format!("{:?}", actual.scope),
+        &format!("{:?}", observed.scope),
     )
 }
 
 fn trigger_function(
     expected: &TriggerDef,
-    actual: &TriggerDef,
-    _: VerificationContext<'_>,
+    observed: &TriggerDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_option(&expected.function_name, &actual.function_name)
+    exact_option(&expected.function_name, &observed.function_name)
 }
 
 fn trigger_language(
     expected: &TriggerDef,
-    actual: &TriggerDef,
-    _: VerificationContext<'_>,
+    observed: &TriggerDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
     match expected.language.as_deref() {
         None => PropertyMatch::Match,
-        Some(_) => exact_option(&expected.language, &actual.language),
+        Some(_) => exact_option(&expected.language, &observed.language),
     }
 }
 
 fn function_name(
     expected: &FunctionDef,
-    actual: &FunctionDef,
-    _: VerificationContext<'_>,
+    observed: &FunctionDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_string(&expected.name, &actual.name)
+    exact_string(&expected.name, &observed.name)
 }
 
 fn function_schema(
     expected: &FunctionDef,
-    actual: &FunctionDef,
-    _: VerificationContext<'_>,
+    observed: &FunctionDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_option(&expected.schema, &actual.schema)
+    exact_option(&expected.schema, &observed.schema)
 }
 
 fn function_arguments(
     expected: &FunctionDef,
-    actual: &FunctionDef,
-    _: VerificationContext<'_>,
+    observed: &FunctionDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_string(&expected.arguments, &actual.arguments)
+    exact_string(&expected.arguments, &observed.arguments)
 }
 
 fn function_returns(
     expected: &FunctionDef,
-    actual: &FunctionDef,
-    _: VerificationContext<'_>,
+    observed: &FunctionDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_string(&expected.returns, &actual.returns)
+    exact_string(&expected.returns, &observed.returns)
 }
 
 fn function_language(
     expected: &FunctionDef,
-    actual: &FunctionDef,
-    _: VerificationContext<'_>,
+    observed: &FunctionDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_string(&expected.language, &actual.language)
+    exact_string(&expected.language, &observed.language)
 }
 
 fn function_volatility(
     expected: &FunctionDef,
-    actual: &FunctionDef,
-    _: VerificationContext<'_>,
+    observed: &FunctionDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
     exact_string(
         &format!("{:?}", expected.volatility),
-        &format!("{:?}", actual.volatility),
+        &format!("{:?}", observed.volatility),
     )
 }
 
 fn function_security(
     expected: &FunctionDef,
-    actual: &FunctionDef,
-    _: VerificationContext<'_>,
+    observed: &FunctionDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_bool(expected.security_definer, actual.security_definer)
+    exact_bool(expected.security_definer, observed.security_definer)
 }
 
-fn view_name(expected: &ViewDef, actual: &ViewDef, _: VerificationContext<'_>) -> PropertyMatch {
-    exact_string(&expected.name, &actual.name)
+fn view_name(expected: &ViewDef, observed: &ViewDef, _: DriftContext<'_>) -> PropertyMatch {
+    exact_string(&expected.name, &observed.name)
 }
 
-fn view_schema(expected: &ViewDef, actual: &ViewDef, _: VerificationContext<'_>) -> PropertyMatch {
-    exact_option(&expected.schema, &actual.schema)
+fn view_schema(expected: &ViewDef, observed: &ViewDef, _: DriftContext<'_>) -> PropertyMatch {
+    exact_option(&expected.schema, &observed.schema)
 }
 
-fn enum_name(expected: &EnumDef, actual: &EnumDef, _: VerificationContext<'_>) -> PropertyMatch {
-    exact_string(&expected.name, &actual.name)
+fn enum_name(expected: &EnumDef, observed: &EnumDef, _: DriftContext<'_>) -> PropertyMatch {
+    exact_string(&expected.name, &observed.name)
 }
 
-fn enum_schema(expected: &EnumDef, actual: &EnumDef, _: VerificationContext<'_>) -> PropertyMatch {
-    exact_option(&expected.schema, &actual.schema)
+fn enum_schema(expected: &EnumDef, observed: &EnumDef, _: DriftContext<'_>) -> PropertyMatch {
+    exact_option(&expected.schema, &observed.schema)
 }
 
-fn enum_values(expected: &EnumDef, actual: &EnumDef, _: VerificationContext<'_>) -> PropertyMatch {
-    exact_vec(&expected.values, &actual.values)
+fn enum_values(expected: &EnumDef, observed: &EnumDef, _: DriftContext<'_>) -> PropertyMatch {
+    exact_vec(&expected.values, &observed.values)
 }
 
 fn extension_name(
     expected: &ExtensionDef,
-    actual: &ExtensionDef,
-    _: VerificationContext<'_>,
+    observed: &ExtensionDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_string(&expected.name, &actual.name)
+    exact_string(&expected.name, &observed.name)
 }
 
 fn extension_schema(
     expected: &ExtensionDef,
-    actual: &ExtensionDef,
-    _: VerificationContext<'_>,
+    observed: &ExtensionDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_option(&expected.schema, &actual.schema)
+    exact_option(&expected.schema, &observed.schema)
 }
 
 fn extension_version(
     expected: &ExtensionDef,
-    actual: &ExtensionDef,
-    _: VerificationContext<'_>,
+    observed: &ExtensionDef,
+    _: DriftContext<'_>,
 ) -> PropertyMatch {
     match expected.version.as_deref() {
         None => PropertyMatch::Match,
-        Some(_) => exact_option(&expected.version, &actual.version),
+        Some(_) => exact_option(&expected.version, &observed.version),
     }
 }
 
-fn serial_type_matches(expected: &str, actual: &str) -> bool {
+fn serial_type_matches(expected: &str, observed: &str) -> bool {
     matches!(
-        (expected, actual),
+        (expected, observed),
         ("serial", "integer") | ("bigserial", "bigint") | ("smallserial", "smallint")
     )
 }
@@ -638,5 +638,6 @@ fn constraint_kind_name(constraint: &Constraint) -> &'static str {
     match constraint {
         Constraint::Unique { .. } => "unique",
         Constraint::Check { .. } => "check",
+        Constraint::Opaque { .. } => "opaque",
     }
 }

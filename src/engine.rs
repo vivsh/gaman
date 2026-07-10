@@ -8,14 +8,14 @@ use crate::cli::{CommandError, GamanArgs, dispatch};
 use crate::conf::Config;
 use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
 use crate::executor::{BoxFuture, connect_environment_executor};
-use crate::migrator::{Migrator, MigratorError};
+use crate::migrator::{MigrationListing, Migrator, MigratorError, RepairOptions, RepairReport};
 use crate::prompter::CliPromptEngine;
 use crate::schema_file::load_schema_path;
 use gaman_core::clarifier::{Clarification, Decision, PromptEngine, clarification_message};
 use gaman_core::dialects::Dialect;
 use gaman_core::migrations::Migration;
 use gaman_core::operations::Operation;
-use gaman_core::states::{IntoSchema, Schema, SchemaBuilder, SchemaLoadError};
+use gaman_core::states::{Schema, SchemaBuilder, SchemaLoadError};
 
 #[derive(Copy, Clone)]
 pub struct EmbeddedMigrations {
@@ -105,16 +105,22 @@ pub enum EngineError {
     Adapter(#[from] AdapterError),
     #[error("{0}")]
     Config(String),
-    #[error("no schema set — call with_schema() before make_migration()")]
+    #[error("no schema set — call with_schema() before make()")]
     NoSchema,
     #[error("schema load error: {0}")]
-    SchemaLoad(#[from] SchemaLoadError),
+    SchemaLoad(#[source] Box<SchemaLoadError>),
     #[error("clarification needed")]
     NeedsInput(Vec<Clarification>),
     #[error(
-        "migrations dir mismatch: config has '{0}', embedded was compiled from '{1}' — they must match for make_migration"
+        "migrations dir mismatch: config has '{0}', embedded was compiled from '{1}' — they must match for make"
     )]
     MigrationsDirMismatch(String, &'static str),
+}
+
+impl From<SchemaLoadError> for EngineError {
+    fn from(error: SchemaLoadError) -> Self {
+        Self::SchemaLoad(Box::new(error))
+    }
 }
 
 pub struct MigrationEngine {
@@ -216,20 +222,14 @@ impl MigrationEngine {
 
     /// Set the target schema.
     ///
-    /// The closure receives a `SchemaBuilder` and can return either a `Schema`
-    /// directly or a `Result<Schema, SchemaLoadError>`. Calling this more than
-    /// once replaces the previous schema.
-    pub fn with_schema<R: IntoSchema>(
+    /// The closure configures a dialect-aware builder. The engine performs the
+    /// single authoritative build and preparation step after it returns.
+    pub fn with_schema(
         mut self,
-        f: impl FnOnce(SchemaBuilder) -> R,
+        configure: impl FnOnce(SchemaBuilder) -> SchemaBuilder,
     ) -> Result<Self, EngineError> {
         let dialect = self.config.dialect;
-        self.schema = Some(
-            f(SchemaBuilder::new(dialect))
-                .into_schema()?
-                .prepare(dialect)
-                .map_err(|err| EngineError::Config(err.to_string()))?,
-        );
+        self.schema = Some(configure(SchemaBuilder::new(dialect)).build()?);
         Ok(self)
     }
 
@@ -364,8 +364,8 @@ impl MigrationEngine {
     }
 
     /// Apply all pending migrations. Returns the number applied. Safe to call on every startup.
-    pub async fn migrate(self) -> Result<usize, EngineError> {
-        Ok(self.build_migrator()?.migrate(None, false).await?)
+    pub async fn apply(self) -> Result<usize, EngineError> {
+        Ok(self.build_migrator()?.apply(None, false).await?)
     }
 
     /// Current configuration as seen by the migrator.
@@ -374,19 +374,29 @@ impl MigrationEngine {
     }
 
     /// Migrate forward or backward to `target` migration id.
-    pub async fn migrate_to(self, target: &str) -> Result<usize, EngineError> {
-        Ok(self.build_migrator()?.migrate(Some(target), false).await?)
+    pub async fn apply_to(self, target: &str) -> Result<usize, EngineError> {
+        Ok(self.build_migrator()?.apply(Some(target), false).await?)
+    }
+
+    /// Roll back applied migrations until `target` is the latest applied migration.
+    pub async fn rollback_to(self, target: &str) -> Result<usize, EngineError> {
+        Ok(self.build_migrator()?.rollback_to(target, false).await?)
     }
 
     /// Mark all pending migrations as applied without running any SQL.
     /// Useful for bootstrapping a database that was set up outside gaman.
-    pub async fn fake_migrate(self) -> Result<usize, EngineError> {
-        Ok(self.build_migrator()?.migrate(None, true).await?)
+    pub async fn fake_apply(self) -> Result<usize, EngineError> {
+        Ok(self.build_migrator()?.apply(None, true).await?)
     }
 
     /// Mark pending migrations through `target` as applied without running SQL.
-    pub async fn fake_migrate_to(self, target: &str) -> Result<usize, EngineError> {
-        Ok(self.build_migrator()?.migrate(Some(target), true).await?)
+    pub async fn fake_apply_to(self, target: &str) -> Result<usize, EngineError> {
+        Ok(self.build_migrator()?.apply(Some(target), true).await?)
+    }
+
+    /// Mark rollback migrations through `target` as reverted without running SQL.
+    pub async fn fake_rollback_to(self, target: &str) -> Result<usize, EngineError> {
+        Ok(self.build_migrator()?.rollback_to(target, true).await?)
     }
 
     /// Return true if there are unapplied migrations.
@@ -400,8 +410,13 @@ impl MigrationEngine {
     }
 
     /// Return all migration ids with their applied/pending status.
-    pub async fn show_migrations(self) -> Result<Vec<(String, bool)>, EngineError> {
-        Ok(self.build_migrator()?.show_migrations().await?)
+    pub async fn status(self) -> Result<Vec<(String, bool)>, EngineError> {
+        Ok(self.build_migrator()?.status().await?)
+    }
+
+    /// Return all migrations with status and canonical YAML content.
+    pub async fn show(self) -> Result<Vec<MigrationListing>, EngineError> {
+        Ok(self.build_migrator()?.show().await?)
     }
 
     /// Compare the replayed schema against the live database and return any drift operations.
@@ -414,42 +429,52 @@ impl MigrationEngine {
     pub async fn verify_report(
         self,
         schema: &str,
-    ) -> Result<crate::verification::VerificationReport, EngineError> {
+    ) -> Result<gaman_core::drift::VerificationReport, EngineError> {
         Ok(self.build_migrator()?.verify_report(schema).await?)
     }
 
+    /// Plan or apply one-off SQL that repairs verified drift without writing migrations.
+    pub async fn repair(self, options: RepairOptions) -> Result<RepairReport, EngineError> {
+        Ok(self.build_migrator()?.repair(options).await?)
+    }
+
     /// Introspect the live database and return the schema.
-    pub async fn inspect_db(self, schemas: &[&str]) -> Result<Schema, EngineError> {
-        Ok(self.build_migrator()?.inspect_db(schemas).await?)
+    pub async fn inspect(self, schemas: &[&str]) -> Result<Schema, EngineError> {
+        Ok(self.build_migrator()?.inspect(schemas).await?)
     }
 
     /// Introspect the live database and return only `table` from the inspected schemas.
     pub async fn inspect_table(self, schemas: &[&str], table: &str) -> Result<Schema, EngineError> {
-        let mut schema = self.inspect_db(schemas).await?;
+        let mut schema = self.inspect(schemas).await?;
         schema.tables.retain(|name, _| name == table);
         Ok(schema)
     }
 
     /// Render SQL for all embedded or file-backed migrations in graph order.
-    pub fn sql_migrate(&self) -> Result<Vec<String>, EngineError> {
+    pub fn sql(&self) -> Result<Vec<String>, EngineError> {
         let migrator = self.build_migrator()?;
         let migrations = Self::ordered_migrations(&migrator)?;
         Ok(migrator.sql_migrate(&migrations)?)
     }
 
     /// Render SQL for one known migration.
-    pub fn sql_migrate_id(&self, id: &str) -> Result<Vec<String>, EngineError> {
+    pub fn sql_id(&self, id: &str) -> Result<Vec<String>, EngineError> {
         let migrator = self.build_migrator()?;
         let migration = Self::migrations_by_ids(&migrator, &[id])?;
         Ok(migrator.sql_migrate(&migration)?)
     }
 
     /// Render SQL for supplied generated or unsaved migrations against this engine's history.
-    pub fn sql_migrate_migrations(
+    pub(crate) fn sql_migrate_migrations(
         &self,
         migrations: &[Migration],
     ) -> Result<Vec<String>, EngineError> {
         Ok(self.build_migrator()?.sql_migrate(migrations)?)
+    }
+
+    /// Render SQL for supplied generated or unsaved migrations against history.
+    pub fn sql_migrations(&self, migrations: &[Migration]) -> Result<Vec<String>, EngineError> {
+        self.sql_migrate_migrations(migrations)
     }
 
     /// Render rollback SQL for known migrations. Passing an empty slice renders all migrations.
@@ -465,45 +490,68 @@ impl MigrationEngine {
     ///
     /// Requires `with_schema()` to have been called — returns `Err(EngineError::NoSchema)` if not.
     /// Any rename/ambiguity clarifications are resolved interactively via terminal prompts.
-    pub fn make_migration(self, name: &str) -> Result<Option<Migration>, EngineError> {
+    pub(crate) fn make_migration(self, name: &str) -> Result<Option<Migration>, EngineError> {
         self.make_migration_named(Some(name))
+    }
+
+    /// Diff schema and save a named migration when changes exist.
+    pub fn make(self, name: &str) -> Result<Option<Migration>, EngineError> {
+        self.make_migration(name)
     }
 
     /// Diff the stored schema against replayed history and save a new migration if changed.
     /// When `name` is `None`, the migration name is derived from the generated operations.
-    pub fn make_migration_named(
+    pub(crate) fn make_migration_named(
         self,
         name: Option<&str>,
     ) -> Result<Option<Migration>, EngineError> {
         self.make_migration_inner(name, false, ClarificationMode::Interactive)
     }
 
+    /// Diff schema and save a migration when changes exist.
+    pub fn make_named(self, name: Option<&str>) -> Result<Option<Migration>, EngineError> {
+        self.make_migration_named(name)
+    }
+
     /// Generate a migration without writing it to disk.
-    pub fn make_migration_dry_run(
+    pub(crate) fn make_migration_dry_run(
         self,
         name: Option<&str>,
     ) -> Result<Option<Migration>, EngineError> {
         self.make_migration_inner(name, true, ClarificationMode::Interactive)
     }
 
+    /// Generate a migration without writing it to disk.
+    pub fn make_dry_run(self, name: Option<&str>) -> Result<Option<Migration>, EngineError> {
+        self.make_migration_dry_run(name)
+    }
+
     /// Generate a migration without writing it, failing if clarifications would be required.
-    pub fn make_migration_dry_run_non_interactive(
+    pub(crate) fn make_migration_dry_run_non_interactive(
         self,
         name: Option<&str>,
     ) -> Result<Option<Migration>, EngineError> {
         self.make_migration_inner(
             name,
             true,
-            ClarificationMode::Disabled("make_migration --dry-run --non-interactive"),
+            ClarificationMode::Disabled("make --dry-run --non-interactive"),
         )
     }
 
+    /// Generate a migration without writing it, failing if clarification is needed.
+    pub fn make_dry_run_non_interactive(
+        self,
+        name: Option<&str>,
+    ) -> Result<Option<Migration>, EngineError> {
+        self.make_migration_dry_run_non_interactive(name)
+    }
+
     /// Check whether the configured schema has changes not yet captured in migrations.
-    pub fn make_migration_check(self) -> Result<(), EngineError> {
+    pub(crate) fn make_migration_check(self) -> Result<(), EngineError> {
         match self.make_migration_inner(
             Some("check"),
             true,
-            ClarificationMode::Disabled("make_migration --check"),
+            ClarificationMode::Disabled("make --check"),
         )? {
             Some(_) => Err(EngineError::Config(
                 "schema has changes not yet in a migration".into(),
@@ -512,20 +560,33 @@ impl MigrationEngine {
         }
     }
 
+    /// Check whether schema changes need a new migration.
+    pub fn make_check(self) -> Result<(), EngineError> {
+        self.make_migration_check()
+    }
+
     /// Generate and write a migration, failing if clarifications would be required.
-    pub fn make_migration_non_interactive(
+    pub(crate) fn make_migration_non_interactive(
         self,
         name: Option<&str>,
     ) -> Result<Option<Migration>, EngineError> {
         self.make_migration_inner(
             name,
             false,
-            ClarificationMode::Disabled("make_migration --non-interactive"),
+            ClarificationMode::Disabled("make --non-interactive"),
         )
     }
 
+    /// Generate and write a migration, failing if clarification is needed.
+    pub fn make_non_interactive(
+        self,
+        name: Option<&str>,
+    ) -> Result<Option<Migration>, EngineError> {
+        self.make_migration_non_interactive(name)
+    }
+
     /// Generate and write a migration using caller-provided clarification decisions.
-    pub fn make_migration_with_decisions(
+    pub(crate) fn make_migration_with_decisions(
         self,
         name: Option<&str>,
         decisions: &[Decision],
@@ -533,24 +594,43 @@ impl MigrationEngine {
         self.make_migration_inner(name, false, ClarificationMode::Decisions(decisions))
     }
 
+    /// Generate and write a migration using caller-provided clarification decisions.
+    pub fn make_with_decisions(
+        self,
+        name: Option<&str>,
+        decisions: &[Decision],
+    ) -> Result<Option<Migration>, EngineError> {
+        self.make_migration_with_decisions(name, decisions)
+    }
+
     /// Create an empty migration with no operations. Useful as a shell to fill by hand.
     /// Writes to the embedded source dir after validating it matches config.migrations_dir.
-    pub fn make_empty_migration(self, name: &str) -> Result<Migration, EngineError> {
+    pub(crate) fn make_empty_migration(self, name: &str) -> Result<Migration, EngineError> {
         Ok(self
             .build_writable_migrator()?
             .make_empty_migration(name.to_string())?)
     }
 
+    /// Create an empty migration with no operations.
+    pub fn make_empty(self, name: &str) -> Result<Migration, EngineError> {
+        self.make_empty_migration(name)
+    }
+
     /// Create a merge migration for multiple graph heads.
-    pub fn make_merge_migration(self, name: &str) -> Result<Migration, EngineError> {
+    pub(crate) fn make_merge_migration(self, name: &str) -> Result<Migration, EngineError> {
         Ok(self
             .build_writable_migrator()?
             .make_merge_migration(name.to_string())?)
     }
 
+    /// Create a merge migration for multiple graph heads.
+    pub fn make_merge(self, name: &str) -> Result<Migration, EngineError> {
+        self.make_merge_migration(name)
+    }
+
     /// Parse `std::env::args()` and dispatch the corresponding subcommand using
     /// the embedded migration source and the optionally provided schema.
-    /// Supports the full CLI interface: make_migration, migrate, verify_db, etc.
+    /// Supports the full CLI interface: make, apply, verify, etc.
     pub async fn handle_args(self) -> Result<(), EngineError> {
         let args: GamanArgs = argh::from_env();
         args.load_env_file()?;
@@ -732,10 +812,11 @@ atomic: true
         let dir = tempfile::tempdir().unwrap();
         let schema = crate::schema::Schema::builder(Dialect::Postgres)
             .table::<HandWrittenUser>()
-            .build();
+            .build()
+            .unwrap();
 
         let migration = directory_engine(&dir, schema)
-            .make_migration_dry_run(Some("add_users"))
+            .make_dry_run(Some("add_users"))
             .unwrap()
             .expect("migration");
 
@@ -769,7 +850,7 @@ atomic: true
             .unwrap();
 
         let sql = MigrationEngine::from_source(Config::default(), source)
-            .sql_migrate()
+            .sql()
             .unwrap();
 
         assert_eq!(sql.len(), 1);
@@ -795,11 +876,16 @@ tables:
             Config::default().with_dialect(Dialect::Postgres),
             source.clone(),
         )
-        .with_schema(|_| schema)
+        .with_schema(|builder| {
+            schema
+                .tables
+                .into_values()
+                .fold(builder, SchemaBuilder::table_def)
+        })
         .unwrap();
 
         let migration = engine
-            .make_migration_non_interactive(Some("add_users"))
+            .make_non_interactive(Some("add_users"))
             .unwrap()
             .expect("migration");
 
@@ -825,7 +911,7 @@ tables:
     #[test]
     fn sql_migrate_renders_all_embedded_migrations() {
         let sql = MigrationEngine::new(Config::default(), &SQL_MIGRATIONS)
-            .sql_migrate()
+            .sql()
             .unwrap();
 
         assert_eq!(sql.len(), 2);
@@ -837,7 +923,7 @@ tables:
     #[test]
     fn sql_migrate_id_renders_one_migration() {
         let sql = MigrationEngine::new(Config::default(), &SQL_MIGRATIONS)
-            .sql_migrate_id("0002_add_email")
+            .sql_id("0002_add_email")
             .unwrap();
 
         assert_eq!(sql.len(), 1);
@@ -848,7 +934,7 @@ tables:
     #[test]
     fn sql_migrate_id_rejects_unknown_id() {
         let err = MigrationEngine::new(Config::default(), &SQL_MIGRATIONS)
-            .sql_migrate_id("missing")
+            .sql_id("missing")
             .unwrap_err();
 
         assert!(err.to_string().contains("unknown migration id 'missing'"));
@@ -874,7 +960,7 @@ atomic: true
         .unwrap();
 
         let sql = MigrationEngine::new(Config::default(), &SQL_MIGRATIONS)
-            .sql_migrate_migrations(&[generated])
+            .sql_migrations(&[generated])
             .unwrap();
 
         assert_eq!(sql.len(), 1);
@@ -909,7 +995,7 @@ tables:
         .unwrap();
 
         let migration = directory_engine(&dir, schema)
-            .make_migration_dry_run(Some("add_users"))
+            .make_dry_run(Some("add_users"))
             .unwrap()
             .expect("migration");
 
@@ -922,7 +1008,7 @@ tables:
     fn make_migration_check_succeeds_without_changes() {
         let dir = tempfile::tempdir().unwrap();
         directory_engine(&dir, Schema::default())
-            .make_migration_check()
+            .make_check()
             .unwrap();
     }
 
@@ -942,9 +1028,7 @@ tables:
         )
         .unwrap();
 
-        let err = directory_engine(&dir, schema)
-            .make_migration_check()
-            .unwrap_err();
+        let err = directory_engine(&dir, schema).make_check().unwrap_err();
 
         assert!(err.to_string().contains("schema has changes"));
     }
@@ -966,7 +1050,7 @@ tables:
         .unwrap();
 
         let err = directory_engine(&dir, schema)
-            .make_migration_non_interactive(Some("add_users"))
+            .make_non_interactive(Some("add_users"))
             .unwrap_err();
 
         assert!(err.to_string().contains("--non-interactive"));
@@ -996,7 +1080,7 @@ tables:
         }];
 
         let migration = directory_engine(&dir, schema)
-            .make_migration_with_decisions(Some("add_users"), &decisions)
+            .make_with_decisions(Some("add_users"), &decisions)
             .unwrap()
             .expect("migration");
 

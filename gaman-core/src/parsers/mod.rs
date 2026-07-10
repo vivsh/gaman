@@ -18,6 +18,8 @@
 //! There is no default SQL dialect at this boundary. Callers must pass the
 //! dialect explicitly for parsing and segmentation.
 
+#![allow(clippy::result_large_err)]
+
 mod common;
 mod error;
 mod mysql;
@@ -25,6 +27,7 @@ mod postgres;
 mod segments;
 mod sql;
 mod sqlite;
+mod table_recovery;
 
 #[cfg(test)]
 mod tests;
@@ -34,3 +37,4 @@ pub use segments::{
     DdlStatementKind, DmlStatementKind, SqlObjectName, SqlSegment, SqlStatementKind, segment_sql,
 };
 pub use sql::parse_sql;
+pub(crate) use sql::parse_sql_raw;

@@ -3,4 +3,4 @@ dialect: postgres
 sql: |
   DELETE FROM users WHERE id = 1;
 
-expect_error: only CREATE statements for modeled schema entities are parsed
+expect_error: known Gaman entity kind

@@ -117,6 +117,9 @@ features:
 - id: diff.diff_view_formatting_noop
   label: diff / diff view formatting noop
   category: diff
+- id: verify.postgres_default_cast_no_drift
+  label: verify / postgres default cast no drift
+  category: verify
 - id: diff.schema_to_migration_add_nullable_email
   label: diff / schema to migration add nullable email
   category: diff

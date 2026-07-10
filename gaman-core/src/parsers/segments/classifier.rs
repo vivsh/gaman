@@ -31,11 +31,18 @@ fn classify_create(tokens: &TokenStream<'_>) -> Option<SqlStatementKind> {
     let determinant = find_entity_determinant(tokens)?;
     match determinant.kind {
         CreateDeterminantKind::Entity(entity) => {
+            if entity == EntityKind::View
+                && (0..determinant.index).any(|idx| tokens.word(idx) == Some("MATERIALIZED"))
+            {
+                return None;
+            }
             let name_idx = skip_name_modifiers(tokens, entity, determinant.index + 1);
             let (name, _) = tokens.object_name_at(name_idx)?;
+            let owner = owner_for_entity(tokens, entity, name_idx + 1);
             Some(SqlStatementKind::Ddl(DdlStatementKind {
                 entity,
                 name: Some(name),
+                owner,
             }))
         }
         CreateDeterminantKind::Type => {
@@ -46,9 +53,36 @@ fn classify_create(tokens: &TokenStream<'_>) -> Option<SqlStatementKind> {
             Some(SqlStatementKind::Ddl(DdlStatementKind {
                 entity: EntityKind::Enum,
                 name: Some(name),
+                owner: None,
             }))
         }
     }
+}
+
+fn owner_for_entity(
+    tokens: &TokenStream<'_>,
+    entity: EntityKind,
+    start_idx: usize,
+) -> Option<SqlObjectName> {
+    match entity {
+        EntityKind::Index | EntityKind::Trigger => object_name_after_word(tokens, start_idx, "ON"),
+        _ => None,
+    }
+}
+
+fn object_name_after_word(
+    tokens: &TokenStream<'_>,
+    start_idx: usize,
+    target: &str,
+) -> Option<SqlObjectName> {
+    let mut idx = start_idx;
+    while let Some(token) = tokens.item(idx) {
+        if matches!(token, TopLevelToken::Word { upper, .. } if upper == target) {
+            return tokens.object_name_at(idx + 1).map(|(name, _)| name);
+        }
+        idx += 1;
+    }
+    None
 }
 
 fn find_entity_determinant(tokens: &TokenStream<'_>) -> Option<EntityDeterminant> {

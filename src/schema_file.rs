@@ -38,11 +38,12 @@ pub fn load_schema_file(
     let path = path.as_ref();
     let raw =
         fs::read_to_string(path).map_err(|e| SchemaLoadError::Io(path.display().to_string(), e))?;
-    match path.extension().and_then(|ext| ext.to_str()) {
+    let loaded = match path.extension().and_then(|ext| ext.to_str()) {
         Some("sql") => Schema::from_sql_str(&raw, dialect),
         Some("json") => Schema::from_json_str(&raw, dialect),
         _ => Schema::from_yaml_str(&raw, dialect),
-    }
+    };
+    loaded.map_err(|err| schema_error_with_path(path, err))
 }
 
 /// Load and merge every schema file in a native filesystem directory.
@@ -57,10 +58,10 @@ pub fn load_schema_dir(dir: impl AsRef<Path>, dialect: Dialect) -> Result<Schema
 
     let mut merged = Schema::default();
     for path in entries {
-        let fragment = load_schema_file(&path, dialect)?;
+        let fragment = load_schema_file_raw(&path, dialect)?;
         merged = merge_fragment(merged, fragment, dir, &path)?;
     }
-    Ok(merged)
+    merged.prepare_loaded(dialect)
 }
 
 fn schema_entries(dir: &Path) -> Result<Vec<PathBuf>, SchemaLoadError> {
@@ -77,6 +78,27 @@ fn is_schema_file(path: &Path) -> bool {
         path.extension().and_then(|ext| ext.to_str()),
         Some("yaml" | "yml" | "json" | "sql")
     )
+}
+
+fn load_schema_file_raw(path: &Path, dialect: Dialect) -> Result<Schema, SchemaLoadError> {
+    let raw =
+        fs::read_to_string(path).map_err(|e| SchemaLoadError::Io(path.display().to_string(), e))?;
+    let loaded = match path.extension().and_then(|ext| ext.to_str()) {
+        Some("sql") => Schema::from_sql_str_raw(&raw, dialect),
+        Some("json") => Schema::from_json_str_input_raw(&raw),
+        _ => Schema::from_yaml_str_input_raw(&raw),
+    };
+    loaded.map_err(|err| schema_error_with_path(path, err))
+}
+
+fn schema_error_with_path(path: &Path, err: SchemaLoadError) -> SchemaLoadError {
+    match err {
+        SchemaLoadError::Io(_, _) | SchemaLoadError::Path { .. } => err,
+        other => SchemaLoadError::Path {
+            path: path.display().to_string(),
+            source: Box::new(other),
+        },
+    }
 }
 
 fn merge_fragment(

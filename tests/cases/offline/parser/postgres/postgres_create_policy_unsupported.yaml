@@ -13,4 +13,4 @@ sql: |
   USING (tenant_id = current_setting('app.tenant_id')::uuid);
 expect_parse: ok
 expect_lowering: unsupported
-expect_error: only CREATE statements for modeled schema entities are parsed
+expect_error: known Gaman entity kind

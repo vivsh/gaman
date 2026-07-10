@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use thiserror::Error;
 
@@ -8,16 +8,17 @@ use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
 use crate::executor::{Executor, ExecutorError};
 use crate::inspection::{self, InspectionError};
 use crate::tracking::{DatabaseTrackingStore, TrackingError, TrackingStore};
-use crate::verification;
 use gaman_core::clarifier::{Clarification, Clarifier, ClarifyError, ClarifyResult, Decision};
 use gaman_core::clarifier::{TypeResolution, non_type_decisions, resolve_unknown_types};
 use gaman_core::dialects::{Dialect, DialectError};
 use gaman_core::diff::{DiffEngine, DiffError};
+use gaman_core::drift;
 use gaman_core::graphs::{GraphError, MigrationGraph};
 use gaman_core::migrations::Migration;
 use gaman_core::operations::Operation;
+use gaman_core::repair::plan_repair;
+use gaman_core::replay::{ReplayEngine, ReplaySources, compute_deps, deterministic_name_from_ops};
 use gaman_core::sql_plan::{SqlPlanError, SqlPlanRenderer, render_migration_sql};
-use gaman_core::states::types::EntityKind;
 use gaman_core::states::{ReplayError, Schema};
 
 #[derive(Debug, Error)]
@@ -63,6 +64,48 @@ pub struct Migrator {
     pub diff: DiffEngine,
 }
 
+/// Migration metadata used by listing commands.
+///
+/// The `content` field is the canonical YAML representation of the loaded
+/// migration, not necessarily the exact original file bytes.
+#[derive(Debug, Clone)]
+pub struct MigrationListing {
+    /// Migration id in graph order.
+    pub id: String,
+    /// Whether the migration is already recorded as applied.
+    pub applied: bool,
+    /// Canonical YAML content for display and search.
+    pub content: String,
+}
+
+/// Options for planning or applying one-off drift repair SQL.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RepairOptions {
+    /// Execute the repair SQL. When false, repair is a dry-run.
+    pub apply: bool,
+    /// Allow repair even when unapplied migrations exist.
+    pub allow_pending: bool,
+    /// Apply repairable drift and leave unsupported findings reported.
+    pub allow_partial: bool,
+    /// Request SQL-oriented output from callers.
+    pub sql_only: bool,
+}
+
+/// Result of a one-off drift repair plan or application.
+#[derive(Debug, Clone)]
+pub struct RepairReport {
+    /// Verification report used for the returned repair state.
+    pub verification: drift::VerificationReport,
+    /// Repair operations derived from drift findings.
+    pub operations: Vec<Operation>,
+    /// SQL rendered from repair operations.
+    pub sql: Vec<String>,
+    /// Whether repair SQL was applied to the live database.
+    pub applied: bool,
+    /// Drift findings that were not represented by repair operations.
+    pub skipped_findings: Vec<drift::DriftFinding>,
+}
+
 impl Migrator {
     pub fn new(
         source: Box<dyn MigrationSource + Send + Sync>,
@@ -86,7 +129,7 @@ impl Migrator {
         for migration in migrations.iter().cloned() {
             graph.add(migration)?;
         }
-        // Validate dependency integrity eagerly so broken repos fail at construction, not at migrate-time.
+        // Validate dependency integrity eagerly so broken repos fail at construction, not at apply-time.
         let ordered_ids = graph
             .topological_order()?
             .into_iter()
@@ -133,8 +176,9 @@ impl Migrator {
     ) -> Result<Option<Migration>, MigratorError> {
         self.graph.detect_conflict()?;
         let dialect = self.dialect();
-        let (previous, last_per_ns, entity_ns) = self.replay_with_sources()?;
-        let previous = previous
+        let replay = self.replay_with_sources()?;
+        let previous = replay
+            .schema
             .prepare(dialect)
             .map_err(|err| MigratorError::Config(err.to_string()))?;
         let current = current
@@ -158,10 +202,10 @@ impl Migrator {
             ClarifyResult::Resolved(ops) => ops,
         };
         let ops = dialect.reorder(ops, &previous, &current);
-        let name = name.unwrap_or_else(|| name_from_ops(&ops));
+        let name = name.unwrap_or_else(|| deterministic_name_from_ops(&ops));
         let id = format!("{:04}_{}", self.graph.next_number(), name);
         MigrationGraph::validate_id(&id).map_err(MigratorError::Graph)?;
-        let dependencies = compute_deps(&ops, &last_per_ns, &entity_ns);
+        let dependencies = compute_deps(&ops, &replay.last_per_ns, &replay.entity_ns);
         let migration = Migration {
             id,
             dependencies,
@@ -175,51 +219,21 @@ impl Migrator {
     }
 
     fn replay(&self) -> Result<Schema, MigratorError> {
-        let (state, _, _) = self.replay_with_sources()?;
-        Ok(state)
+        Ok(self.replay_with_sources()?.schema)
     }
 
-    fn replay_with_sources(
-        &self,
-    ) -> Result<
-        (
-            Schema,
-            HashMap<String, String>,
-            HashMap<(EntityKind, String), String>,
-        ),
-        MigratorError,
-    > {
-        let order = self.ordered_ids.iter().map(String::as_str);
-        let mut state = Schema::default();
-        let mut last_per_ns: HashMap<String, String> = HashMap::new();
-        let mut entity_ns: HashMap<(EntityKind, String), String> = HashMap::new();
-        for id in order {
-            if let Some(migration) = self.graph.get(id) {
-                for (i, op) in migration.operations.iter().enumerate() {
-                    state.apply(op).map_err(|e| ReplayError::WithContext {
-                        migration: id.to_string(),
-                        op_num: i + 1,
-                        inner: Box::new(e),
-                    })?;
-                }
-                let ns = namespace_of(id).to_string();
-                for entity in migration.get_entities() {
-                    entity_ns.insert(entity, ns.clone());
-                }
-                last_per_ns.insert(ns, id.to_string());
-            }
-        }
-        Ok((state, last_per_ns, entity_ns))
+    fn replay_with_sources(&self) -> Result<ReplaySources, MigratorError> {
+        Ok(ReplayEngine::new(&self.graph).replay_with_sources(&self.ordered_ids)?)
     }
 
     /// Generate an empty migration with no operations.
     /// Dependencies are set to the current graph heads so it slots in at the tip.
     /// The id is auto-prefixed with the next sequential number: `{n:04}_{name}`.
     pub fn make_empty_migration(&self, name: String) -> Result<Migration, MigratorError> {
-        let (_, last_per_ns, entity_ns) = self.replay_with_sources()?;
+        let replay = self.replay_with_sources()?;
         let id = format!("{:04}_{}", self.graph.next_number(), name);
         MigrationGraph::validate_id(&id).map_err(MigratorError::Graph)?;
-        let dependencies = compute_deps(&[], &last_per_ns, &entity_ns);
+        let dependencies = compute_deps(&[], &replay.last_per_ns, &replay.entity_ns);
         let migration = Migration {
             id,
             dependencies,
@@ -252,11 +266,27 @@ impl Migrator {
         Ok(self.sql_renderer.render_rollback_migrations(migrations)?)
     }
 
+    fn repair_sql(&self, operations: Vec<Operation>) -> Result<Vec<String>, MigratorError> {
+        if operations.is_empty() {
+            return Ok(Vec::new());
+        }
+        let migration = Migration {
+            id: "__repair__".to_string(),
+            dependencies: Vec::new(),
+            operations,
+            atomic: true,
+        };
+        self.sql_migrate(&[migration])
+    }
+
     fn replay_prefix(&self, end_exclusive: usize) -> Result<Schema, MigratorError> {
         let mut state = Schema::default();
         for id in self.ordered_ids.iter().take(end_exclusive) {
-            let migration = self.graph.get(id).expect("ordered id must exist in graph");
-            apply_migration_to_state(&mut state, migration)?;
+            let migration = self
+                .graph
+                .get(id)
+                .ok_or_else(|| ReplayError::MigrationNotFound(id.clone()))?;
+            ReplayEngine::apply_migration(&mut state, migration)?;
         }
         Ok(state)
     }
@@ -487,12 +517,78 @@ impl Migrator {
     /// Calls `install` internally so the tracking table is always present.
     /// Each migration runs in its own transaction; a failure rolls back only that migration.
     /// Returns the number of migrations applied (forward direction only).
-    pub async fn migrate(&self, target: Option<&str>, fake: bool) -> Result<usize, MigratorError> {
+    /// Applies pending migrations through an optional target migration.
+    pub async fn apply(&self, target: Option<&str>, fake: bool) -> Result<usize, MigratorError> {
         let mut executor = self.executor().await?;
-        self.migrate_with(executor.as_mut(), target, fake).await
+        self.apply_with(executor.as_mut(), target, fake).await
     }
 
-    pub async fn migrate_with(
+    /// Roll back applied migrations so `target` remains applied.
+    ///
+    /// This rejects unapplied targets because rollback is intentionally
+    /// backward-only; use apply for forward movement.
+    pub async fn rollback_to(&self, target: &str, fake: bool) -> Result<usize, MigratorError> {
+        self.graph.detect_conflict()?;
+        if self.graph.get(target).is_none() {
+            return Err(MigratorError::Config(format!(
+                "unknown target migration '{target}'"
+            )));
+        }
+
+        let mut executor = self.executor().await?;
+        self.install(executor.as_mut()).await?;
+        executor.acquire_lock().await?;
+        let result = self
+            .rollback_to_locked(executor.as_mut(), target, fake)
+            .await;
+        let release_result = executor.release_lock().await;
+
+        match (result, release_result) {
+            (Ok(count), Ok(())) => Ok(count),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error.into()),
+        }
+    }
+
+    async fn rollback_to_locked(
+        &self,
+        executor: &mut dyn Executor,
+        target: &str,
+        fake: bool,
+    ) -> Result<usize, MigratorError> {
+        let order: Vec<&str> = self.ordered_ids.iter().map(String::as_str).collect();
+        let applied = self.applied_set(executor).await?;
+        self.validate_applied_ids(&applied)?;
+        if !applied.contains(target) {
+            return Err(MigratorError::Config(format!(
+                "target migration '{target}' is not applied; rollback can only move backward"
+            )));
+        }
+        let target_pos = order.iter().position(|id| *id == target).ok_or_else(|| {
+            MigratorError::Config(format!("target migration '{target}' is not ordered"))
+        })?;
+        let missing_before_target: Vec<&str> = order[..=target_pos]
+            .iter()
+            .filter(|id| !applied.contains(**id))
+            .copied()
+            .collect();
+        if !missing_before_target.is_empty() {
+            return Err(MigratorError::Config(format!(
+                "target migration '{target}' has unapplied predecessor(s): {}; rollback can only move backward",
+                missing_before_target.join(", ")
+            )));
+        }
+        let reverted = order[target_pos + 1..]
+            .iter()
+            .filter(|id| applied.contains(**id))
+            .count();
+        self.apply_locked(executor, Some(target), fake, order)
+            .await?;
+        Ok(reverted)
+    }
+
+    /// Applies pending migrations with a caller-provided executor.
+    pub async fn apply_with(
         &self,
         executor: &mut dyn Executor,
         target: Option<&str>,
@@ -524,9 +620,7 @@ impl Migrator {
 
         self.install(executor).await?;
         executor.acquire_lock().await?;
-        let result = self
-            .migrate_locked(executor, target, fake, all_ordered)
-            .await;
+        let result = self.apply_locked(executor, target, fake, all_ordered).await;
         let release_result = executor.release_lock().await;
 
         match (result, release_result) {
@@ -536,7 +630,7 @@ impl Migrator {
         }
     }
 
-    async fn migrate_locked<'a>(
+    async fn apply_locked<'a>(
         &'a self,
         executor: &mut dyn Executor,
         target: Option<&str>,
@@ -684,13 +778,13 @@ impl Migrator {
             .map(|pending| !pending.is_empty())
     }
 
-    /// Return all migration ids in topological order paired with whether each has been applied.
-    pub async fn show_migrations(&self) -> Result<Vec<(String, bool)>, MigratorError> {
+    /// Return all migration ids in graph order paired with applied status.
+    pub async fn status(&self) -> Result<Vec<(String, bool)>, MigratorError> {
         let mut executor = self.executor().await?;
-        self.show_migrations_with(executor.as_mut()).await
+        self.status_with(executor.as_mut()).await
     }
 
-    pub async fn show_migrations_with(
+    pub async fn status_with(
         &self,
         executor: &mut dyn Executor,
     ) -> Result<Vec<(String, bool)>, MigratorError> {
@@ -704,9 +798,41 @@ impl Migrator {
             .collect())
     }
 
-    pub async fn inspect_db(&self, schemas: &[&str]) -> Result<Schema, MigratorError> {
+    /// Return migrations in graph order with status and canonical YAML content.
+    pub async fn show(&self) -> Result<Vec<MigrationListing>, MigratorError> {
         let mut executor = self.executor().await?;
-        Ok(inspection::inspect_database(executor.as_mut(), schemas, self.dialect()).await?)
+        self.show_with(executor.as_mut()).await
+    }
+
+    /// Return migration listings using the caller-provided executor.
+    pub async fn show_with(
+        &self,
+        executor: &mut dyn Executor,
+    ) -> Result<Vec<MigrationListing>, MigratorError> {
+        self.graph.detect_conflict()?;
+        self.install(executor).await?;
+        let applied: HashSet<String> = self.applied_set(executor).await?;
+        self.ordered_ids
+            .iter()
+            .filter_map(|id| self.graph.get(id).map(|migration| (id, migration)))
+            .map(|(id, migration)| {
+                let content = migration.to_yaml_string().map_err(|err| {
+                    MigratorError::Config(format!(
+                        "failed to serialize migration '{id}' for display: {err}"
+                    ))
+                })?;
+                Ok(MigrationListing {
+                    id: id.clone(),
+                    applied: applied.contains(id),
+                    content,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn inspect(&self, schemas: &[&str]) -> Result<Schema, MigratorError> {
+        let mut executor = self.executor().await?;
+        Ok(inspection::inspect_database(executor.as_mut(), schemas).await?)
     }
 
     /// Compare migration-owned schema objects against the live database.
@@ -724,9 +850,78 @@ impl Migrator {
     pub async fn verify_report(
         &self,
         schema: &str,
-    ) -> Result<verification::VerificationReport, MigratorError> {
+    ) -> Result<drift::VerificationReport, MigratorError> {
         let mut executor = self.executor().await?;
         self.verify_report_with(executor.as_mut(), schema).await
+    }
+
+    /// Plan or apply one-off repair SQL for verified drift in the `public` schema.
+    ///
+    /// Repair never writes migration files or records migration tracking rows.
+    /// When `options.apply` is false this is a dry-run that only returns SQL.
+    pub async fn repair(&self, options: RepairOptions) -> Result<RepairReport, MigratorError> {
+        let mut executor = self.executor().await?;
+        let initial = self.verify_report_with(executor.as_mut(), "public").await?;
+        if !options.allow_pending && !initial.pending_migrations.is_empty() {
+            return Err(MigratorError::Config(format!(
+                "pending migrations block repair: {}",
+                initial.pending_migrations.join(", ")
+            )));
+        }
+        let plan = plan_repair(&initial);
+        if !options.allow_partial && !plan.skipped_findings.is_empty() {
+            return Err(MigratorError::Config(format!(
+                "{} drift finding(s) cannot be repaired automatically",
+                plan.skipped_findings.len()
+            )));
+        }
+        let sql = self.repair_sql(plan.operations.clone())?;
+        if options.apply && !sql.is_empty() {
+            self.apply_repair_sql(executor.as_mut(), &sql).await?;
+            let verification = self.verify_report_with(executor.as_mut(), "public").await?;
+            return Ok(RepairReport {
+                verification,
+                operations: plan.operations,
+                sql,
+                applied: true,
+                skipped_findings: plan.skipped_findings,
+            });
+        }
+        Ok(RepairReport {
+            verification: initial,
+            operations: plan.operations,
+            sql,
+            applied: false,
+            skipped_findings: plan.skipped_findings,
+        })
+    }
+
+    async fn apply_repair_sql(
+        &self,
+        executor: &mut (dyn EnvironmentExecutor + Send),
+        sql: &[String],
+    ) -> Result<(), MigratorError> {
+        self.install(executor).await?;
+        executor.acquire_lock().await?;
+        let result = async {
+            executor.begin().await?;
+            if let Err(error) = self.run_sql_statements(sql, executor).await {
+                let _ = executor.rollback().await;
+                return Err(error);
+            }
+            if let Err(error) = executor.commit().await {
+                let _ = executor.rollback().await;
+                return Err(error.into());
+            }
+            Ok(())
+        }
+        .await;
+        let release_result = executor.release_lock().await;
+        match (result, release_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), _) => Err(error),
+            (Ok(()), Err(error)) => Err(error.into()),
+        }
     }
 
     pub async fn verify_with(
@@ -741,15 +936,18 @@ impl Migrator {
         &self,
         executor: &mut (dyn EnvironmentExecutor + Send),
         schema: &str,
-    ) -> Result<verification::VerificationReport, MigratorError> {
+    ) -> Result<drift::VerificationReport, MigratorError> {
         let dialect = self.dialect();
         let mut replay = self.replay()?;
         replay
             .prepare_mut(&dialect)
             .map_err(|err| MigratorError::Config(err.to_string()))?;
 
-        let live = inspection::inspect_database(executor, &[schema], dialect).await?;
-        let mut report = verification::verify(replay, live, schema, dialect);
+        let live = inspection::inspect_database(executor, &[schema]).await?;
+        let live = dialect
+            .normalize_inspected_schema(live)
+            .map_err(|err| MigratorError::Config(err.to_string()))?;
+        let mut report = drift::diff(replay, live, schema, dialect);
         self.install(executor).await?;
         let applied = self.applied_set(executor).await?;
         self.validate_applied_ids(&applied)?;
@@ -761,198 +959,6 @@ impl Migrator {
             .collect();
         Ok(report)
     }
-}
-
-fn namespace_of(id: &str) -> &str {
-    match id.rfind('/') {
-        Some(pos) => &id[..pos],
-        None => "",
-    }
-}
-
-fn apply_migration_to_state(
-    state: &mut Schema,
-    migration: &Migration,
-) -> Result<(), MigratorError> {
-    for (i, op) in migration.operations.iter().enumerate() {
-        state.apply(op).map_err(|e| ReplayError::WithContext {
-            migration: migration.id.clone(),
-            op_num: i + 1,
-            inner: Box::new(e),
-        })?;
-    }
-    Ok(())
-}
-
-fn op_entity_label(op: &Operation) -> Option<&str> {
-    match op {
-        Operation::CreateTable { table } | Operation::DropTable { table } => Some(&table.name),
-        Operation::RenameTable { new_name, .. } => Some(new_name),
-        Operation::AddColumn { table_name, .. }
-        | Operation::DropColumn { table_name, .. }
-        | Operation::RenameColumn { table_name, .. }
-        | Operation::AlterColumn { table_name, .. }
-        | Operation::AddForeignKey { table_name, .. }
-        | Operation::DropForeignKey { table_name, .. }
-        | Operation::AddIndex { table_name, .. }
-        | Operation::DropIndex { table_name, .. }
-        | Operation::AddConstraint { table_name, .. }
-        | Operation::DropConstraint { table_name, .. }
-        | Operation::CreateTrigger { table_name, .. }
-        | Operation::AlterTrigger { table_name, .. }
-        | Operation::DropTrigger { table_name, .. } => Some(table_name),
-        Operation::CreateFunction { function } | Operation::DropFunction { function } => {
-            Some(&function.name)
-        }
-        Operation::AlterFunction { new, .. } => Some(&new.name),
-        Operation::CreateView { view } | Operation::DropView { view } => Some(&view.name),
-        Operation::ReplaceView { new, .. } => Some(&new.name),
-        Operation::CreateExtension { extension } | Operation::DropExtension { extension } => {
-            Some(&extension.name)
-        }
-        Operation::CreateEnum { enum_def } | Operation::DropEnum { enum_def } => {
-            Some(&enum_def.name)
-        }
-        Operation::RenameEnumValue { enum_name, .. } => Some(enum_name),
-        Operation::AlterEnum { new, .. } => Some(&new.name),
-        Operation::Statement { .. } => None,
-    }
-}
-
-fn name_from_ops(ops: &[Operation]) -> String {
-    let mut unique: Vec<&str> = Vec::new();
-    for op in ops {
-        if let Some(label) = op_entity_label(op)
-            && !unique.contains(&label)
-        {
-            unique.push(label);
-        }
-    }
-    match unique.as_slice() {
-        [] | [_, _, _, ..] => auto_timestamp(),
-        [a] => a.to_string(),
-        [a, b] => format!("{a}_{b}"),
-    }
-}
-
-fn auto_timestamp() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let mins = secs / 60;
-    let hhmm = (mins % (24 * 60)) as u32;
-    let days = secs / 86400;
-    // days since epoch → approximate YYYYMMDD (good enough for a unique suffix)
-    let (y, m, d) = days_to_ymd(days);
-    format!("auto_{y:04}{m:02}{d:02}_{hhmm:04}")
-}
-
-fn days_to_ymd(days: u64) -> (u32, u32, u32) {
-    // Rata Die algorithm (days since 1970-01-01)
-    let z = days + 719468;
-    let era = z / 146097;
-    let doe = z % 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y as u32, m as u32, d as u32)
-}
-
-fn compute_deps(
-    ops: &[Operation],
-    last_per_ns: &HashMap<String, String>,
-    entity_ns: &HashMap<(EntityKind, String), String>,
-) -> Vec<String> {
-    let mut ns_set: HashSet<String> = HashSet::new();
-    ns_set.insert(String::new());
-
-    for op in ops {
-        let entities: Vec<(EntityKind, String)> = match op {
-            Operation::CreateTable { table } | Operation::DropTable { table } => {
-                let mut v = vec![(EntityKind::Table, table.qualified_name())];
-                for fk in &table.foreign_keys {
-                    v.push((EntityKind::Table, fk.to_table.clone()));
-                }
-                v
-            }
-            Operation::AddForeignKey {
-                table_name,
-                foreign_key,
-            }
-            | Operation::DropForeignKey {
-                table_name,
-                foreign_key,
-                ..
-            } => {
-                vec![
-                    (EntityKind::Table, table_name.clone()),
-                    (EntityKind::Table, foreign_key.to_table.clone()),
-                ]
-            }
-            Operation::CreateEnum { enum_def }
-            | Operation::DropEnum { enum_def }
-            | Operation::AlterEnum { new: enum_def, .. } => {
-                vec![(EntityKind::Enum, enum_def.qualified_name())]
-            }
-            Operation::RenameEnumValue {
-                enum_name, schema, ..
-            } => {
-                vec![(
-                    EntityKind::Enum,
-                    gaman_core::schema::schema_qualified_key(enum_name, schema.as_deref()),
-                )]
-            }
-            Operation::CreateFunction { function }
-            | Operation::DropFunction { function }
-            | Operation::AlterFunction { new: function, .. } => {
-                vec![(EntityKind::Function, function.qualified_name())]
-            }
-            Operation::CreateView { view }
-            | Operation::DropView { view }
-            | Operation::ReplaceView { new: view, .. } => {
-                vec![(EntityKind::View, view.qualified_name())]
-            }
-            Operation::CreateExtension { extension } | Operation::DropExtension { extension } => {
-                vec![(EntityKind::Extension, extension.qualified_name())]
-            }
-            Operation::AddColumn { table_name, .. }
-            | Operation::DropColumn { table_name, .. }
-            | Operation::AlterColumn { table_name, .. }
-            | Operation::RenameColumn { table_name, .. }
-            | Operation::AddIndex { table_name, .. }
-            | Operation::DropIndex { table_name, .. }
-            | Operation::AddConstraint { table_name, .. }
-            | Operation::DropConstraint { table_name, .. }
-            | Operation::CreateTrigger { table_name, .. }
-            | Operation::AlterTrigger { table_name, .. }
-            | Operation::DropTrigger { table_name, .. } => {
-                vec![(EntityKind::Table, table_name.clone())]
-            }
-            Operation::RenameTable { old_name, .. } => {
-                vec![(EntityKind::Table, old_name.clone())]
-            }
-            Operation::Statement { .. } => vec![],
-        };
-        for entity in entities {
-            if let Some(ns) = entity_ns.get(&entity) {
-                ns_set.insert(ns.clone());
-            }
-        }
-    }
-
-    let mut deps: Vec<String> = ns_set
-        .iter()
-        .filter_map(|ns| last_per_ns.get(ns).cloned())
-        .collect();
-    deps.sort();
-    deps.dedup();
-    deps
 }
 
 #[cfg(test)]

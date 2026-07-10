@@ -6,7 +6,8 @@ use sqlparser::ast::{
 use super::error::ParseError;
 use crate::dialects::Dialect;
 use crate::states::{
-    Column, Constraint, ForeignKey, Index, PrimaryKey, Table, names, schema_qualified_key,
+    Column, Constraint, ForeignKey, Index, OpaqueMeta, PrimaryKey, Table, TableOptionsMeta, names,
+    schema_qualified_key,
 };
 
 pub(super) fn data_type_to_str(dt: &DataType) -> String {
@@ -36,6 +37,13 @@ pub(super) fn index_col_name(ic: &IndexColumn) -> String {
     }
 }
 
+fn is_simple_index_column(ic: &IndexColumn) -> bool {
+    matches!(&ic.column.expr, Expr::Identifier(_))
+        && ic.operator_class.is_none()
+        && ic.column.options == Default::default()
+        && ic.column.with_fill.is_none()
+}
+
 pub(super) fn extract_string_literal(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Value(v) => match &v.value {
@@ -50,7 +58,10 @@ pub(super) fn extract_string_literal(expr: &Expr) -> Option<String> {
     }
 }
 
-pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), ParseError> {
+pub(super) fn parse_create_table(
+    ct: &CreateTable,
+    dialect: Dialect,
+) -> Result<(String, Table), ParseError> {
     let (name, schema) = object_name_parts(&ct.name);
     let key = schema_qualified_key(&name, schema.as_deref());
 
@@ -63,6 +74,7 @@ pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), Pa
         indexes: Vec::new(),
         constraints: Vec::new(),
         triggers: Vec::new(),
+        options: TableOptionsMeta::default(),
     };
 
     for col_def in &ct.columns {
@@ -123,6 +135,9 @@ pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), Pa
                     if let Some(action) = normalize_referential_action(fk.on_delete) {
                         foreign_key.on_delete = Some(action);
                     }
+                    if let Some(action) = normalize_referential_action(fk.on_update) {
+                        foreign_key.on_update = Some(action);
+                    }
                     table.foreign_keys.push(foreign_key);
                 }
                 ColumnOption::Check(chk) => {
@@ -143,14 +158,49 @@ pub(super) fn parse_create_table(ct: &CreateTable) -> Result<(String, Table), Pa
     }
 
     for tc in &ct.constraints {
-        apply_table_constraint(tc, &name, &mut table);
+        apply_table_constraint(tc, &name, &mut table, dialect)?;
     }
+    table.options = table_options_from_ast(ct);
 
     Ok((key, table))
 }
 
+fn table_options_from_ast(ct: &CreateTable) -> TableOptionsMeta {
+    let mut header = Vec::new();
+    let mut tail = Vec::new();
+    if ct.temporary {
+        header.push("TEMPORARY".to_string());
+    }
+    if ct.without_rowid {
+        tail.push("WITHOUT ROWID".to_string());
+    }
+    if ct.strict {
+        tail.push("STRICT".to_string());
+    }
+    let table_options = ct.table_options.to_string();
+    if !table_options.trim().is_empty() {
+        tail.push(table_options);
+    }
+    if let Some(inherits) = &ct.inherits {
+        let names = inherits
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        tail.push(format!("INHERITS ({names})"));
+    }
+    if let Some(partition_by) = &ct.partition_by {
+        tail.push(format!("PARTITION BY {partition_by}"));
+    }
+    if let Some(partition_of) = &ct.partition_of {
+        tail.push(format!("PARTITION OF {partition_of}"));
+    }
+    TableOptionsMeta::from_parts(header, tail)
+}
+
 pub(super) fn parse_create_index(ci: &CreateIndex) -> (String, Index) {
-    let (table_name, _) = object_name_parts(&ci.table_name);
+    let (table_name, table_schema) = object_name_parts(&ci.table_name);
+    let table_key = schema_qualified_key(&table_name, table_schema.as_deref());
     let idx_name = ci
         .name
         .as_ref()
@@ -159,15 +209,18 @@ pub(super) fn parse_create_index(ci: &CreateIndex) -> (String, Index) {
             let cols: Vec<_> = ci.columns.iter().map(index_col_name).collect();
             names::index(&table_name, &cols)
         });
-    (
-        table_name,
+    let index = if ci.columns.iter().all(is_simple_index_column) {
         Index {
             name: idx_name,
             columns: ci.columns.iter().map(index_col_name).collect(),
             unique: ci.unique,
             predicate: ci.predicate.as_ref().map(|e| e.to_string()),
-        },
-    )
+            opaque: OpaqueMeta::default(),
+        }
+    } else {
+        Index::from_raw(idx_name, ci.to_string())
+    };
+    (table_key, index)
 }
 
 pub(super) fn unsupported_statement(
@@ -182,7 +235,12 @@ pub(super) fn unsupported_statement(
     )
 }
 
-fn apply_table_constraint(tc: &TableConstraint, table_name: &str, table: &mut Table) {
+fn apply_table_constraint(
+    tc: &TableConstraint,
+    table_name: &str,
+    table: &mut Table,
+    dialect: Dialect,
+) -> Result<(), ParseError> {
     match tc {
         TableConstraint::PrimaryKey(pk) => {
             let pk_cols: Vec<String> = pk.columns.iter().map(index_col_name).collect();
@@ -234,6 +292,9 @@ fn apply_table_constraint(tc: &TableConstraint, table_name: &str, table: &mut Ta
             if let Some(action) = normalize_referential_action(fk.on_delete) {
                 foreign_key.on_delete = Some(action);
             }
+            if let Some(action) = normalize_referential_action(fk.on_update) {
+                foreign_key.on_update = Some(action);
+            }
             table.foreign_keys.push(foreign_key);
         }
         TableConstraint::Check(chk) => {
@@ -247,8 +308,51 @@ fn apply_table_constraint(tc: &TableConstraint, table_name: &str, table: &mut Ta
                 expression: chk.expr.to_string(),
             });
         }
-        _ => {}
+        TableConstraint::Index(index) => {
+            push_opaque_constraint(
+                table,
+                index.name.as_ref().map(|name| name.value.clone()),
+                tc,
+                dialect,
+            )?;
+        }
+        TableConstraint::FulltextOrSpatial(index) => {
+            push_opaque_constraint(
+                table,
+                index.opt_index_name.as_ref().map(|name| name.value.clone()),
+                tc,
+                dialect,
+            )?;
+        }
+        TableConstraint::PrimaryKeyUsingIndex(index) | TableConstraint::UniqueUsingIndex(index) => {
+            push_opaque_constraint(
+                table,
+                index.name.as_ref().map(|name| name.value.clone()),
+                tc,
+                dialect,
+            )?;
+        }
     }
+    Ok(())
+}
+
+fn push_opaque_constraint(
+    table: &mut Table,
+    name: Option<String>,
+    constraint: &TableConstraint,
+    dialect: Dialect,
+) -> Result<(), ParseError> {
+    let name = name.ok_or_else(|| {
+        ParseError::unsupported(
+            dialect,
+            constraint.to_string(),
+            "unsupported table constraint has no stable name",
+        )
+    })?;
+    table
+        .constraints
+        .push(Constraint::from_raw(name, constraint.to_string()));
+    Ok(())
 }
 
 fn normalize_referential_action(action: Option<ReferentialAction>) -> Option<String> {

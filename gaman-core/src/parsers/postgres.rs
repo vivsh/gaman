@@ -12,13 +12,13 @@ use super::error::ParseError;
 use super::sql::ParseContext;
 use crate::dialects::Dialect;
 use crate::states::{
-    EnumDef, ExtensionDef, FunctionDef, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming,
-    ViewDef, Volatility, schema_qualified_key,
+    EnumDef, ExtensionDef, FunctionDef, OpaqueMeta, TriggerDef, TriggerEvent, TriggerScope,
+    TriggerTiming, ViewDef, Volatility, schema_qualified_key,
 };
 
 pub(super) fn lower_statement(stmt: &Statement, ctx: &mut ParseContext) -> Result<(), ParseError> {
     match stmt {
-        Statement::CreateTable(ct) => ctx.insert_table(parse_create_table(ct)?),
+        Statement::CreateTable(ct) => ctx.insert_table(parse_create_table(ct, Dialect::Postgres)?),
         Statement::CreateIndex(ci) => {
             ctx.push_index(parse_create_index(ci));
             Ok(())
@@ -32,6 +32,7 @@ pub(super) fn lower_statement(stmt: &Statement, ctx: &mut ParseContext) -> Resul
                     name,
                     schema,
                     definition: cv.query.to_string(),
+                    opaque: OpaqueMeta::default(),
                 },
             );
             Ok(())
@@ -46,6 +47,7 @@ pub(super) fn lower_statement(stmt: &Statement, ctx: &mut ParseContext) -> Resul
                     name,
                     schema,
                     version: ce.version.as_ref().map(|i| i.value.clone()),
+                    opaque: OpaqueMeta::default(),
                 },
             );
             Ok(())
@@ -83,6 +85,7 @@ fn lower_create_type(
                     name: type_name,
                     schema,
                     values: labels.iter().map(|l| l.value.clone()).collect(),
+                    opaque: OpaqueMeta::default(),
                 },
             );
             Ok(())
@@ -171,6 +174,7 @@ fn parse_create_function(cf: &CreateFunction, stmt: &Statement) -> (String, Func
             body,
             volatility,
             security_definer: matches!(&cf.security, Some(FunctionSecurity::Definer)),
+            opaque: OpaqueMeta::default(),
         },
     )
 }
@@ -212,6 +216,7 @@ fn lower_create_trigger(
         when: trigger.condition.as_ref().map(ToString::to_string),
         query: None,
         language: None,
+        opaque: OpaqueMeta::default(),
     });
     Ok(())
 }

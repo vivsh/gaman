@@ -20,6 +20,8 @@ pub struct DdlStatementKind {
     pub entity: EntityKind,
     /// Best-effort object name following the determinant.
     pub name: Option<SqlObjectName>,
+    /// Best-effort owner/target object for table-owned DDL such as indexes and triggers.
+    pub owner: Option<SqlObjectName>,
 }
 
 /// A raw SQL object name captured without canonicalization.
@@ -87,7 +89,7 @@ pub(super) trait SqlSegmentationExt {
     fn supports_delimiter_directive(self) -> bool;
     fn tracks_sqlite_trigger_body(self) -> bool;
     fn tracks_mysql_body_blocks(self) -> bool;
-    fn is_statement_start(self, word: &str) -> bool;
+    fn starts_statement(self, word: &str) -> bool;
 }
 
 impl SqlSegmentationExt for Dialect {
@@ -119,7 +121,7 @@ impl SqlSegmentationExt for Dialect {
         matches!(self, Self::Mysql)
     }
 
-    fn is_statement_start(self, word: &str) -> bool {
+    fn starts_statement(self, word: &str) -> bool {
         matches!(
             word,
             "CREATE"

@@ -1,5 +1,7 @@
+use sha2::{Digest, Sha256};
+
 pub(crate) fn opaque_sources_equal(left: &str, right: &str) -> bool {
-    left == right || canonicalize_opaque_source(left) == canonicalize_opaque_source(right)
+    left == right || fingerprint_opaque_source(left) == fingerprint_opaque_source(right)
 }
 
 pub(crate) fn opaque_option_sources_equal(left: &Option<String>, right: &Option<String>) -> bool {
@@ -10,7 +12,19 @@ pub(crate) fn opaque_option_sources_equal(left: &Option<String>, right: &Option<
     }
 }
 
-pub(crate) fn canonicalize_opaque_source(source: &str) -> String {
+pub(crate) fn fingerprint_opaque_source(source: &str) -> String {
+    let canonical = canonicalize_opaque_source(source);
+    let digest = Sha256::digest(canonical.as_bytes());
+    let mut encoded = String::with_capacity(10 + digest.len() * 2);
+    encoded.push_str("v1:sha256:");
+    for byte in digest {
+        use std::fmt::Write;
+        let _ = write!(encoded, "{byte:02x}");
+    }
+    encoded
+}
+
+fn canonicalize_opaque_source(source: &str) -> String {
     let normalized = normalize_line_endings(source);
     canonicalize_normalized(&normalized).unwrap_or(normalized)
 }
@@ -34,14 +48,12 @@ fn normalize_line_endings(source: &str) -> String {
 fn canonicalize_normalized(source: &str) -> Option<String> {
     let mut out = String::with_capacity(source.len());
     let mut i = 0;
-    let mut pending_space = false;
 
     while i < source.len() {
         let rest = &source[i..];
         let ch = rest.chars().next()?;
 
         if ch.is_whitespace() {
-            pending_space = true;
             i += ch.len_utf8();
             continue;
         }
@@ -52,57 +64,96 @@ fn canonicalize_normalized(source: &str) -> Option<String> {
             } else {
                 i = source.len();
             }
-            pending_space = true;
             continue;
         }
 
         if rest.starts_with("/*") {
-            let end = rest.find("*/")?;
-            i += end + 2;
-            pending_space = true;
+            i += block_comment_len(rest)?;
             continue;
         }
 
         if let Some(delim_len) = dollar_quote_delimiter_len(rest) {
-            flush_space(&mut out, &mut pending_space);
             let delimiter = &rest[..delim_len];
             let body = &rest[delim_len..];
             let end = body.find(delimiter)?;
             let protected_len = delim_len + end + delim_len;
-            out.push_str(&rest[..protected_len]);
+            push_token(&mut out, &rest[..protected_len]);
             i += protected_len;
             continue;
         }
 
         if matches!(ch, '\'' | '"' | '`') {
-            flush_space(&mut out, &mut pending_space);
             let protected_len = quoted_region_len(rest, ch)?;
-            out.push_str(&rest[..protected_len]);
+            push_token(&mut out, &rest[..protected_len]);
             i += protected_len;
             continue;
         }
 
         if ch == '[' {
-            flush_space(&mut out, &mut pending_space);
             let protected_len = bracket_region_len(rest)?;
-            out.push_str(&rest[..protected_len]);
+            push_token(&mut out, &rest[..protected_len]);
             i += protected_len;
             continue;
         }
 
-        flush_space(&mut out, &mut pending_space);
-        out.push(ch);
-        i += ch.len_utf8();
+        let token_len = normal_token_len(rest);
+        push_token(&mut out, &rest[..token_len]);
+        i += token_len;
     }
 
-    Some(out.trim().to_string())
+    Some(out)
 }
 
-fn flush_space(out: &mut String, pending_space: &mut bool) {
-    if *pending_space && !out.is_empty() {
-        out.push(' ');
+fn push_token(out: &mut String, token: &str) {
+    use std::fmt::Write;
+    let _ = write!(out, "{}:", token.len());
+    out.push_str(token);
+}
+
+fn normal_token_len(source: &str) -> usize {
+    let Some(first) = source.chars().next() else {
+        return 0;
+    };
+    let class = token_class(first);
+    source
+        .char_indices()
+        .skip(1)
+        .find_map(|(idx, ch)| (ch.is_whitespace() || token_class(ch) != class).then_some(idx))
+        .unwrap_or(source.len())
+}
+
+fn token_class(ch: char) -> u8 {
+    if ch.is_alphanumeric() || matches!(ch, '_' | '$') {
+        1
+    } else if matches!(
+        ch,
+        '+' | '-' | '*' | '/' | '%' | '<' | '>' | '=' | '!' | '~' | '^' | '|' | '&' | '#'
+    ) {
+        2
+    } else {
+        3
     }
-    *pending_space = false;
+}
+
+fn block_comment_len(source: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    while i < source.len() {
+        let rest = &source[i..];
+        if rest.starts_with("/*") {
+            depth += 1;
+            i += 2;
+        } else if rest.starts_with("*/") {
+            depth = depth.checked_sub(1)?;
+            i += 2;
+            if depth == 0 {
+                return Some(i);
+            }
+        } else {
+            i += rest.chars().next()?.len_utf8();
+        }
+    }
+    None
 }
 
 fn quoted_region_len(source: &str, quote: char) -> Option<usize> {
@@ -183,6 +234,15 @@ mod tests {
         assert!(opaque_sources_equal(
             "SELECT  a\nFROM users",
             "SELECT a FROM users"
+        ));
+    }
+
+    /// Verifies line wrapping between SQL clauses does not change the token fingerprint.
+    #[test]
+    fn clause_line_wrapping_is_ignored() {
+        assert!(opaque_sources_equal(
+            "INSERT INTO audit_log(user_id) VALUES (NEW.id);",
+            "INSERT INTO audit_log(user_id)\nVALUES (NEW.id);\n"
         ));
     }
 

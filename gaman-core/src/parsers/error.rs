@@ -1,9 +1,13 @@
 use crate::dialects::Dialect;
 use crate::parsers::segments::SqlSegment;
+use crate::states::SchemaValidationError;
 use sqlparser::parser::ParserError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
+    /// The lowered schema failed dialect preparation.
+    #[error("{0}")]
+    SchemaValidation(#[from] SchemaValidationError),
     #[error("{dialect} SQL parse error{location}: {message}")]
     Parse {
         dialect: &'static str,

@@ -1,10 +1,10 @@
-use super::VerificationRegistry;
+use super::DriftRegistry;
 
-pub(crate) fn registry() -> &'static VerificationRegistry {
+pub(crate) fn registry() -> &'static DriftRegistry {
     &REGISTRY
 }
 
-static REGISTRY: VerificationRegistry = VerificationRegistry {
+static REGISTRY: DriftRegistry = DriftRegistry {
     tables: &[],
     columns: &[],
     primary_keys: &[],

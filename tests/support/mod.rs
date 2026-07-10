@@ -14,7 +14,7 @@ use gaman::Migration;
 use gaman::core::Introspectable;
 use gaman::core::{
     BoxFuture, Clarification, Decision, Dialect, Environment, EnvironmentError,
-    EnvironmentExecutor, Migrator, VecAdapter,
+    EnvironmentExecutor, Migrator, TRACKING_TABLE, VecAdapter,
 };
 #[cfg(feature = "postgres")]
 use gaman::core::{Executor, ExecutorError, PostgresExecutor};
@@ -452,6 +452,18 @@ pub struct OfflineCase {
     pub spec: OfflineSpec,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ExpectedDriftFinding {
+    pub operation: String,
+    pub entity_kind: String,
+    pub entity_name: String,
+    pub property: String,
+    pub expected: String,
+    pub observed: String,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
 impl OfflineCase {
     pub fn validate(&self, case_name: &str, path: &Path) -> Result<(), TestSupportError> {
         if self.description.trim().is_empty() {
@@ -519,6 +531,16 @@ pub enum OfflineSpec {
         #[serde(default)]
         migrations: Vec<InlineMigration>,
         expect_sql: Option<String>,
+        expect_error: Option<String>,
+    },
+    Verify {
+        #[serde(default = "default_verify_schema")]
+        schema: String,
+        replayed: Schema,
+        inspected: Schema,
+        expect_findings: Option<Vec<ExpectedDriftFinding>>,
+        expect_operations: Option<Vec<Operation>>,
+        expect_report: Option<Vec<String>>,
         expect_error: Option<String>,
     },
     EndToEnd {
@@ -639,6 +661,34 @@ impl OfflineSpec {
                     expect_error.is_some(),
                 )?;
             }
+            Self::Verify {
+                expect_findings,
+                expect_operations,
+                expect_report,
+                expect_error,
+                ..
+            } => {
+                if expect_error.is_some()
+                    && (expect_findings.is_some()
+                        || expect_operations.is_some()
+                        || expect_report.is_some())
+                {
+                    return Err(invalid_fixture(
+                        case_name,
+                        "expect_error cannot be combined with verify success expectations",
+                    ));
+                }
+                if expect_error.is_none()
+                    && expect_findings.is_none()
+                    && expect_operations.is_none()
+                    && expect_report.is_none()
+                {
+                    return Err(invalid_fixture(
+                        case_name,
+                        "verify requires at least one success expectation or expect_error",
+                    ));
+                }
+            }
             Self::EndToEnd {
                 expect_operations,
                 expect_schema,
@@ -727,6 +777,10 @@ fn expect_one_of(
 
 fn default_atomic() -> bool {
     true
+}
+
+fn default_verify_schema() -> String {
+    "public".to_string()
 }
 
 impl InlineMigration {
@@ -1111,7 +1165,7 @@ pub fn ordered_migrations(
     })?;
 
     for id in ids {
-        let migration = migrator.graph.get(&id).cloned().ok_or_else(|| {
+        let migration = migrator.graph.get(id).cloned().ok_or_else(|| {
             TestSupportError::message(format!("{case_name}: graph is missing migration '{id}'"))
         })?;
         ordered.push(migration);
@@ -1127,7 +1181,7 @@ pub fn replay_schema(case_name: &str, migrator: &Migrator) -> Result<Schema, Tes
     })?;
 
     for id in ids {
-        let migration = migrator.graph.get(&id).ok_or_else(|| {
+        let migration = migrator.graph.get(id).ok_or_else(|| {
             TestSupportError::message(format!("{case_name}: graph is missing migration '{id}'"))
         })?;
         for (index, op) in migration.operations.iter().enumerate() {
@@ -1314,6 +1368,15 @@ pub fn scope_schema_for_compare(state: &mut Schema, schema: &str) {
                 fk.to_table = local.to_string();
             }
         }
+        for index in &mut table.indexes {
+            if let Some(raw) = index.raw_sql() {
+                let raw = strip_schema_references(raw, schema);
+                let mut scoped = gaman::schema::Index::from_trusted_raw(index.name.clone(), raw);
+                scoped.unique = index.unique;
+                scoped.predicate = index.predicate.clone();
+                *index = scoped;
+            }
+        }
         for trigger in &mut table.triggers {
             if let Some(function_name) = &mut trigger.function_name {
                 *function_name = strip_schema_references(function_name, schema);
@@ -1490,8 +1553,10 @@ impl PgHarness {
     }
 
     pub async fn migration_records(&mut self) -> Result<Vec<String>, TestSupportError> {
-        self.fetch_strings("SELECT id FROM gaman_migrations ORDER BY applied_at, id")
-            .await
+        self.fetch_strings(&format!(
+            "SELECT id FROM {TRACKING_TABLE} ORDER BY applied_at, id"
+        ))
+        .await
     }
 
     pub async fn assert_lock_released(&mut self) -> Result<(), TestSupportError> {
@@ -1650,8 +1715,10 @@ impl SqliteHarness {
     }
 
     pub async fn migration_records(&self) -> Result<Vec<String>, TestSupportError> {
-        self.fetch_strings("SELECT id FROM gaman_migrations ORDER BY applied_at, id")
-            .await
+        self.fetch_strings(&format!(
+            "SELECT id FROM {TRACKING_TABLE} ORDER BY applied_at, id"
+        ))
+        .await
     }
 
     pub async fn assert_lock_released(&self) -> Result<(), TestSupportError> {

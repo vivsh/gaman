@@ -43,6 +43,8 @@ features:
     label: Indexes and constraints
   - id: partial_indexes
     label: Partial indexes
+  - id: opaque_index_metadata
+    label: Opaque index metadata
   - id: schemas_namespaces
     label: Schemas / namespaces
   - id: extensions

@@ -189,12 +189,10 @@ features:
         description: verify reports missing owned composite primary keys as manual drift
         checks:
         - verify
-        - error
       - case: verify_composite_pk_order_drift
         description: verify reports composite primary key order drift as manual drift
         checks:
         - verify
-        - error
       - case: verify_no_drift_representative_schema
         description: verify reports no drift for a representative owned schema
         checks:
@@ -211,12 +209,10 @@ features:
         description: verify reports missing owned composite primary keys as manual drift
         checks:
         - verify
-        - error
       - case: verify_composite_pk_order_drift
         description: verify reports composite primary key order drift as manual drift
         checks:
         - verify
-        - error
       - case: verify_no_drift_representative_schema
         description: verify reports no drift for a representative owned schema
         checks:
@@ -576,6 +572,14 @@ features:
         checks:
         - migrate
         - data
+      - case: postgres_advanced_index_metadata_inspect
+        description: PostgreSQL inspect preserves advanced index metadata without making it verified drift input
+        checks:
+        - inspect
+      - case: postgres_expression_index_inspect
+        description: PostgreSQL inspect preserves expression index metadata without failing
+        checks:
+        - inspect
       - case: postgres_partial_index
         description: PostgreSQL migrates and inspects partial indexes
         checks:
@@ -718,8 +722,21 @@ features:
         checks:
         - migrate
         - data
+      - case: postgres_advanced_index_metadata_inspect
+        description: PostgreSQL inspect preserves advanced index metadata without making it verified drift input
+        checks:
+        - inspect
       - case: postgres_enum_append_inspect
         description: PostgreSQL enum append preserves ordered labels during inspect
+        checks:
+        - migrate
+        - inspect
+      - case: postgres_expression_index_inspect
+        description: PostgreSQL inspect preserves expression index metadata without failing
+        checks:
+        - inspect
+      - case: postgres_fk_on_delete_inspect
+        description: PostgreSQL inspect reflects foreign key on_delete action
         checks:
         - migrate
         - inspect
@@ -743,12 +760,20 @@ features:
         description: PostgreSQL verify reports owned enum label order drift
         checks:
         - verify
+      - case: postgres_verify_fk_on_delete_drift
+        description: PostgreSQL verify reports foreign key on_delete drift
+        checks:
+        - verify
       - case: postgres_verify_function_body_ignored
         description: PostgreSQL verify ignores body-only function drift
         checks:
         - verify
       - case: postgres_verify_function_signature_drift
         description: PostgreSQL verify detects missing owned function signatures
+        checks:
+        - verify
+      - case: postgres_verify_ignores_opaque_index_metadata
+        description: PostgreSQL verify ignores unregistered opaque metadata on advanced live indexes
         checks:
         - verify
       - case: postgres_verify_ignores_untracked_trigger
@@ -794,12 +819,10 @@ features:
         description: verify reports missing owned composite primary keys as manual drift
         checks:
         - verify
-        - error
       - case: verify_composite_pk_order_drift
         description: verify reports composite primary key order drift as manual drift
         checks:
         - verify
-        - error
       - case: verify_detects_changed_column_metadata
         description: verify reports changed metadata for owned columns
         checks:
@@ -879,6 +902,12 @@ features:
         - migrate
         - inspect
         - data
+      - case: sqlite_fk_on_delete_inspect_verify
+        description: SQLite inspect and verify preserve foreign key on_delete action
+        checks:
+        - migrate
+        - inspect
+        - verify
       - case: sqlite_rebuild_drop_column
         description: SQLite rebuild drops a column while preserving data and remaining schema
         checks:
@@ -897,12 +926,10 @@ features:
         description: verify reports missing owned composite primary keys as manual drift
         checks:
         - verify
-        - error
       - case: verify_composite_pk_order_drift
         description: verify reports composite primary key order drift as manual drift
         checks:
         - verify
-        - error
       - case: verify_generated_column_expression_drift
         description: verify reports owned generated column expression drift
         checks:
@@ -1051,6 +1078,11 @@ features:
         checks:
         - migrate
         - inspect
+      - case: postgres_fk_on_delete_inspect
+        description: PostgreSQL inspect reflects foreign key on_delete action
+        checks:
+        - migrate
+        - inspect
       - case: postgres_function_name_trigger
         description: PostgreSQL function-name triggers execute and inspect stable wiring
         checks:
@@ -1214,6 +1246,12 @@ features:
         checks:
         - migrate
         - data
+      - case: sqlite_fk_on_delete_inspect_verify
+        description: SQLite inspect and verify preserve foreign key on_delete action
+        checks:
+        - migrate
+        - inspect
+        - verify
       - case: sqlite_generated_column
         description: SQLite generated columns survive live migration and compute from preserved data
         checks:
@@ -1346,6 +1384,28 @@ features:
         - migrate_to
         - migration_records
         - data
+  opaque_index_metadata:
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: postgres_advanced_index_metadata_inspect
+        description: PostgreSQL inspect preserves advanced index metadata without making it verified drift input
+        checks:
+        - inspect
+      - case: postgres_expression_index_inspect
+        description: PostgreSQL inspect preserves expression index metadata without failing
+        checks:
+        - inspect
+      - case: postgres_verify_ignores_opaque_index_metadata
+        description: PostgreSQL verify ignores unregistered opaque metadata on advanced live indexes
+        checks:
+        - verify
+    sqlite:
+      status: unimplemented
+      reason: dialect section missing
   ownership_scoped_verify:
     mysql:
       status: unimplemented
@@ -1357,12 +1417,20 @@ features:
         description: PostgreSQL verify reports owned enum label order drift
         checks:
         - verify
+      - case: postgres_verify_fk_on_delete_drift
+        description: PostgreSQL verify reports foreign key on_delete drift
+        checks:
+        - verify
       - case: postgres_verify_function_body_ignored
         description: PostgreSQL verify ignores body-only function drift
         checks:
         - verify
       - case: postgres_verify_function_signature_drift
         description: PostgreSQL verify detects missing owned function signatures
+        checks:
+        - verify
+      - case: postgres_verify_ignores_opaque_index_metadata
+        description: PostgreSQL verify ignores unregistered opaque metadata on advanced live indexes
         checks:
         - verify
       - case: postgres_verify_ignores_untracked_trigger
@@ -1397,12 +1465,10 @@ features:
         description: verify reports missing owned composite primary keys as manual drift
         checks:
         - verify
-        - error
       - case: verify_composite_pk_order_drift
         description: verify reports composite primary key order drift as manual drift
         checks:
         - verify
-        - error
       - case: verify_detects_changed_column_metadata
         description: verify reports changed metadata for owned columns
         checks:
@@ -1462,12 +1528,10 @@ features:
         description: verify reports missing owned composite primary keys as manual drift
         checks:
         - verify
-        - error
       - case: verify_composite_pk_order_drift
         description: verify reports composite primary key order drift as manual drift
         checks:
         - verify
-        - error
       - case: verify_generated_column_expression_drift
         description: verify reports owned generated column expression drift
         checks:
@@ -1588,6 +1652,15 @@ features:
     postgres:
       status: success
       evidence:
+      - case: postgres_fk_on_delete_inspect
+        description: PostgreSQL inspect reflects foreign key on_delete action
+        checks:
+        - migrate
+        - inspect
+      - case: postgres_verify_fk_on_delete_drift
+        description: PostgreSQL verify reports foreign key on_delete drift
+        checks:
+        - verify
       - case: single_fk_enforcement
         description: single-column foreign keys are enforced by live databases
         checks:
@@ -1605,6 +1678,12 @@ features:
         checks:
         - migrate
         - data
+      - case: sqlite_fk_on_delete_inspect_verify
+        description: SQLite inspect and verify preserve foreign key on_delete action
+        checks:
+        - migrate
+        - inspect
+        - verify
   single_primary_keys:
     mysql:
       status: unimplemented
@@ -2143,21 +2222,14 @@ features:
     postgres:
       status: success
       evidence:
-      - case: postgres_expression_index_error
-        description: PostgreSQL inspect fails clearly for expression indexes until they are modeled
-        checks:
-        - inspect
-        - error
       - case: verify_composite_pk_missing
         description: verify reports missing owned composite primary keys as manual drift
         checks:
         - verify
-        - error
       - case: verify_composite_pk_order_drift
         description: verify reports composite primary key order drift as manual drift
         checks:
         - verify
-        - error
     sqlite:
       status: success
       evidence:
@@ -2200,12 +2272,10 @@ features:
         description: verify reports missing owned composite primary keys as manual drift
         checks:
         - verify
-        - error
       - case: verify_composite_pk_order_drift
         description: verify reports composite primary key order drift as manual drift
         checks:
         - verify
-        - error
   views_opaque:
     mysql:
       status: unimplemented

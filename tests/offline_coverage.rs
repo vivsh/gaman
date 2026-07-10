@@ -187,6 +187,7 @@ fn support_matrix_is_complete_and_readme_is_current() {
     assert_online_results_evidence(&results, &cases);
     assert_support_matrix_shape(&support, &results, &offline_results);
     assert_readme_support_table(root, &support, &results, &offline_results);
+    assert_support_evidence_doc_current(root);
 }
 
 fn read_yaml<T: for<'de> Deserialize<'de>>(path: &Path) -> T {
@@ -745,6 +746,21 @@ fn assert_readme_support_table(
     );
 }
 
+fn assert_support_evidence_doc_current(root: &Path) {
+    let binary = env!("CARGO_BIN_EXE_gaman-evidence-doc");
+    let output = std::process::Command::new(binary)
+        .arg("--check")
+        .current_dir(root)
+        .output()
+        .unwrap_or_else(|error| panic!("failed to run gaman-evidence-doc --check: {error}"));
+    assert!(
+        output.status.success(),
+        "support evidence doc is stale; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn generated_block(readme: &str) -> &str {
     let start = readme
         .find(SUPPORT_TABLE_START)
@@ -809,10 +825,9 @@ fn support_notes(support: &SupportMatrix) -> Vec<String> {
             if matches!(
                 cell.status,
                 SupportStatus::Partial | SupportStatus::Unsupported
-            ) {
-                if let Some(note) = &cell.note {
-                    grouped.entry(note.as_str()).or_default().push(*dialect);
-                }
+            ) && let Some(note) = &cell.note
+            {
+                grouped.entry(note.as_str()).or_default().push(*dialect);
             }
         }
         for (note, dialects) in grouped {
@@ -919,6 +934,7 @@ const EXPECTED_ONLINE_FEATURES: &[&str] = &[
     "check_constraints",
     "indexes_constraints",
     "partial_indexes",
+    "opaque_index_metadata",
     "schemas_namespaces",
     "extensions",
     "enums",

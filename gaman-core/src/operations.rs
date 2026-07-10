@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::states::types::{Dep, EntityKind};
 use crate::states::{
-    Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, Table, TriggerDef,
-    ViewDef,
+    Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, Table,
+    TableOptionsMeta, TriggerDef, ViewDef,
 };
 
 /// All possible schema change operations.
@@ -22,6 +22,11 @@ pub enum Operation {
     RenameTable {
         old_name: String,
         new_name: String,
+    },
+    AcknowledgeTableOptions {
+        table_name: String,
+        old: TableOptionsMeta,
+        new: TableOptionsMeta,
     },
     AddColumn {
         table_name: String,
@@ -140,9 +145,10 @@ pub enum Operation {
 impl Operation {
     pub fn inverse(&self) -> Option<Operation> {
         match self {
-            Self::CreateTable { .. } | Self::DropTable { .. } | Self::RenameTable { .. } => {
-                self.inverse_table_op()
-            }
+            Self::CreateTable { .. }
+            | Self::DropTable { .. }
+            | Self::RenameTable { .. }
+            | Self::AcknowledgeTableOptions { .. } => self.inverse_table_op(),
             Self::AddColumn { .. }
             | Self::DropColumn { .. }
             | Self::RenameColumn { .. }
@@ -184,6 +190,15 @@ impl Operation {
             Self::RenameTable { old_name, new_name } => Some(Self::RenameTable {
                 old_name: new_name.clone(),
                 new_name: old_name.clone(),
+            }),
+            Self::AcknowledgeTableOptions {
+                table_name,
+                old,
+                new,
+            } => Some(Self::AcknowledgeTableOptions {
+                table_name: table_name.clone(),
+                old: new.clone(),
+                new: old.clone(),
             }),
             _ => None,
         }
@@ -379,6 +394,7 @@ impl Operation {
         match self {
             Self::CreateTable { table } | Self::DropTable { table } => Some(&table.name),
             Self::RenameTable { old_name, .. } => Some(old_name),
+            Self::AcknowledgeTableOptions { table_name, .. } => Some(table_name),
             Self::AddColumn { table_name, .. }
             | Self::DropColumn { table_name, .. }
             | Self::RenameColumn { table_name, .. }
@@ -406,6 +422,7 @@ impl Operation {
                 }
             }
             Self::RenameTable { old_name, .. } => Cow::Borrowed(old_name),
+            Self::AcknowledgeTableOptions { table_name, .. } => Cow::Borrowed(table_name),
             Self::AddColumn { column, .. } | Self::DropColumn { column, .. } => {
                 Cow::Borrowed(&column.name)
             }
@@ -491,6 +508,7 @@ impl Operation {
             Self::CreateTable { .. } => "create_table",
             Self::DropTable { .. } => "drop_table",
             Self::RenameTable { .. } => "rename_table",
+            Self::AcknowledgeTableOptions { .. } => "acknowledge_table_options",
             Self::AddColumn { .. } => "add_column",
             Self::DropColumn { .. } => "drop_column",
             Self::RenameColumn { .. } => "rename_column",
@@ -522,7 +540,9 @@ impl Operation {
 
     pub fn entity_kind(&self) -> Option<EntityKind> {
         match self {
-            Self::CreateTable { .. } | Self::DropTable { .. } => Some(EntityKind::Table),
+            Self::CreateTable { .. }
+            | Self::DropTable { .. }
+            | Self::AcknowledgeTableOptions { .. } => Some(EntityKind::Table),
             Self::CreateFunction { .. }
             | Self::AlterFunction { .. }
             | Self::DropFunction { .. } => Some(EntityKind::Function),
@@ -569,6 +589,7 @@ impl Operation {
                 | Self::AddForeignKey { .. }
                 | Self::AddIndex { .. }
                 | Self::AddConstraint { .. }
+                | Self::AcknowledgeTableOptions { .. }
         )
     }
 
@@ -675,6 +696,9 @@ impl Operation {
             | Self::RenameEnumValue { .. }
             | Self::AlterEnum { .. }
             | Self::DropEnum { .. } => vec![],
+            Self::AcknowledgeTableOptions { table_name, .. } => {
+                vec![Dep::new(EntityKind::Table, table_name)]
+            }
             Self::RenameTable { .. } | Self::RenameColumn { .. } | Self::Statement { .. } => vec![],
         }
     }
@@ -690,6 +714,96 @@ impl Operation {
                 ]
             }
             _ => self.forward_deps(),
+        }
+    }
+
+    /// Returns the primary entity label used for deterministic migration names.
+    pub fn entity_label(&self) -> Option<&str> {
+        match self {
+            Self::CreateTable { table } | Self::DropTable { table } => Some(&table.name),
+            Self::RenameTable { new_name, .. } => Some(new_name),
+            Self::AcknowledgeTableOptions { table_name, .. }
+            | Self::AddColumn { table_name, .. }
+            | Self::DropColumn { table_name, .. }
+            | Self::RenameColumn { table_name, .. }
+            | Self::AlterColumn { table_name, .. }
+            | Self::AddForeignKey { table_name, .. }
+            | Self::DropForeignKey { table_name, .. }
+            | Self::AddIndex { table_name, .. }
+            | Self::DropIndex { table_name, .. }
+            | Self::AddConstraint { table_name, .. }
+            | Self::DropConstraint { table_name, .. }
+            | Self::CreateTrigger { table_name, .. }
+            | Self::AlterTrigger { table_name, .. }
+            | Self::DropTrigger { table_name, .. } => Some(table_name),
+            Self::CreateFunction { function } | Self::DropFunction { function } => {
+                Some(&function.name)
+            }
+            Self::AlterFunction { new, .. } => Some(&new.name),
+            Self::CreateView { view } | Self::DropView { view } => Some(&view.name),
+            Self::ReplaceView { new, .. } => Some(&new.name),
+            Self::CreateExtension { extension } | Self::DropExtension { extension } => {
+                Some(&extension.name)
+            }
+            Self::CreateEnum { enum_def } | Self::DropEnum { enum_def } => Some(&enum_def.name),
+            Self::RenameEnumValue { enum_name, .. } => Some(enum_name),
+            Self::AlterEnum { new, .. } => Some(&new.name),
+            Self::Statement { .. } => None,
+        }
+    }
+
+    /// Returns the stable entity identities touched by this operation.
+    pub fn touched_entities(&self) -> Vec<(EntityKind, String)> {
+        match self {
+            Self::CreateTable { table } | Self::DropTable { table } => {
+                let mut entities = vec![(EntityKind::Table, table.qualified_name())];
+                entities.extend(
+                    table
+                        .foreign_keys
+                        .iter()
+                        .map(|fk| (EntityKind::Table, fk.to_table.clone())),
+                );
+                entities
+            }
+            Self::AddForeignKey {
+                table_name,
+                foreign_key,
+            }
+            | Self::DropForeignKey {
+                table_name,
+                foreign_key,
+                ..
+            } => vec![
+                (EntityKind::Table, table_name.clone()),
+                (EntityKind::Table, foreign_key.to_table.clone()),
+            ],
+            Self::CreateEnum { enum_def }
+            | Self::DropEnum { enum_def }
+            | Self::AlterEnum { new: enum_def, .. } => {
+                vec![(EntityKind::Enum, enum_def.qualified_name())]
+            }
+            Self::RenameEnumValue {
+                enum_name, schema, ..
+            } => vec![(
+                EntityKind::Enum,
+                crate::states::schema_qualified_key(enum_name, schema.as_deref()),
+            )],
+            Self::CreateFunction { function }
+            | Self::DropFunction { function }
+            | Self::AlterFunction { new: function, .. } => {
+                vec![(EntityKind::Function, function.qualified_name())]
+            }
+            Self::CreateView { view }
+            | Self::DropView { view }
+            | Self::ReplaceView { new: view, .. } => {
+                vec![(EntityKind::View, view.qualified_name())]
+            }
+            Self::CreateExtension { extension } | Self::DropExtension { extension } => {
+                vec![(EntityKind::Extension, extension.qualified_name())]
+            }
+            _ => self.table_name().map_or_else(Vec::new, |table| {
+                vec![(EntityKind::Table, table.to_string())]
+            }),
         }
     }
 }

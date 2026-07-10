@@ -628,6 +628,7 @@ mod tests {
             indexes: vec![],
             constraints: vec![],
             triggers: vec![],
+            options: Default::default(),
         }
     }
 
@@ -927,6 +928,7 @@ mod tests {
             when: None,
             query: Some("INSERT INTO audit_log(user_id) VALUES (NEW.id);".to_string()),
             language: None,
+            opaque: Default::default(),
         };
         let migration = migration(
             "0001_create_trigger",

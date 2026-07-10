@@ -3400,3 +3400,11 @@ features:
       group: validation
       kind: schema_to_migration
       dialect: postgres
+  verify.postgres_default_cast_no_drift:
+    status: success
+    evidence:
+    - case: postgres_default_cast_no_drift
+      description: PostgreSQL inspected literal cast default semantically matches replayed schema
+      group: verify
+      kind: verify
+      dialect: postgres

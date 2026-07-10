@@ -25,6 +25,11 @@ name = "gaman-support-matrix"
 path = "src/bin/gaman-support-matrix.rs"
 required-features = ["native"]
 
+[[bin]]
+name = "gaman-evidence-doc"
+path = "src/bin/gaman-evidence-doc.rs"
+required-features = ["native"]
+
 [[test]]
 name = "offline"
 path = "tests/offline.rs"

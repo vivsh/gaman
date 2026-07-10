@@ -107,7 +107,7 @@ impl<'a> Scanner<'a> {
     fn should_split_before_word(&self, word: &str) -> bool {
         self.meaningful
             && self.can_split_at_terminator()
-            && self.dialect.is_statement_start(word)
+            && self.dialect.starts_statement(word)
             && self.at_line_statement_start()
             && self.allows_new_statement_boundary(word)
     }
@@ -119,17 +119,18 @@ impl<'a> Scanner<'a> {
         if word == "REPLACE" && self.recent_words.ends_with(&["CREATE".into(), "OR".into()]) {
             return false;
         }
-        match (
-            self.first_word.as_deref(),
-            self.create_kind.as_deref(),
-            word,
-        ) {
-            (Some("CREATE"), Some("VIEW" | "FUNCTION" | "PROCEDURE" | "TRIGGER" | "EVENT"), _) => {
-                false
-            }
-            (Some("INSERT"), _, "SELECT" | "WITH") => false,
-            _ => true,
-        }
+        !matches!(
+            (
+                self.first_word.as_deref(),
+                self.create_kind.as_deref(),
+                word,
+            ),
+            (
+                Some("CREATE"),
+                Some("VIEW" | "FUNCTION" | "PROCEDURE" | "TRIGGER" | "EVENT"),
+                _
+            ) | (Some("INSERT"), _, "SELECT" | "WITH")
+        )
     }
 
     fn observe_word(&mut self, word: &str) {

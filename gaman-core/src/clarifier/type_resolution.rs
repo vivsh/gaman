@@ -226,6 +226,7 @@ mod tests {
             indexes: vec![],
             constraints: vec![],
             triggers: vec![],
+            options: Default::default(),
         }
     }
 
@@ -266,6 +267,7 @@ mod tests {
                 name: "status".to_string(),
                 schema: None,
                 values: vec!["active".to_string()],
+                opaque: Default::default(),
             },
         );
         let result =

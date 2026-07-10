@@ -29,4 +29,3 @@ expect_schema:
         events: [insert]
         scope: row
         query: BEGIN UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE id = NEW.id; END
-        language: sql

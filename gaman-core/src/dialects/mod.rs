@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+use crate::drift::{DriftPropertyDoc, DriftRegistry};
 use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::states::types::EntityKind;
@@ -91,6 +92,10 @@ pub(crate) trait DialectProcessor: Sync {
         migration: &Migration,
         start: &Schema,
     ) -> Result<(), DialectError>;
+
+    fn drift_registry(&self) -> &'static DriftRegistry;
+
+    fn normalize_inspected_schema(&self, schema: Schema) -> Result<Schema, SchemaValidationError>;
 }
 
 impl Dialect {
@@ -204,6 +209,24 @@ impl Dialect {
 
     pub fn validate_schema(&self, schema: &Schema) -> Result<(), SchemaValidationError> {
         self.processor().validate_schema(schema)
+    }
+
+    /// Normalizes a live inspected schema before semantic drift comparison.
+    pub fn normalize_inspected_schema(
+        &self,
+        schema: Schema,
+    ) -> Result<Schema, SchemaValidationError> {
+        self.processor().normalize_inspected_schema(schema)
+    }
+
+    /// Returns the documented semantic drift properties for this dialect.
+    pub fn drift_contract(&self) -> &'static [DriftPropertyDoc] {
+        crate::drift::contract_for(*self)
+    }
+
+    /// Returns the comparator registry that defines semantic drift for this dialect.
+    pub(crate) fn drift_registry(&self) -> &'static DriftRegistry {
+        self.processor().drift_registry()
     }
 
     pub fn validate_migration(&self, m: &Migration) -> Result<(), DialectError> {

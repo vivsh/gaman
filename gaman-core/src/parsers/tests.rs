@@ -1,4 +1,4 @@
-use super::{ParseError, parse_sql};
+use super::{ParseError, parse_sql_raw as parse_sql};
 use crate::states::{Constraint, Schema, Volatility};
 
 // Helpers for SQL parser tests.

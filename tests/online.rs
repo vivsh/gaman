@@ -432,7 +432,7 @@ async fn run_postgres_checks(
     case: &OnlineCase,
     section: &support::OnlineDialectCase,
 ) -> Result<(), TestSupportError> {
-    let result = async {
+    async {
         if let Some(sql) = section.setup_sql(case) {
             let sql = support::postgres_placeholder_text(sql, harness.schema_name());
             harness.batch_execute(&sql).await?;
@@ -443,7 +443,7 @@ async fn run_postgres_checks(
         let mut migration_attempted = false;
         let error_action = expected_error_action(section);
         if section.checks.contains(&OnlineCheck::Migrate) {
-            let result = migrator.migrate(None, false).await.map_err(|error| {
+            let result = migrator.apply(None, false).await.map_err(|error| {
                 TestSupportError::message(format!("{name}: migrate failed unexpectedly: {error}"))
             });
             migration_attempted = true;
@@ -455,10 +455,10 @@ async fn run_postgres_checks(
             }
         }
         if section.checks.contains(&OnlineCheck::MigrateTwice) {
-            let first = migrator.migrate(None, false).await.map_err(|error| {
+            let first = migrator.apply(None, false).await.map_err(|error| {
                 TestSupportError::message(format!("{name}: first migrate failed: {error}"))
             })?;
-            let second = migrator.migrate(None, false).await.map_err(|error| {
+            let second = migrator.apply(None, false).await.map_err(|error| {
                 TestSupportError::message(format!("{name}: second migrate failed: {error}"))
             })?;
             if second != 0 {
@@ -471,30 +471,24 @@ async fn run_postgres_checks(
         }
         if section.checks.contains(&OnlineCheck::MigrateTo) {
             let target = required_target(name, section, "migrate_to")?;
-            migrator
-                .migrate(Some(target), false)
-                .await
-                .map_err(|error| {
-                    TestSupportError::message(format!("{name}: migrate_to failed: {error}"))
-                })?;
+            migrator.apply(Some(target), false).await.map_err(|error| {
+                TestSupportError::message(format!("{name}: migrate_to failed: {error}"))
+            })?;
             migration_attempted = true;
             migrated = true;
         }
         if section.checks.contains(&OnlineCheck::Rollback) {
             if !migrated && !migration_attempted && !migrations.is_empty() {
-                migrator.migrate(None, false).await.map_err(|error| {
+                migrator.apply(None, false).await.map_err(|error| {
                     TestSupportError::message(format!(
                         "{name}: setup migrate failed unexpectedly: {error}"
                     ))
                 })?;
             }
             let target = required_target(name, section, "rollback")?;
-            migrator
-                .migrate(Some(target), false)
-                .await
-                .map_err(|error| {
-                    TestSupportError::message(format!("{name}: rollback failed: {error}"))
-                })?;
+            migrator.apply(Some(target), false).await.map_err(|error| {
+                TestSupportError::message(format!("{name}: rollback failed: {error}"))
+            })?;
             migrated = true;
         }
         if section.checks.contains(&OnlineCheck::LockBehavior) {
@@ -520,7 +514,7 @@ async fn run_postgres_checks(
         }
         if section.checks.contains(&OnlineCheck::Verify) {
             if !migrated && !migration_attempted && !migrations.is_empty() {
-                migrator.migrate(None, false).await.map_err(|error| {
+                migrator.apply(None, false).await.map_err(|error| {
                     TestSupportError::message(format!(
                         "{name}: setup migrate failed unexpectedly: {error}"
                     ))
@@ -546,7 +540,7 @@ async fn run_postgres_checks(
         }
         if section.checks.contains(&OnlineCheck::Data) {
             if !migrated && !migration_attempted && !migrations.is_empty() {
-                migrator.migrate(None, false).await.map_err(|error| {
+                migrator.apply(None, false).await.map_err(|error| {
                     TestSupportError::message(format!(
                         "{name}: setup migrate failed unexpectedly: {error}"
                     ))
@@ -569,9 +563,7 @@ async fn run_postgres_checks(
         }
         Ok(())
     }
-    .await;
-
-    result
+    .await
 }
 
 #[cfg(feature = "sqlite")]
@@ -581,7 +573,7 @@ async fn run_sqlite_online_case(
     section: &support::OnlineDialectCase,
 ) -> Result<(), TestSupportError> {
     let harness = support::SqliteHarness::new().await?;
-    let result = async {
+    async {
         if let Some(sql) = section.setup_sql(case) {
             harness.batch_execute(sql).await?;
         }
@@ -591,7 +583,7 @@ async fn run_sqlite_online_case(
         let mut migration_attempted = false;
         let error_action = expected_error_action(section);
         if section.checks.contains(&OnlineCheck::Migrate) {
-            let result = migrator.migrate(None, false).await.map_err(|error| {
+            let result = migrator.apply(None, false).await.map_err(|error| {
                 TestSupportError::message(format!("{name}: migrate failed unexpectedly: {error}"))
             });
             migration_attempted = true;
@@ -603,10 +595,10 @@ async fn run_sqlite_online_case(
             }
         }
         if section.checks.contains(&OnlineCheck::MigrateTwice) {
-            let first = migrator.migrate(None, false).await.map_err(|error| {
+            let first = migrator.apply(None, false).await.map_err(|error| {
                 TestSupportError::message(format!("{name}: first migrate failed: {error}"))
             })?;
-            let second = migrator.migrate(None, false).await.map_err(|error| {
+            let second = migrator.apply(None, false).await.map_err(|error| {
                 TestSupportError::message(format!("{name}: second migrate failed: {error}"))
             })?;
             if second != 0 {
@@ -619,30 +611,24 @@ async fn run_sqlite_online_case(
         }
         if section.checks.contains(&OnlineCheck::MigrateTo) {
             let target = required_target(name, section, "migrate_to")?;
-            migrator
-                .migrate(Some(target), false)
-                .await
-                .map_err(|error| {
-                    TestSupportError::message(format!("{name}: migrate_to failed: {error}"))
-                })?;
+            migrator.apply(Some(target), false).await.map_err(|error| {
+                TestSupportError::message(format!("{name}: migrate_to failed: {error}"))
+            })?;
             migration_attempted = true;
             migrated = true;
         }
         if section.checks.contains(&OnlineCheck::Rollback) {
             if !migrated && !migration_attempted && !migrations.is_empty() {
-                migrator.migrate(None, false).await.map_err(|error| {
+                migrator.apply(None, false).await.map_err(|error| {
                     TestSupportError::message(format!(
                         "{name}: setup migrate failed unexpectedly: {error}"
                     ))
                 })?;
             }
             let target = required_target(name, section, "rollback")?;
-            migrator
-                .migrate(Some(target), false)
-                .await
-                .map_err(|error| {
-                    TestSupportError::message(format!("{name}: rollback failed: {error}"))
-                })?;
+            migrator.apply(Some(target), false).await.map_err(|error| {
+                TestSupportError::message(format!("{name}: rollback failed: {error}"))
+            })?;
             migrated = true;
         }
         if section.checks.contains(&OnlineCheck::LockBehavior) {
@@ -673,7 +659,7 @@ async fn run_sqlite_online_case(
         }
         if section.checks.contains(&OnlineCheck::Verify) {
             if !migrated && !migration_attempted && !migrations.is_empty() {
-                migrator.migrate(None, false).await.map_err(|error| {
+                migrator.apply(None, false).await.map_err(|error| {
                     TestSupportError::message(format!(
                         "{name}: setup migrate failed unexpectedly: {error}"
                     ))
@@ -698,7 +684,7 @@ async fn run_sqlite_online_case(
         }
         if section.checks.contains(&OnlineCheck::Data) {
             if !migrated && !migration_attempted && !migrations.is_empty() {
-                migrator.migrate(None, false).await.map_err(|error| {
+                migrator.apply(None, false).await.map_err(|error| {
                     TestSupportError::message(format!(
                         "{name}: setup migrate failed unexpectedly: {error}"
                     ))
@@ -720,9 +706,7 @@ async fn run_sqlite_online_case(
         }
         Ok(())
     }
-    .await;
-
-    result
+    .await
 }
 
 #[cfg(not(feature = "sqlite"))]

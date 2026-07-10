@@ -3,8 +3,6 @@
 //! The planner owns the offline lifecycle: replay baseline, normalize schemas, clarify risky
 //! operations, canonicalize through dialect preparation, diff, and render SQL on request.
 
-use std::collections::HashMap;
-
 use thiserror::Error;
 
 use crate::clarifier::{
@@ -15,10 +13,8 @@ use crate::dialects::{Dialect, DialectError};
 use crate::diff::{DiffEngine, DiffError};
 use crate::graphs::{GraphError, MigrationGraph};
 use crate::migrations::Migration;
-use crate::operations::Operation;
-use crate::replay::{ReplayEngine, ReplaySources};
+use crate::replay::{ReplayEngine, ReplaySources, compute_deps, deterministic_name_from_ops};
 use crate::sql_plan::{SqlPlanError, SqlPlanRenderer};
-use crate::states::types::EntityKind;
 use crate::states::{ReplayError, Schema};
 
 #[derive(Debug, Error)]
@@ -156,168 +152,6 @@ impl OfflinePlanner {
     }
 }
 
-fn deterministic_name_from_ops(ops: &[Operation]) -> String {
-    let mut labels: Vec<&str> = Vec::new();
-    for op in ops {
-        if let Some(label) = op_entity_label(op)
-            && !labels.contains(&label)
-        {
-            labels.push(label);
-        }
-    }
-    match labels.as_slice() {
-        [] => "changes".to_string(),
-        [a] => sanitize_id_part(a),
-        [a, b] => format!("{}_{}", sanitize_id_part(a), sanitize_id_part(b)),
-        [a, _, ..] => format!("{}_changes", sanitize_id_part(a)),
-    }
-}
-
-fn sanitize_id_part(value: &str) -> String {
-    let sanitized: String = value
-        .chars()
-        .map(|c| {
-            if c.is_ascii_lowercase() || c.is_ascii_digit() {
-                c
-            } else if c.is_ascii_alphabetic() {
-                c.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let trimmed = sanitized.trim_matches('_');
-    if trimmed.is_empty() {
-        "changes".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-fn op_entity_label(op: &Operation) -> Option<&str> {
-    match op {
-        Operation::CreateTable { table } | Operation::DropTable { table } => Some(&table.name),
-        Operation::RenameTable { new_name, .. } => Some(new_name),
-        Operation::AddColumn { table_name, .. }
-        | Operation::DropColumn { table_name, .. }
-        | Operation::RenameColumn { table_name, .. }
-        | Operation::AlterColumn { table_name, .. }
-        | Operation::AddForeignKey { table_name, .. }
-        | Operation::DropForeignKey { table_name, .. }
-        | Operation::AddIndex { table_name, .. }
-        | Operation::DropIndex { table_name, .. }
-        | Operation::AddConstraint { table_name, .. }
-        | Operation::DropConstraint { table_name, .. }
-        | Operation::CreateTrigger { table_name, .. }
-        | Operation::AlterTrigger { table_name, .. }
-        | Operation::DropTrigger { table_name, .. } => Some(table_name),
-        Operation::CreateFunction { function } | Operation::DropFunction { function } => {
-            Some(&function.name)
-        }
-        Operation::AlterFunction { new, .. } => Some(&new.name),
-        Operation::CreateView { view } | Operation::DropView { view } => Some(&view.name),
-        Operation::ReplaceView { new, .. } => Some(&new.name),
-        Operation::CreateExtension { extension } | Operation::DropExtension { extension } => {
-            Some(&extension.name)
-        }
-        Operation::CreateEnum { enum_def } | Operation::DropEnum { enum_def } => {
-            Some(&enum_def.name)
-        }
-        Operation::RenameEnumValue { enum_name, .. } => Some(enum_name),
-        Operation::AlterEnum { new, .. } => Some(&new.name),
-        Operation::Statement { .. } => None,
-    }
-}
-
-fn compute_deps(
-    ops: &[Operation],
-    last_per_ns: &HashMap<String, String>,
-    entity_ns: &HashMap<(EntityKind, String), String>,
-) -> Vec<String> {
-    let mut namespaces = std::collections::BTreeSet::new();
-    namespaces.insert(String::new());
-
-    for op in ops {
-        for entity in op_entities(op) {
-            if let Some(ns) = entity_ns.get(&entity) {
-                namespaces.insert(ns.clone());
-            }
-        }
-    }
-
-    namespaces
-        .iter()
-        .filter_map(|ns| last_per_ns.get(ns).cloned())
-        .collect()
-}
-
-fn op_entities(op: &Operation) -> Vec<(EntityKind, String)> {
-    match op {
-        Operation::CreateTable { table } | Operation::DropTable { table } => {
-            let mut entities = vec![(EntityKind::Table, table.qualified_name())];
-            for fk in &table.foreign_keys {
-                entities.push((EntityKind::Table, fk.to_table.clone()));
-            }
-            entities
-        }
-        Operation::AddForeignKey {
-            table_name,
-            foreign_key,
-        }
-        | Operation::DropForeignKey {
-            table_name,
-            foreign_key,
-            ..
-        } => vec![
-            (EntityKind::Table, table_name.clone()),
-            (EntityKind::Table, foreign_key.to_table.clone()),
-        ],
-        Operation::CreateEnum { enum_def }
-        | Operation::DropEnum { enum_def }
-        | Operation::AlterEnum { new: enum_def, .. } => {
-            vec![(EntityKind::Enum, enum_def.qualified_name())]
-        }
-        Operation::RenameEnumValue {
-            enum_name, schema, ..
-        } => {
-            vec![(
-                EntityKind::Enum,
-                crate::states::schema_qualified_key(enum_name, schema.as_deref()),
-            )]
-        }
-        Operation::CreateFunction { function }
-        | Operation::DropFunction { function }
-        | Operation::AlterFunction { new: function, .. } => {
-            vec![(EntityKind::Function, function.qualified_name())]
-        }
-        Operation::CreateView { view }
-        | Operation::DropView { view }
-        | Operation::ReplaceView { new: view, .. } => {
-            vec![(EntityKind::View, view.qualified_name())]
-        }
-        Operation::CreateExtension { extension } | Operation::DropExtension { extension } => {
-            vec![(EntityKind::Extension, extension.qualified_name())]
-        }
-        Operation::AddColumn { table_name, .. }
-        | Operation::DropColumn { table_name, .. }
-        | Operation::AlterColumn { table_name, .. }
-        | Operation::RenameColumn { table_name, .. }
-        | Operation::AddIndex { table_name, .. }
-        | Operation::DropIndex { table_name, .. }
-        | Operation::AddConstraint { table_name, .. }
-        | Operation::DropConstraint { table_name, .. }
-        | Operation::CreateTrigger { table_name, .. }
-        | Operation::AlterTrigger { table_name, .. }
-        | Operation::DropTrigger { table_name, .. } => {
-            vec![(EntityKind::Table, table_name.clone())]
-        }
-        Operation::RenameTable { old_name, .. } => {
-            vec![(EntityKind::Table, old_name.clone())]
-        }
-        Operation::Statement { .. } => vec![],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,6 +169,7 @@ mod tests {
             indexes: vec![],
             constraints: vec![],
             triggers: vec![],
+            options: Default::default(),
         }
     }
 

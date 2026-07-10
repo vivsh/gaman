@@ -1,0 +1,63 @@
+description: PostgreSQL inspect preserves advanced index metadata without making it verified drift input
+features:
+  - live_inspect_verify
+  - indexes
+  - opaque_index_metadata
+
+setup_sql: |
+  CREATE TABLE users (
+      id integer PRIMARY KEY,
+      email varchar(255) NOT NULL,
+      created_at timestamptz NOT NULL,
+      body tsvector NOT NULL
+  );
+  CREATE INDEX users_email_like_idx ON users (email varchar_pattern_ops);
+  CREATE INDEX users_created_at_sort_idx ON users (created_at DESC NULLS LAST);
+  CREATE INDEX users_email_collate_idx ON users (email COLLATE "C");
+  CREATE INDEX users_body_gin_idx ON users USING gin (body);
+
+dialects:
+  postgres:
+    checks: [inspect]
+    expect_schema:
+      tables:
+        users:
+          name: users
+          primary_key:
+            name: users_pkey
+            columns: [id]
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: email
+              type: varchar(255)
+            - name: created_at
+              type: timestamp with time zone
+            - name: body
+              type: tsvector
+          indexes:
+            - name: users_body_gin_idx
+              columns: []
+              opaque:
+                raw: CREATE INDEX users_body_gin_idx ON users USING gin (body)
+                trusted: true
+                fingerprint: v1:sha256:5f4fb662ab26d3a03dd4820b87e469befa7e989caf0640dcfcb323ae2ebe1bc0
+            - name: users_created_at_sort_idx
+              columns: []
+              opaque:
+                raw: CREATE INDEX users_created_at_sort_idx ON users USING btree (created_at DESC NULLS LAST)
+                trusted: true
+                fingerprint: v1:sha256:b5225f6682d0c1e8b6f6048e44f65ae8748453f8b1eadfad835be1afa0f2d7ed
+            - name: users_email_collate_idx
+              columns: []
+              opaque:
+                raw: 'CREATE INDEX users_email_collate_idx ON users USING btree (email COLLATE "C")'
+                trusted: true
+                fingerprint: v1:sha256:c1bdc2daf10206eccb3dc727b74f9f360933edcac20b1d25bdf5b65aac302c07
+            - name: users_email_like_idx
+              columns: []
+              opaque:
+                raw: CREATE INDEX users_email_like_idx ON users USING btree (email varchar_pattern_ops)
+                trusted: true
+                fingerprint: v1:sha256:7ac6c40a07d19592c5c30571633d2f5472929339a2ae28b65c7d127b91169610

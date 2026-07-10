@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::operations::Operation;
+use crate::states::types::EntityKind;
 use crate::states::{Column, EnumDef, Table};
 
 use super::ids::clarification_id;
@@ -60,9 +61,168 @@ pub(crate) fn all_clarifications_raw(ops: &[Operation]) -> Vec<Clarification> {
         &created_enums,
     ));
     result.extend(risky_change_clarifications(ops));
+    result.extend(opaque_and_unmanaged_clarifications(ops));
 
     result.sort_by(|a, b| a.id.cmp(&b.id));
     result
+}
+
+fn opaque_and_unmanaged_clarifications(ops: &[Operation]) -> Vec<Clarification> {
+    let mut result = Vec::new();
+    for op in ops {
+        match op {
+            Operation::CreateTable { table }
+                if table.has_unmanaged_options() && !table.options.trusted =>
+            {
+                let kind = ClarificationKind::UnmanagedTableOptions {
+                    table: table.qualified_name(),
+                };
+                result.push(Clarification {
+                    id: clarification_id(&kind),
+                    severity: Severity::Warning,
+                    kind,
+                });
+            }
+            Operation::AcknowledgeTableOptions {
+                table_name, new, ..
+            } if !new.trusted => {
+                let kind = ClarificationKind::UnmanagedTableOptions {
+                    table: table_name.clone(),
+                };
+                result.push(Clarification {
+                    id: clarification_id(&kind),
+                    severity: Severity::Warning,
+                    kind,
+                });
+            }
+            Operation::AddIndex {
+                table_name, index, ..
+            } if index.is_opaque() && !index.opaque.trusted => {
+                push_opaque(
+                    &mut result,
+                    EntityKind::Index,
+                    format!("{}.{}", table_name, index.name),
+                );
+            }
+            Operation::DropIndex {
+                table_name, index, ..
+            } if index.is_opaque() => {
+                push_opaque(
+                    &mut result,
+                    EntityKind::Index,
+                    format!("{}.{}", table_name, index.name),
+                );
+            }
+            Operation::AddConstraint {
+                table_name,
+                constraint,
+            } if constraint
+                .opaque_meta()
+                .is_some_and(|opaque| opaque.raw.is_some() && !opaque.trusted) =>
+            {
+                push_opaque(
+                    &mut result,
+                    EntityKind::Constraint,
+                    format!("{}.{}", table_name, constraint.name()),
+                );
+            }
+            Operation::DropConstraint {
+                table_name,
+                constraint,
+            } if constraint.is_opaque() => {
+                push_opaque(
+                    &mut result,
+                    EntityKind::Constraint,
+                    format!("{}.{}", table_name, constraint.name()),
+                );
+            }
+            Operation::CreateTrigger {
+                table_name,
+                trigger,
+            } if trigger.is_opaque() && !trigger.opaque.trusted => {
+                let name = trigger.name.as_deref().unwrap_or("<unnamed>");
+                push_opaque(
+                    &mut result,
+                    EntityKind::Trigger,
+                    format!("{}.{}", table_name, name),
+                );
+            }
+            Operation::DropTrigger {
+                table_name,
+                trigger,
+            } if trigger.is_opaque() => {
+                let name = trigger.name.as_deref().unwrap_or("<unnamed>");
+                push_opaque(
+                    &mut result,
+                    EntityKind::Trigger,
+                    format!("{}.{}", table_name, name),
+                );
+            }
+            Operation::AlterTrigger {
+                table_name,
+                old,
+                new,
+            } if old.is_opaque() || new.is_opaque() => {
+                let name = new
+                    .name
+                    .as_deref()
+                    .or(old.name.as_deref())
+                    .unwrap_or("<unnamed>");
+                push_opaque(
+                    &mut result,
+                    EntityKind::Trigger,
+                    format!("{}.{}", table_name, name),
+                );
+            }
+            Operation::CreateFunction { function }
+                if function.is_opaque() && !function.opaque.trusted =>
+            {
+                push_opaque(&mut result, EntityKind::Function, function.qualified_name());
+            }
+            Operation::DropFunction { function } if function.is_opaque() => {
+                push_opaque(&mut result, EntityKind::Function, function.qualified_name());
+            }
+            Operation::AlterFunction { old, new } if old.is_opaque() || new.is_opaque() => {
+                push_opaque(&mut result, EntityKind::Function, new.qualified_name());
+            }
+            Operation::CreateView { view } if view.is_opaque() && !view.opaque.trusted => {
+                push_opaque(&mut result, EntityKind::View, view.qualified_name());
+            }
+            Operation::DropView { view } if view.is_opaque() => {
+                push_opaque(&mut result, EntityKind::View, view.qualified_name());
+            }
+            Operation::ReplaceView { old, new } if old.is_opaque() || new.is_opaque() => {
+                push_opaque(&mut result, EntityKind::View, new.qualified_name());
+            }
+            Operation::CreateExtension { extension }
+                if extension.is_opaque() && !extension.opaque.trusted =>
+            {
+                push_opaque(
+                    &mut result,
+                    EntityKind::Extension,
+                    extension.qualified_name(),
+                );
+            }
+            Operation::DropExtension { extension } if extension.is_opaque() => {
+                push_opaque(
+                    &mut result,
+                    EntityKind::Extension,
+                    extension.qualified_name(),
+                );
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
+fn push_opaque(result: &mut Vec<Clarification>, kind: EntityKind, name: String) {
+    let kind = ClarificationKind::OpaqueEntity { kind, name };
+    result.push(Clarification {
+        id: clarification_id(&kind),
+        severity: Severity::Warning,
+        kind,
+    });
 }
 
 fn column_rename_clarifications(
@@ -495,6 +655,7 @@ mod tests {
             indexes: vec![],
             constraints: vec![],
             triggers: vec![],
+            options: Default::default(),
         }
     }
 
