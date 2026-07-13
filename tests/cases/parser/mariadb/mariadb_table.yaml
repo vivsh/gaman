@@ -1,0 +1,31 @@
+description: MariaDB table columns and generated storage lower into modeled schema entities
+dialect: mariadb
+sql: |
+  CREATE TABLE metrics (
+    base_value INT NOT NULL,
+    doubled INT GENERATED ALWAYS AS (base_value * 2) PERSISTENT
+  );
+expect_entities:
+- kind: table
+  name: metrics
+- kind: column
+  table: metrics
+  name: base_value
+- kind: column
+  table: metrics
+  name: doubled
+expect_schema:
+  tables:
+    metrics:
+      name: metrics
+      columns:
+      - name: base_value
+        type: INT
+        nullable: false
+        primary_key: false
+      - name: doubled
+        type: INT
+        nullable: true
+        primary_key: false
+        generated: base_value * 2
+        generated_storage: stored

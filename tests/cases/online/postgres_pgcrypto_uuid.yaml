@@ -25,7 +25,9 @@ dialects:
     requires_extensions: [pgcrypto]
     checks: [migrate, inspect, verify, data]
     expect_extensions: [pgcrypto]
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []
     data:
       - sql: "WITH inserted AS (INSERT INTO sessions DEFAULT VALUES RETURNING id) SELECT (id IS NOT NULL)::text FROM inserted"
         expect: ["true"]

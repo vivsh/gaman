@@ -1,5 +1,5 @@
 ---
-description: MySQL fulltext index lowering is unsupported while MySQL remains a stub dialect.
+description: MySQL fulltext indexes are accepted as opaque owned indexes.
 group: parser
 features:
 - group.parser
@@ -7,9 +7,8 @@ features:
 - parser.mysql.parser_mysql_create_fulltext_index_parse_error
 kind: parser
 parser_dialect: mysql
-sql: 'CREATE FULLTEXT INDEX posts_body_ft_idx ON posts (body);
+sql: 'CREATE TABLE posts (body text); CREATE FULLTEXT INDEX posts_body_ft_idx ON posts (body);
 
 '
-expect_parse: error
-expect_lowering: error
-expect_error: unsupported SQL dialect
+expect_parse: ok
+expect_lowering: ok

@@ -37,19 +37,22 @@ dialects:
       ALTER TABLE preferences DROP CONSTRAINT preferences_user_id_fkey;
       ALTER TABLE preferences ADD CONSTRAINT preferences_user_id_fkey
         FOREIGN KEY (user_id) REFERENCES users(id);
-    expect_verify:
-      - type: drop_foreign_key
-        table_name: preferences
-        foreign_key:
-          name: preferences_user_id_fkey
-          columns: [user_id]
-          to_table: users
-          to_columns: [id]
-      - type: add_foreign_key
-        table_name: preferences
-        foreign_key:
-          name: preferences_user_id_fkey
-          columns: [user_id]
-          to_table: users
-          to_columns: [id]
-          on_delete: cascade
+    expect_verification:
+      findings:
+      - {operation: drop_add_foreign_key, entity_kind: foreign_key, entity_name: preferences.preferences_user_id_fkey, property: on_delete, expected: cascade, observed: "<none>", note: null}
+      operations:
+        - type: drop_foreign_key
+          table_name: preferences
+          foreign_key:
+            name: preferences_user_id_fkey
+            columns: [user_id]
+            to_table: users
+            to_columns: [id]
+        - type: add_foreign_key
+          table_name: preferences
+          foreign_key:
+            name: preferences_user_id_fkey
+            columns: [user_id]
+            to_table: users
+            to_columns: [id]
+            on_delete: cascade

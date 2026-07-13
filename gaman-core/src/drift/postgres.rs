@@ -1,3 +1,4 @@
+use crate::parsers::tokens::{SqlToken, SqlTokenKind};
 use crate::states::{
     Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, PrimaryKey, Table,
     TriggerDef, ViewDef,
@@ -302,8 +303,96 @@ fn column_check(expected: &Column, observed: &Column, _: DriftContext<'_>) -> Pr
     exact_option(&expected.check, &observed.check)
 }
 
-fn column_generated(expected: &Column, observed: &Column, _: DriftContext<'_>) -> PropertyMatch {
-    exact_option(&expected.generated, &observed.generated)
+fn column_generated(
+    expected: &Column,
+    observed: &Column,
+    context: DriftContext<'_>,
+) -> PropertyMatch {
+    match (&expected.generated, &observed.generated) {
+        (Some(expected), Some(observed))
+            if postgres_generated_expressions_equal(expected, observed, context) =>
+        {
+            PropertyMatch::Match
+        }
+        _ => exact_option(&expected.generated, &observed.generated),
+    }
+}
+
+/// Compares generated expressions while ignoring PostgreSQL's implicit varchar-to-text casts.
+fn postgres_generated_expressions_equal(
+    expected: &str,
+    observed: &str,
+    context: DriftContext<'_>,
+) -> bool {
+    if context
+        .dialect
+        .default_expressions_equal(expected, observed)
+    {
+        return true;
+    }
+
+    let tokenizer = context.dialect.tokenizer();
+    let Ok(expected) = tokenizer.tokenize(expected) else {
+        return false;
+    };
+    let Ok(observed) = tokenizer.tokenize(observed) else {
+        return false;
+    };
+    generated_expression_tokens(&expected) == generated_expression_tokens(&observed)
+}
+
+/// Produces comparison tokens after removing only catalog-added casts around identifiers.
+fn generated_expression_tokens(tokens: &[SqlToken]) -> Vec<String> {
+    let meaningful = tokens
+        .iter()
+        .filter(|token| !token.is_trivia())
+        .collect::<Vec<_>>();
+    let mut result = Vec::with_capacity(meaningful.len());
+    let mut index = 0;
+    while index < meaningful.len() {
+        if let Some(identifier) = implicit_text_cast_identifier(&meaningful, index) {
+            result.push(comparison_token(identifier));
+            index += 5;
+        } else {
+            result.push(comparison_token(meaningful[index]));
+            index += 1;
+        }
+    }
+    result
+}
+
+/// Recognizes PostgreSQL's deparsed `(<identifier>)::text` coercion shape.
+fn implicit_text_cast_identifier<'a>(
+    tokens: &[&'a SqlToken],
+    index: usize,
+) -> Option<&'a SqlToken> {
+    let candidate = tokens.get(index..index + 5)?;
+    let identifier = candidate[1];
+    let is_identifier = matches!(
+        identifier.kind,
+        SqlTokenKind::Word { .. } | SqlTokenKind::QuotedIdentifier { .. }
+    );
+    let is_text = candidate[4].canonical_word() == Some("TEXT");
+    if matches!(candidate[0].kind, SqlTokenKind::LeftParen)
+        && is_identifier
+        && matches!(candidate[2].kind, SqlTokenKind::RightParen)
+        && candidate[3].raw == "::"
+        && is_text
+    {
+        Some(identifier)
+    } else {
+        None
+    }
+}
+
+/// Converts one token into a stable comparison value without weakening protected literals.
+fn comparison_token(token: &SqlToken) -> String {
+    match &token.kind {
+        SqlTokenKind::Word { canonical, .. } => format!("word:{canonical}"),
+        SqlTokenKind::QuotedIdentifier { value, .. } => format!("identifier:{value}"),
+        SqlTokenKind::String => format!("string:{}", token.raw),
+        _ => format!("exact:{}", token.raw),
+    }
 }
 
 fn primary_key_name(
@@ -696,5 +785,44 @@ fn constraint_kind_name(constraint: &Constraint) -> &'static str {
         Constraint::Unique { .. } => "unique",
         Constraint::Check { .. } => "check",
         Constraint::Opaque { .. } => "opaque",
+    }
+}
+
+#[cfg(test)]
+mod generated_expression_tests {
+    use crate::parsers::tokens::{POSTGRES_TOKENIZER, SqlTokenizer};
+
+    use super::generated_expression_tokens;
+
+    /// PostgreSQL's catalog-added text coercion does not create generated-column drift.
+    #[test]
+    fn implicit_identifier_text_cast_is_ignored() {
+        let expected = POSTGRES_TOKENIZER
+            .tokenize("length(email)")
+            .expect("expected expression should tokenize");
+        let observed = POSTGRES_TOKENIZER
+            .tokenize("length((email)::text)")
+            .expect("observed expression should tokenize");
+
+        assert_eq!(
+            generated_expression_tokens(&expected),
+            generated_expression_tokens(&observed)
+        );
+    }
+
+    /// Explicit casts over compound expressions remain semantically significant.
+    #[test]
+    fn compound_expression_text_cast_is_preserved() {
+        let expected = POSTGRES_TOKENIZER
+            .tokenize("length(email || suffix)")
+            .expect("expected expression should tokenize");
+        let observed = POSTGRES_TOKENIZER
+            .tokenize("length((email || suffix)::text)")
+            .expect("observed expression should tokenize");
+
+        assert_ne!(
+            generated_expression_tokens(&expected),
+            generated_expression_tokens(&observed)
+        );
     }
 }

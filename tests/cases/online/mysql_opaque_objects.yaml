@@ -1,0 +1,22 @@
+description: MySQL opaque views coexist with modeled verification.
+features: [live_migration_application, live_inspect_verify, views_opaque, raw_sql_statements]
+migrations: []
+dialects:
+  mysql:
+    checks: [verify]
+    migrations:
+    - id: 0001_mysql_opaque_objects
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: opaque_rows
+            columns:
+            - {name: id, type: INT, primary_key: true}
+            - {name: value, type: INT}
+        - type: statement
+          up: CREATE VIEW positive_rows AS SELECT id, value FROM opaque_rows WHERE value > 0
+          down: DROP VIEW positive_rows
+    expect_verification:
+      findings: []
+      operations: []

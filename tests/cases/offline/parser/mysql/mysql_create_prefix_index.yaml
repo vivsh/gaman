@@ -1,5 +1,5 @@
 ---
-description: MySQL prefix index lowering is unsupported while MySQL remains a stub dialect.
+description: MySQL prefix indexes are accepted as opaque owned indexes.
 group: parser
 features:
 - group.parser
@@ -10,6 +10,5 @@ parser_dialect: mysql
 sql: |
   CREATE TABLE users (email varchar(255));
   CREATE INDEX users_email_prefix_idx ON users (email(32));
-expect_parse: error
-expect_lowering: error
-expect_error: unsupported SQL dialect
+expect_parse: ok
+expect_lowering: ok

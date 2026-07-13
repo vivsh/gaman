@@ -1,0 +1,15 @@
+description: MySQL releases its named migration lock after application.
+features: [live_migration_application, lock_cleanup, migration_tracking, tables_columns]
+migrations: []
+dialects:
+  mysql:
+    checks: [migrate, lock_behavior]
+    migrations:
+    - id: 0001_mysql_lock
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: lock_rows
+            columns:
+            - {name: id, type: INT, primary_key: true}

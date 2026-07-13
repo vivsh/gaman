@@ -2,6 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "support/evidence_io.rs"]
+mod evidence_io;
+
 use gaman::core::Dialect;
 use gaman::schema::Schema;
 use serde::{Deserialize, Serialize};
@@ -28,6 +31,8 @@ impl ParserHarnessError {
 enum ParserDialect {
     Postgres,
     Sqlite,
+    Mysql,
+    Mariadb,
 }
 
 impl ParserDialect {
@@ -35,6 +40,8 @@ impl ParserDialect {
         match self {
             Self::Postgres => Dialect::Postgres,
             Self::Sqlite => Dialect::Sqlite,
+            Self::Mysql => Dialect::Mysql,
+            Self::Mariadb => Dialect::Mariadb,
         }
     }
 }
@@ -80,6 +87,7 @@ struct ParserCase {
 
 #[derive(Debug, Default, Serialize)]
 struct ParserResults {
+    generation: String,
     cases: BTreeMap<String, ParserCaseResult>,
 }
 
@@ -88,7 +96,8 @@ struct ParserCaseResult {
     description: String,
     dialect: ParserDialect,
     status: ParserStatus,
-    entities: Vec<EntityExpectation>,
+    expected_entities: Vec<EntityExpectation>,
+    observed_entities: Vec<EntityExpectation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
 }
@@ -102,11 +111,12 @@ enum ParserStatus {
 
 struct ParserArgs {
     record: Option<PathBuf>,
+    failure_output: Option<PathBuf>,
     case_args: Vec<String>,
 }
 
 enum CaseStatus {
-    Success,
+    Success(Vec<EntityExpectation>),
     Failure(String),
 }
 
@@ -126,6 +136,7 @@ fn main() {
 
 fn parse_args() -> Result<ParserArgs, ParserHarnessError> {
     let mut record = None;
+    let mut failure_output = None;
     let mut case_args = Vec::new();
     let mut raw = std::env::args().skip(1);
     while let Some(arg) = raw.next() {
@@ -136,6 +147,12 @@ fn parse_args() -> Result<ParserArgs, ParserHarnessError> {
                     .ok_or_else(|| ParserHarnessError::message("--record requires a path"))?;
                 record = Some(PathBuf::from(value));
             }
+            "--failure-output" => {
+                let value = raw.next().ok_or_else(|| {
+                    ParserHarnessError::message("--failure-output requires a path")
+                })?;
+                failure_output = Some(PathBuf::from(value));
+            }
             value if value.starts_with("--") => {
                 return Err(ParserHarnessError::message(format!(
                     "unsupported parser harness argument '{value}'"
@@ -144,7 +161,11 @@ fn parse_args() -> Result<ParserArgs, ParserHarnessError> {
             _ => case_args.push(arg),
         }
     }
-    Ok(ParserArgs { record, case_args })
+    Ok(ParserArgs {
+        record,
+        failure_output,
+        case_args,
+    })
 }
 
 fn run_parser_cases(args: ParserArgs) -> Result<(), ParserHarnessError> {
@@ -158,7 +179,10 @@ fn run_parser_cases(args: ParserArgs) -> Result<(), ParserHarnessError> {
 
     let mut descriptions = BTreeSet::new();
     let mut names = BTreeSet::new();
-    let mut results = ParserResults::default();
+    let mut results = ParserResults {
+        generation: evidence_io::generation_id(),
+        ..ParserResults::default()
+    };
     let mut failures = Vec::new();
 
     for file in files {
@@ -180,23 +204,25 @@ fn run_parser_cases(args: ParserArgs) -> Result<(), ParserHarnessError> {
         let status = run_case(&name, &case);
         record_case_status(&mut results, &name, &case, &status);
         match status {
-            CaseStatus::Success => println!("  ok: {} ({})", case.description, file.display()),
+            CaseStatus::Success(_) => println!("  ok: {} ({})", case.description, file.display()),
             CaseStatus::Failure(message) => failures.push(format!("{}: {message}", file.display())),
         }
     }
 
-    if let Some(path) = args.record {
-        write_results(&path, &results)?;
-        println!("recorded parser results: {}", path.display());
-    }
-
-    if failures.is_empty() {
-        Ok(())
-    } else {
+    if !failures.is_empty() {
+        if let Some(path) = args.failure_output {
+            write_results(&path, &results)?;
+        }
         Err(ParserHarnessError::message(format!(
             "parser cases failed:\n\n{}",
             failures.join("\n\n")
         )))
+    } else {
+        if let Some(path) = args.record {
+            write_results(&path, &results)?;
+            println!("recorded parser results: {}", path.display());
+        }
+        Ok(())
     }
 }
 
@@ -236,12 +262,15 @@ fn validate_case(name: &str, case: &ParserCase) -> Result<(), ParserHarnessError
 
 fn run_case(name: &str, case: &ParserCase) -> CaseStatus {
     match run_case_inner(name, case) {
-        Ok(()) => CaseStatus::Success,
+        Ok(entities) => CaseStatus::Success(entities),
         Err(error) => CaseStatus::Failure(error.to_string()),
     }
 }
 
-fn run_case_inner(name: &str, case: &ParserCase) -> Result<(), ParserHarnessError> {
+fn run_case_inner(
+    name: &str,
+    case: &ParserCase,
+) -> Result<Vec<EntityExpectation>, ParserHarnessError> {
     let result = gaman::parsers::parse_sql(&case.sql, case.dialect.to_dialect());
     if let Some(expected_error) = &case.expect_error {
         return match result {
@@ -252,7 +281,7 @@ fn run_case_inner(name: &str, case: &ParserCase) -> Result<(), ParserHarnessErro
             Err(error) => {
                 let actual = error.to_string();
                 if actual.contains(expected_error) {
-                    Ok(())
+                    Ok(Vec::new())
                 } else {
                     Err(ParserHarnessError::message(format!(
                         "{name}: expected error containing '{expected_error}', got '{actual}'"
@@ -279,7 +308,74 @@ fn run_case_inner(name: &str, case: &ParserCase) -> Result<(), ParserHarnessErro
             )));
         }
     }
-    Ok(())
+    Ok(observed_entities(&actual))
+}
+
+/// Enumerates every entity produced by successful schema lowering.
+fn observed_entities(schema: &Schema) -> Vec<EntityExpectation> {
+    let mut entities = Vec::new();
+    for (table_name, table) in &schema.tables {
+        entities.push(entity(EntityKind::Table, table_name, None));
+        for column in &table.columns {
+            entities.push(entity(EntityKind::Column, &column.name, Some(table_name)));
+        }
+        if let Some(primary_key) = &table.primary_key {
+            entities.push(entity(
+                EntityKind::Constraint,
+                &primary_key.name,
+                Some(table_name),
+            ));
+        }
+        for constraint in &table.constraints {
+            entities.push(entity(
+                EntityKind::Constraint,
+                constraint.name(),
+                Some(table_name),
+            ));
+        }
+        for foreign_key in &table.foreign_keys {
+            entities.push(entity(
+                EntityKind::ForeignKey,
+                &foreign_key.name,
+                Some(table_name),
+            ));
+        }
+        for index in &table.indexes {
+            entities.push(entity(EntityKind::Index, &index.name, Some(table_name)));
+        }
+        for trigger in &table.triggers {
+            if let Some(name) = &trigger.name {
+                entities.push(entity(EntityKind::Trigger, name, Some(table_name)));
+            }
+        }
+    }
+    append_named(&mut entities, EntityKind::Function, schema.functions.keys());
+    append_named(&mut entities, EntityKind::View, schema.views.keys());
+    append_named(&mut entities, EntityKind::Enum, schema.enums.keys());
+    append_named(
+        &mut entities,
+        EntityKind::Extension,
+        schema.extensions.keys(),
+    );
+    entities
+}
+
+/// Appends top-level named entities in deterministic map order.
+fn append_named<'a>(
+    entities: &mut Vec<EntityExpectation>,
+    kind: EntityKind,
+    names: impl Iterator<Item = &'a String>,
+) {
+    entities.extend(names.map(|name| entity(kind, name, None)));
+}
+
+/// Builds one stable parser-evidence entity identity.
+fn entity(kind: EntityKind, name: &str, table: Option<&str>) -> EntityExpectation {
+    EntityExpectation {
+        kind,
+        name: Some(name.to_string()),
+        table: table.map(str::to_string),
+    }
 }
 
 fn assert_entity(
@@ -404,17 +500,18 @@ fn record_case_status(
     case: &ParserCase,
     status: &CaseStatus,
 ) {
-    let (status, reason) = match status {
-        CaseStatus::Success => (ParserStatus::Success, None),
-        CaseStatus::Failure(message) => (ParserStatus::Failure, Some(message.clone())),
+    let (status_value, reason, observed_entities) = match status {
+        CaseStatus::Success(entities) => (ParserStatus::Success, None, entities.clone()),
+        CaseStatus::Failure(message) => (ParserStatus::Failure, Some(message.clone()), Vec::new()),
     };
     results.cases.insert(
         name.to_string(),
         ParserCaseResult {
             description: case.description.clone(),
             dialect: case.dialect,
-            status,
-            entities: case.expect_entities.clone(),
+            status: status_value,
+            expected_entities: case.expect_entities.clone(),
+            observed_entities,
             reason,
         },
     );
@@ -555,16 +652,7 @@ fn read_yaml<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, ParserHarne
 }
 
 fn write_results(path: &Path, results: &ParserResults) -> Result<(), ParserHarnessError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| ParserHarnessError::Io {
-            path: parent.display().to_string(),
-            message: error.to_string(),
-        })?;
-    }
-    let yaml = serde_yaml::to_string(results).map_err(|error| {
-        ParserHarnessError::message(format!("failed to serialize parser results: {error}"))
-    })?;
-    fs::write(path, yaml).map_err(|error| ParserHarnessError::Io {
+    evidence_io::write_yaml_atomic(path, results).map_err(|error| ParserHarnessError::Io {
         path: path.display().to_string(),
         message: error.to_string(),
     })

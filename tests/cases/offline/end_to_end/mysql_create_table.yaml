@@ -1,0 +1,41 @@
+description: MySQL offline planning creates replays and renders a modeled table.
+group: end_to_end
+features: [group.end_to_end, kind.end_to_end, kind.schema_to_migration, operation.create_table]
+dialect: mysql
+kind: end_to_end
+name: mysql_users
+migrations: []
+current:
+  tables:
+    users:
+      name: users
+      columns:
+      - name: id
+        type: INT
+        primary_key: true
+        mysql: {auto_increment: true}
+      - {name: email, type: VARCHAR(255)}
+expect_operations:
+- type: create_table
+  table:
+    name: users
+    primary_key: {name: users_pkey, columns: [id]}
+    columns:
+    - name: id
+      type: INT
+      primary_key: true
+      mysql: {auto_increment: true}
+    - {name: email, type: VARCHAR(255)}
+expect_schema:
+  tables:
+    users:
+      name: users
+      primary_key: {name: users_pkey, columns: [id]}
+      columns:
+      - name: id
+        type: INT
+        primary_key: true
+        mysql: {auto_increment: true}
+      - {name: email, type: VARCHAR(255)}
+expect_sql: |
+  CREATE TABLE `users` (`id` INT NOT NULL AUTO_INCREMENT, `email` VARCHAR(255) NOT NULL, CONSTRAINT `users_pkey` PRIMARY KEY (`id`))

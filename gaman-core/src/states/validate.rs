@@ -23,6 +23,18 @@ impl Schema {
     }
 
     pub fn validate_checked(&self) -> Result<(), SchemaValidationError> {
+        for table in self.tables.values() {
+            for column in &table.columns {
+                if column.dialect_options.mysql.is_some()
+                    && column.dialect_options.mariadb.is_some()
+                {
+                    return Err(SchemaValidationError::Invalid(format!(
+                        "column '{}.{}' cannot define both mysql and mariadb options",
+                        table.name, column.name
+                    )));
+                }
+            }
+        }
         for (name, table) in &self.tables {
             if table.name.is_empty() {
                 return Err(SchemaValidationError::Invalid(format!(
@@ -55,6 +67,24 @@ impl Schema {
         }
         Ok(())
     }
+}
+
+/// Rejects vendor column blocks for dialects that do not own them.
+pub(crate) fn reject_family_column_options(
+    schema: &Schema,
+    dialect: &str,
+) -> Result<(), SchemaValidationError> {
+    for table in schema.tables.values() {
+        if let Some(column) = table.columns.iter().find(|column| {
+            column.dialect_options.mysql.is_some() || column.dialect_options.mariadb.is_some()
+        }) {
+            return Err(SchemaValidationError::Invalid(format!(
+                "{dialect} column '{}.{}' cannot use mysql or mariadb options",
+                table.name, column.name
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_trigger_source(

@@ -25,13 +25,17 @@ mutate_sql: DELETE FROM parents WHERE id = 1
 dialects:
   postgres:
     checks: [migrate, verify, data]
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []
     data:
       - sql: SELECT COALESCE(CAST(parent_id AS text), 'NULL') FROM children WHERE id = 10
         expect: [NULL]
   sqlite:
     checks: [migrate, verify, data]
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []
     data:
       - sql: SELECT COALESCE(CAST(parent_id AS text), 'NULL') FROM children WHERE id = 10
         expect: [NULL]

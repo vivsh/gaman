@@ -28,15 +28,19 @@
 
 pub mod clarifier;
 pub mod column_type;
+#[cfg(feature = "command-args")]
+pub mod command_args;
 pub mod dialects;
 pub mod diff;
 pub mod drift;
 pub mod graphs;
+pub mod migration_engine;
 pub mod migrations;
 pub mod operations;
 pub mod parsers;
 pub mod repair;
 pub mod replay;
+pub mod runner;
 #[doc(hidden)]
 pub mod sql_plan;
 pub mod states;
@@ -45,8 +49,20 @@ mod offline_planner;
 mod opaque;
 
 pub use dialects::{Dialect, DialectError};
+pub use migration_engine::{
+    BoxFuture, DatabaseTrackingStore, EngineError, Executor, ExecutorError, MigrationArtifact,
+    MigrationCatalog, MigrationEngine, MigrationMovement, MigrationStore, StoreError,
+    TRACKING_TABLE, TrackingError, TrackingStore,
+};
 pub use migrations::Migration;
 pub use offline_planner::{EmbeddedMigrations, OfflineError, OfflinePlanner};
+pub use runner::{
+    ApplyCommand, COMMAND_PROTOCOL_VERSION, Command, CommandDiagnostic, CommandEnvelope,
+    CommandError, CommandFailure, CommandRequest, CommandResponse, CommandResult, DiagnosticCode,
+    InspectionError, MakeCommand, MakeResult, MigrationRunner, MigrationStatus, RepairOptions,
+    RepairReport, SchemaCheckFailure, SchemaCheckInput, SchemaCheckResult, SchemaCheckStatus,
+    SchemaInspector, SqlInput,
+};
 
 pub mod schema {
     pub use crate::column_type::{ColumnDesc, ColumnType};
@@ -54,10 +70,10 @@ pub mod schema {
     pub use crate::parsers::ParseError;
     pub use crate::states::{
         Column, ColumnBuilder, ColumnRef, Constraint, ConstraintInput, EnumDef, EnumInput,
-        ExtensionDef, ExtensionInput, ForeignKey, FunctionDef, FunctionInput, Index, IndexInput,
-        InputSchema, IntoTable, PrimaryKey, ReplayError, Schema, SchemaBuilder, SchemaLoadError,
-        SchemaValidationError, Table, TableBuilder, TableInput, TriggerDef, TriggerEvent,
-        TriggerInput, TriggerScope, TriggerTiming, ViewDef, ViewInput, Volatility, is_volatile,
-        schema_qualified_key,
+        ExtensionDef, ExtensionInput, ForeignKey, FunctionDef, FunctionInput, GeneratedStorage,
+        Index, IndexInput, InputSchema, IntoTable, PrimaryKey, ReplayError, Schema, SchemaBuilder,
+        SchemaLoadError, SchemaValidationError, Table, TableBuilder, TableInput, TriggerDef,
+        TriggerEvent, TriggerInput, TriggerScope, TriggerTiming, ViewDef, ViewInput, Volatility,
+        is_volatile, schema_qualified_key,
     };
 }

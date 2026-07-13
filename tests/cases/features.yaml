@@ -9,6 +9,8 @@ features:
     label: Rollback migrations
   - id: transaction_rollback
     label: Transaction rollback
+  - id: non_transactional_failure_reporting
+    label: Non-transactional partial failure reporting
   - id: lock_cleanup
     label: Lock cleanup
   - id: migration_tracking

@@ -21,12 +21,15 @@ mutate_sql: DROP INDEX users_lower_email_idx
 dialects:
   postgres:
     checks: [verify]
-    expect_verify:
-      - type: add_index
-        table_name: users
-        index:
-          name: users_lower_email_idx
-          columns: []
-          opaque:
-            raw: CREATE INDEX users_lower_email_idx ON users ((lower(email)))
-            trusted: true
+    expect_verification:
+      findings:
+      - {operation: add_index, entity_kind: index, entity_name: users.users_lower_email_idx, property: presence, expected: present, observed: "<missing>", note: null}
+      operations:
+        - type: add_index
+          table_name: users
+          index:
+            name: users_lower_email_idx
+            columns: []
+            opaque:
+              raw: CREATE INDEX users_lower_email_idx ON users ((lower(email)))
+              trusted: true

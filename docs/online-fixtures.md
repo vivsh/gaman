@@ -53,7 +53,7 @@ Supported online checks:
 - `rollback`: apply then rollback to a target.
 - `migration_records`: assert recorded migration ids.
 - `lock_behavior`: assert live migration locking behavior.
-- `inspect`: compare high-fidelity reflected schema output.
+- `inspect`: compare the exact high-fidelity reflected schema output.
 - `verify`: run semantic drift detection against the inspected schema.
 - `data`: run SQL assertions against live data.
 - `error`: assert an expected live error.
@@ -64,7 +64,8 @@ Supported online checks:
 Important expectation fields:
 
 - `expect_schema`: expected reflected schema for `inspect` checks.
-- `expect_verify`: expected drift operations for `verify` checks.
+- `expect_verification`: complete expected `findings` and repair `operations`
+  for `verify` checks; both arrays are required, including when empty.
 - `expect_error`: expected error substring for `error` checks.
 - `target`: target migration id for target migrate or rollback checks.
 - `expect_records`: expected migration tracking records.
@@ -75,7 +76,8 @@ Important expectation fields:
 `inspect` and `verify` intentionally test different contracts.
 
 Inspection is onboarding-oriented. It asserts the high-fidelity schema Gaman can
-reflect from a live database catalog.
+reflect from a live database catalog. Inspection expectations are exact and do
+not apply drift type/default canonicalization.
 
 Verification is drift-oriented. It compares replayed and inspected schemas using
 Gaman core's dialect-specific drift registry. Only registered properties are
@@ -90,23 +92,26 @@ Database URL environment variables:
   temporary schemas.
 - `SQLITE_DATABASE_URL`: optional SQLite URL. When omitted, the harness uses a
   temporary file-backed database.
-- `MYSQL_DATABASE_URL`: reserved for future MySQL online cases.
+- `MYSQL_DATABASE_URL`: MySQL 8.4 administrative database URL used to create temporary case databases.
+- `MARIADB_DATABASE_URL`: MariaDB 11.4 or 11.8 administrative database URL used to create temporary case databases.
 
 ## Running online fixtures
 
 ```bash
 cargo test -p gaman --features sqlite --test online -- --dialect sqlite
 set -a; source .env; set +a; cargo test -p gaman --features sqlite --test online -- --dialect postgres
+cargo test -p gaman --features mysql --test online -- --dialect mysql
+cargo test -p gaman --features mariadb --test online -- --dialect mariadb
 cargo test -p gaman --features sqlite --test online -- tests/cases/online/sqlite_rebuild_drop_column.yaml
 ```
 
 When no explicit `--record` path is provided, the online harness writes local
 support evidence to `results/online-support-results.yaml`.
 
-Record accepted online evidence deliberately:
+Record a local online result for review:
 
 ```bash
-set -a; source .env; set +a; cargo test -p gaman --features sqlite --test online -- --record results/online-results.yaml
+set -a; source .env; set +a; cargo test -p gaman --features sqlite --test online -- --record /tmp/online-results.yaml
 ```
 
 ## Negative cases

@@ -22,11 +22,14 @@ mutate_sql: |
 dialects:
   postgres:
     checks: [verify]
-    expect_verify:
-      - type: create_function
-        function:
-          name: add_one
-          arguments: value integer
-          returns: integer
-          language: sql
-          body: ""
+    expect_verification:
+      findings:
+      - {operation: create_function, entity_kind: function, entity_name: "add_one(value integer)", property: presence, expected: present, observed: "<missing>", note: null}
+      operations:
+        - type: create_function
+          function:
+            name: add_one
+            arguments: value integer
+            returns: integer
+            language: sql
+            body: ""

@@ -1,5 +1,5 @@
 ---
-description: MySQL composite-key lowering is unsupported while MySQL remains a stub dialect.
+description: MySQL tables lower composite primary and foreign keys.
 group: parser
 features:
 - group.parser
@@ -8,12 +8,16 @@ features:
 kind: parser
 parser_dialect: mysql
 sql: |
+  CREATE TABLE tenants (
+      tenant_id int,
+      region_id int,
+      PRIMARY KEY (tenant_id, region_id)
+  ) ENGINE=InnoDB;
   CREATE TABLE accounts (
       tenant_id int,
       region_id int,
       PRIMARY KEY (tenant_id, region_id),
       FOREIGN KEY (tenant_id, region_id) REFERENCES tenants (tenant_id, region_id)
   ) ENGINE=InnoDB;
-expect_parse: error
-expect_lowering: error
-expect_error: unsupported SQL dialect
+expect_parse: ok
+expect_lowering: ok

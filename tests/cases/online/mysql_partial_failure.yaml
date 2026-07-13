@@ -1,0 +1,22 @@
+description: MySQL reports non-transactional partial failure without recording the migration.
+features: [live_migration_application, non_transactional_failure_reporting, migration_tracking, tables_columns]
+migrations: []
+dialects:
+  mysql:
+    checks: [migrate, error, migration_records, data]
+    expect_error: missing_table
+    migrations:
+    - id: 0001_mysql_partial
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: partial_rows
+            columns:
+            - {name: id, type: INT}
+        - type: statement
+          up: INSERT INTO missing_table (id) VALUES (1)
+    expect_records: []
+    data:
+    - sql: SELECT CAST(COUNT(*) AS CHAR) FROM partial_rows
+      expect: ['0']

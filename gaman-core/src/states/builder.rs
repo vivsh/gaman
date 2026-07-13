@@ -62,6 +62,32 @@ impl ColumnBuilder {
         self
     }
 
+    /// Set the storage behavior for a generated column.
+    pub fn generated_storage(mut self, storage: crate::states::GeneratedStorage) -> Self {
+        self.col.generated_storage = Some(storage);
+        self
+    }
+
+    /// Configures MySQL-only column properties.
+    pub fn mysql(
+        mut self,
+        configure: impl FnOnce(crate::states::MysqlColumnOptions) -> crate::states::MysqlColumnOptions,
+    ) -> Self {
+        self.col.dialect_options.mysql = Some(configure(Default::default()));
+        self
+    }
+
+    /// Configures MariaDB-only column properties.
+    pub fn mariadb(
+        mut self,
+        configure: impl FnOnce(
+            crate::states::MariadbColumnOptions,
+        ) -> crate::states::MariadbColumnOptions,
+    ) -> Self {
+        self.col.dialect_options.mariadb = Some(configure(Default::default()));
+        self
+    }
+
     pub fn references(self, table: impl Into<String>, column: impl Into<String>) -> Self {
         self.with_reference(None, table, column)
     }

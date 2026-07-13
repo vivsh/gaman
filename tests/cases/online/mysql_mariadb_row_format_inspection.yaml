@@ -1,0 +1,38 @@
+description: MySQL and MariaDB inspect explicit row format without false drift.
+features: [live_inspect_verify, tables_columns, unmanaged_table_options]
+migrations: []
+dialects:
+  mysql:
+    checks: [verify]
+    migrations:
+    - id: 0001_mysql_row_format
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: row_format_items
+            columns:
+            - {name: id, type: INT, primary_key: true}
+            options:
+              tail_raw: [ENGINE=InnoDB, ROW_FORMAT=DYNAMIC]
+              trusted: true
+    expect_verification:
+      findings: []
+      operations: []
+  mariadb:
+    checks: [verify]
+    migrations:
+    - id: 0001_mariadb_row_format
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: row_format_items
+            columns:
+            - {name: id, type: INT, primary_key: true}
+            options:
+              tail_raw: [ENGINE=InnoDB, ROW_FORMAT=DYNAMIC]
+              trusted: true
+    expect_verification:
+      findings: []
+      operations: []

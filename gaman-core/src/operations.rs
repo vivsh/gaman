@@ -12,6 +12,7 @@ use crate::states::{
 /// Each variant carries the minimal data needed to describe the change.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum Operation {
     CreateTable {
         table: Table,

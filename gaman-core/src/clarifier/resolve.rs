@@ -583,7 +583,8 @@ fn validate_answer(clar: &Clarification, answer: &Answer) -> Result<(), ClarifyE
         | (ClarificationKind::NotNullChange { .. }, Answer::NotNullManual)
         | (ClarificationKind::TypeCast { .. }, Answer::TypeCastImplicit) => {}
         (ClarificationKind::OpaqueEntity { .. }, Answer::AcceptRisk)
-        | (ClarificationKind::UnmanagedTableOptions { .. }, Answer::AcceptRisk) => {}
+        | (ClarificationKind::UnmanagedTableOptions { .. }, Answer::AcceptRisk)
+        | (ClarificationKind::ColumnMetadataChange { .. }, Answer::AcceptRisk) => {}
         _ => {
             return Err(ClarifyError::InvalidAnswer {
                 id: clar.id.clone(),

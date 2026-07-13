@@ -59,10 +59,10 @@ dialects:
             columns: [id]
           columns:
             - name: id
-              type: integer
+              type: INTEGER
               primary_key: true
             - name: username
-              type: text
+              type: TEXT
             - name: email
-              type: text
+              type: TEXT
               nullable: true

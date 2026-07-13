@@ -297,9 +297,26 @@ fn config_validates_overridden_migrations_dir() {
     assert!(stdout.contains("custom-migrations"));
 }
 
-/// Verifies the CLI rejects MySQL before a later migration command can fail.
+/// Verifies the CLI accepts MySQL configuration when native support is enabled.
+#[cfg(feature = "mysql")]
 #[test]
-fn config_rejects_unimplemented_mysql() {
+fn config_accepts_enabled_mysql() {
+    let dir = tempfile::tempdir().expect("create temp directory");
+    let output = Command::new(env!("CARGO_BIN_EXE_gaman"))
+        .current_dir(dir.path())
+        .args(["--database-url", "mysql://localhost/app", "config"])
+        .output()
+        .expect("run gaman config");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("mysql"));
+}
+
+/// Verifies the CLI rejects MySQL configuration when native support is disabled.
+#[cfg(not(feature = "mysql"))]
+#[test]
+fn config_rejects_disabled_mysql() {
     let dir = tempfile::tempdir().expect("create temp directory");
     let output = Command::new(env!("CARGO_BIN_EXE_gaman"))
         .current_dir(dir.path())
@@ -309,7 +326,7 @@ fn config_rejects_unimplemented_mysql() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
-    assert!(stderr.contains("MySQL migration support is not implemented"));
+    assert!(stderr.contains("rebuild with the 'mysql' feature"));
 }
 
 /// Verifies dry-run emits canonical migration YAML without a creation claim.

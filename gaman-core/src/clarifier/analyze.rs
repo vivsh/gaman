@@ -428,11 +428,39 @@ fn risky_change_clarifications(ops: &[Operation]) -> Vec<Clarification> {
                         kind,
                     });
                 }
+                let properties = risky_metadata_changes(old, new);
+                if !properties.is_empty() {
+                    let kind = ClarificationKind::ColumnMetadataChange {
+                        table: table_name.clone(),
+                        column: old.name.clone(),
+                        properties,
+                    };
+                    result.push(Clarification {
+                        id: clarification_id(&kind),
+                        severity: Severity::Warning,
+                        kind,
+                    });
+                }
             }
             _ => {}
         }
     }
     result
+}
+
+/// Lists modeled column metadata changes that may rewrite data or alter visibility.
+fn risky_metadata_changes(old: &Column, new: &Column) -> Vec<String> {
+    let mut properties = Vec::new();
+    if old.generated != new.generated {
+        properties.push("generated".to_string());
+    }
+    if old.generated_storage != new.generated_storage {
+        properties.push("generated_storage".to_string());
+    }
+    if old.dialect_options != new.dialect_options {
+        properties.push("dialect_options".to_string());
+    }
+    properties
 }
 
 fn ranked_column_candidates(
@@ -676,6 +704,8 @@ mod tests {
             references: None,
             check: None,
             generated: None,
+            generated_storage: None,
+            dialect_options: Default::default(),
         }
     }
 

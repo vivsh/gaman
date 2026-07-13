@@ -1,0 +1,41 @@
+description: MySQL renders complete table and column mutation operations.
+group: sql_rendering
+features: [group.sql_rendering, kind.migration_to_sql, operation.create_table, operation.rename_table, operation.add_column, operation.rename_column, operation.alter_column, operation.drop_column, operation.drop_table]
+dialect: mysql
+kind: migration_to_sql
+migrations:
+- id: 0001_mysql_mutations
+  atomic: false
+  operations:
+  - type: create_table
+    table:
+      name: users
+      primary_key: {name: users_pkey, columns: [id]}
+      columns:
+      - {name: id, type: INT, primary_key: true}
+      - {name: email, type: VARCHAR(255)}
+  - {type: rename_table, old_name: users, new_name: accounts}
+  - type: add_column
+    table_name: accounts
+    column: {name: active, type: BOOLEAN, default: 'TRUE'}
+  - {type: rename_column, table_name: accounts, old_name: email, new_name: email_address}
+  - type: alter_column
+    table_name: accounts
+    old: {name: active, type: BOOLEAN, default: 'TRUE'}
+    new: {name: active, type: BOOLEAN, nullable: true, default: 'FALSE'}
+  - {type: drop_column, table_name: accounts, column: {name: email_address, type: VARCHAR(255)}}
+  - type: drop_table
+    table:
+      name: accounts
+      primary_key: {name: users_pkey, columns: [id]}
+      columns:
+      - {name: id, type: INT, primary_key: true}
+      - {name: active, type: BOOLEAN, nullable: true, default: 'FALSE'}
+expect_sql: |
+  CREATE TABLE `users` (`id` INT NOT NULL, `email` VARCHAR(255) NOT NULL, CONSTRAINT `users_pkey` PRIMARY KEY (`id`))
+  RENAME TABLE `users` TO `accounts`
+  ALTER TABLE `accounts` ADD COLUMN `active` BOOLEAN DEFAULT TRUE NOT NULL
+  ALTER TABLE `accounts` RENAME COLUMN `email` TO `email_address`
+  ALTER TABLE `accounts` MODIFY COLUMN `active` BOOLEAN DEFAULT FALSE NULL
+  ALTER TABLE `accounts` DROP COLUMN `email_address`
+  DROP TABLE `accounts`

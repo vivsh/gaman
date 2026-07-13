@@ -6,7 +6,9 @@
 //! structured findings plus repair operations.
 
 mod contract;
+pub(crate) mod mariadb;
 pub(crate) mod mysql;
+mod mysql_family;
 pub(crate) mod postgres;
 mod report;
 pub(crate) mod sqlite;
@@ -115,11 +117,13 @@ pub fn contract_for(dialect: Dialect) -> &'static [DriftPropertyDoc] {
     static POSTGRES: OnceLock<Vec<DriftPropertyDoc>> = OnceLock::new();
     static SQLITE: OnceLock<Vec<DriftPropertyDoc>> = OnceLock::new();
     static MYSQL: OnceLock<Vec<DriftPropertyDoc>> = OnceLock::new();
+    static MARIADB: OnceLock<Vec<DriftPropertyDoc>> = OnceLock::new();
 
     let contract = match dialect {
         Dialect::Postgres => &POSTGRES,
         Dialect::Sqlite => &SQLITE,
         Dialect::Mysql => &MYSQL,
+        Dialect::Mariadb => &MARIADB,
     };
     contract.get_or_init(|| registry_for(dialect).contract())
 }
@@ -415,7 +419,10 @@ fn verify_columns(
             report.operations.push(Operation::AlterColumn {
                 table_name: expected.qualified_name(),
                 old: column_for_operation(actual_column, context.dialect),
-                new: column_for_operation(column, context.dialect),
+                new: context.dialect.column_for_repair(
+                    &column_for_operation(column, context.dialect),
+                    actual_column,
+                ),
                 cast_expr: None,
             });
             report.findings.extend(findings);
@@ -1528,6 +1535,8 @@ mod tests {
             references: None,
             check: None,
             generated: None,
+            generated_storage: None,
+            dialect_options: Default::default(),
         }
     }
 

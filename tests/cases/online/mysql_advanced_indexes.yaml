@@ -1,0 +1,32 @@
+description: MySQL advanced index forms remain opaque and never block live verification.
+features: [live_migration_application, live_inspect_verify, indexes, opaque_index_metadata]
+migrations: []
+dialects:
+  mysql:
+    checks: [verify]
+    migrations:
+    - id: 0001_mysql_advanced_indexes
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: indexed_documents
+            columns:
+            - {name: id, type: INT, primary_key: true}
+            - {name: email, type: VARCHAR(255)}
+            - {name: body, type: TEXT}
+        - type: statement
+          up: CREATE INDEX indexed_documents_email_prefix ON indexed_documents (email(24))
+          down: DROP INDEX indexed_documents_email_prefix ON indexed_documents
+        - type: statement
+          up: CREATE FULLTEXT INDEX indexed_documents_body_ft ON indexed_documents (body)
+          down: DROP INDEX indexed_documents_body_ft ON indexed_documents
+        - type: statement
+          up: CREATE INDEX indexed_documents_email_desc ON indexed_documents (email DESC)
+          down: DROP INDEX indexed_documents_email_desc ON indexed_documents
+        - type: statement
+          up: CREATE INDEX indexed_documents_email_lower ON indexed_documents ((LOWER(email)))
+          down: DROP INDEX indexed_documents_email_lower ON indexed_documents
+    expect_verification:
+      findings: []
+      operations: []

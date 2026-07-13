@@ -86,6 +86,36 @@ impl DialectProcessor for SqliteProcessor {
         schema.prepare(crate::dialects::Dialect::Sqlite)
     }
 
+    fn tracking_install_sql(&self, table: &str) -> Option<Vec<String>> {
+        Some(vec![format!(
+            "CREATE TABLE IF NOT EXISTS \"{}\" (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+            table.replace('"', "\"\"")
+        )])
+    }
+
+    fn tracking_list_sql(&self, table: &str) -> Option<String> {
+        Some(format!(
+            "SELECT id FROM \"{}\" ORDER BY applied_at, id",
+            table.replace('"', "\"\"")
+        ))
+    }
+
+    fn tracking_record_sql(&self, table: &str, id: &str) -> Option<String> {
+        Some(format!(
+            "INSERT INTO \"{}\" (id) VALUES ('{}')",
+            table.replace('"', "\"\""),
+            id.replace('\'', "''")
+        ))
+    }
+
+    fn tracking_unrecord_sql(&self, table: &str, id: &str) -> Option<String> {
+        Some(format!(
+            "DELETE FROM \"{}\" WHERE id = '{}'",
+            table.replace('"', "\"\""),
+            id.replace('\'', "''")
+        ))
+    }
+
     fn validate_migration(&self, migration: &Migration) -> Result<(), DialectError> {
         validate_migration(migration)
     }
@@ -848,7 +878,7 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
         | Operation::AddConstraint { .. }
         | Operation::DropConstraint { .. } => Err(unsupported(
             op.type_name(),
-            "SQLite requires migration context for table rebuilds; render through Migrator",
+            "SQLite requires migration context for table rebuilds; render through SqlPlanRenderer",
         )),
         Operation::CreateFunction { .. }
         | Operation::AlterFunction { .. }
@@ -1004,6 +1034,7 @@ pub fn canonical_type(t: &str) -> String {
 }
 
 pub fn validate_schema(schema: &Schema) -> Result<(), SchemaValidationError> {
+    crate::states::reject_family_column_options(schema, "SQLite")?;
     if !schema.extensions.is_empty() {
         let names = schema
             .extensions
@@ -1012,13 +1043,13 @@ pub fn validate_schema(schema: &Schema) -> Result<(), SchemaValidationError> {
             .collect::<Vec<_>>()
             .join(", ");
         return Err(SchemaValidationError::Invalid(format!(
-            "SQLite does not support extensions: {names}"
+            "SQLite does not support extensions: {names}; operation is not supported by the SQLite dialect"
         )));
     }
     if !schema.enums.is_empty() {
         let names = schema.enums.keys().cloned().collect::<Vec<_>>().join(", ");
         return Err(SchemaValidationError::Invalid(format!(
-            "SQLite does not support enums: {names}"
+            "SQLite does not support enums: {names}; operation is not supported by the SQLite dialect"
         )));
     }
     if !schema.functions.is_empty() {
@@ -1029,14 +1060,14 @@ pub fn validate_schema(schema: &Schema) -> Result<(), SchemaValidationError> {
             .collect::<Vec<_>>()
             .join(", ");
         return Err(SchemaValidationError::Invalid(format!(
-            "SQLite does not support stored functions: {names}"
+            "SQLite does not support stored functions: {names}; operation is not supported by the SQLite dialect"
         )));
     }
 
     for (table_name, table) in &schema.tables {
         if table.schema.is_some() {
             return Err(SchemaValidationError::Invalid(format!(
-                "SQLite does not support schema-qualified tables: {table_name}"
+                "SQLite dialect does not support schemas; schema-qualified tables include {table_name}"
             )));
         }
         for trigger in &table.triggers {

@@ -1,9 +1,19 @@
+generation: 20260713T170126Z-51770
 cases:
   check_constraint:
     description: PostgreSQL CHECK constraint lowers into Constraint::Check.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
+    - kind: constraint
+      name: users_age_check
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: age
+      table: users
     - kind: constraint
       name: users_age_check
       table: users
@@ -11,88 +21,358 @@ cases:
     description: PostgreSQL column REFERENCES lowers into ForeignKey metadata.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
     - kind: foreign_key
       name: posts_user_id_fkey
       table: posts
+    observed_entities:
+    - kind: table
+      name: posts
+    - kind: column
+      name: id
+      table: posts
+    - kind: column
+      name: user_id
+      table: posts
+    - kind: constraint
+      name: posts_pkey
+      table: posts
+    - kind: foreign_key
+      name: posts_user_id_fkey
+      table: posts
+    - kind: table
+      name: users
+    - kind: column
+      name: id
+      table: users
+    - kind: constraint
+      name: users_pkey
+      table: users
   enum:
     description: PostgreSQL CREATE TYPE enum lowers into EnumDef.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
+    - kind: enum
+      name: mood
+    observed_entities:
     - kind: enum
       name: mood
   event_trigger_parse_error:
     description: PostgreSQL event triggers are reported as parser errors.
     dialect: postgres
     status: success
-    entities: []
+    expected_entities: []
+    observed_entities: []
   extension:
     description: PostgreSQL CREATE EXTENSION lowers into ExtensionDef.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
+    - kind: extension
+      name: pgcrypto
+    observed_entities:
     - kind: extension
       name: pgcrypto
   final_statement_without_semicolon:
     description: PostgreSQL parser accepts final DDL statement without trailing semicolon.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
     - kind: table
       name: users
     - kind: table
       name: posts
+    observed_entities:
+    - kind: table
+      name: posts
+    - kind: column
+      name: id
+      table: posts
+    - kind: table
+      name: users
+    - kind: column
+      name: id
+      table: users
   function:
     description: PostgreSQL CREATE FUNCTION lowers into FunctionDef.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
+    - kind: function
+      name: add_numbers
+    observed_entities:
     - kind: function
       name: add_numbers
   function_trigger:
     description: PostgreSQL function-backed CREATE TRIGGER lowers into table trigger metadata.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
     - kind: function
       name: audit_users
     - kind: trigger
       name: users_audit_trg
       table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: id
+      table: users
+    - kind: constraint
+      name: users_pkey
+      table: users
+    - kind: trigger
+      name: users_audit_trg
+      table: users
+    - kind: function
+      name: audit_users
   generated_column:
     description: PostgreSQL generated column lowers with generated expression.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
     - kind: column
       name: email_norm
       table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: email
+      table: users
+    - kind: column
+      name: email_norm
+      table: users
+  mariadb_column_metadata:
+    description: MariaDB column metadata lowers into explicit MariaDB options
+    dialect: mariadb
+    status: success
+    expected_entities:
+    - kind: table
+      name: audit_log
+    - kind: column
+      name: secret
+      table: audit_log
+    observed_entities:
+    - kind: table
+      name: audit_log
+    - kind: column
+      name: id
+      table: audit_log
+    - kind: column
+      name: secret
+      table: audit_log
+    - kind: column
+      name: changed_at
+      table: audit_log
+    - kind: constraint
+      name: audit_log_pkey
+      table: audit_log
+  mariadb_native_types:
+    description: MariaDB native UUID INET JSON enum and set types remain distinct
+    dialect: mariadb
+    status: success
+    expected_entities:
+    - kind: table
+      name: native_types
+    observed_entities:
+    - kind: table
+      name: native_types
+    - kind: column
+      name: identifier
+      table: native_types
+    - kind: column
+      name: address
+      table: native_types
+    - kind: column
+      name: payload
+      table: native_types
+    - kind: column
+      name: mood
+      table: native_types
+    - kind: column
+      name: tags
+      table: native_types
+  mariadb_persistent_identifier:
+    description: MariaDB recovery rewrites only generated PERSISTENT storage keywords
+    dialect: mariadb
+    status: success
+    expected_entities:
+    - kind: table
+      name: metrics
+    observed_entities:
+    - kind: table
+      name: metrics
+    - kind: column
+      name: persistent
+      table: metrics
+    - kind: column
+      name: doubled
+      table: metrics
+  mariadb_set_default_rejected:
+    description: MariaDB rejects unsupported SET DEFAULT foreign key actions during preparation
+    dialect: mariadb
+    status: success
+    expected_entities: []
+    observed_entities: []
+  mariadb_table:
+    description: MariaDB table columns and generated storage lower into modeled schema entities
+    dialect: mariadb
+    status: success
+    expected_entities:
+    - kind: table
+      name: metrics
+    - kind: column
+      name: base_value
+      table: metrics
+    - kind: column
+      name: doubled
+      table: metrics
+    observed_entities:
+    - kind: table
+      name: metrics
+    - kind: column
+      name: base_value
+      table: metrics
+    - kind: column
+      name: doubled
+      table: metrics
   materialized_view_tail_parse_error:
     description: PostgreSQL materialized views are rejected outside EntityKind.
     dialect: postgres
     status: success
-    entities: []
+    expected_entities: []
+    observed_entities: []
+  mysql_column_metadata:
+    description: MySQL column metadata lowers into explicit product-owned options
+    dialect: mysql
+    status: success
+    expected_entities:
+    - kind: table
+      name: profile
+    - kind: column
+      name: code
+      table: profile
+    observed_entities:
+    - kind: table
+      name: profile
+    - kind: column
+      name: id
+      table: profile
+    - kind: column
+      name: code
+      table: profile
+    - kind: column
+      name: changed_at
+      table: profile
+    - kind: constraint
+      name: profile_pkey
+      table: profile
+  mysql_native_types:
+    description: MySQL native type modifiers and enum labels remain lexically intact
+    dialect: mysql
+    status: success
+    expected_entities:
+    - kind: table
+      name: native_types
+    observed_entities:
+    - kind: table
+      name: native_types
+    - kind: column
+      name: flags
+      table: native_types
+    - kind: column
+      name: amount
+      table: native_types
+    - kind: column
+      name: payload
+      table: native_types
+    - kind: column
+      name: mood
+      table: native_types
+    - kind: column
+      name: tags
+      table: native_types
+  mysql_procedure_rejected:
+    description: MySQL procedures remain outside the closed EntityKind schema model
+    dialect: mysql
+    status: success
+    expected_entities: []
+    observed_entities: []
+  mysql_set_default_rejected:
+    description: MySQL rejects unsupported SET DEFAULT foreign key actions during preparation
+    dialect: mysql
+    status: success
+    expected_entities: []
+    observed_entities: []
+  mysql_table:
+    description: MySQL table columns and auto increment lower into modeled schema entities
+    dialect: mysql
+    status: success
+    expected_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: id
+      table: users
+    - kind: column
+      name: email
+      table: users
+    - kind: column
+      name: updated_at
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: id
+      table: users
+    - kind: column
+      name: email
+      table: users
+    - kind: column
+      name: updated_at
+      table: users
+    - kind: constraint
+      name: users_pkey
+      table: users
   non_create_alter_table:
     description: PostgreSQL ALTER TABLE is rejected because parser input is CREATE-only.
     dialect: postgres
     status: success
-    entities: []
+    expected_entities: []
+    observed_entities: []
   non_create_delete:
     description: PostgreSQL DELETE is rejected because parser input is CREATE-only.
     dialect: postgres
     status: success
-    entities: []
+    expected_entities: []
+    observed_entities: []
   non_create_drop_table:
     description: PostgreSQL DROP TABLE is rejected because parser input is CREATE-only.
     dialect: postgres
     status: success
-    entities: []
+    expected_entities: []
+    observed_entities: []
   partial_index:
     description: PostgreSQL partial CREATE INDEX preserves predicate metadata.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
+    - kind: index
+      name: users_active_email_idx
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: email
+      table: users
+    - kind: column
+      name: active
+      table: users
     - kind: index
       name: users_active_email_idx
       table: users
@@ -100,9 +380,21 @@ cases:
     description: PostgreSQL PRIMARY KEY lowers into primary key metadata.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
     - kind: table
       name: users
+    - kind: constraint
+      name: users_pkey
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: id
+      table: users
+    - kind: column
+      name: email
+      table: users
     - kind: constraint
       name: users_pkey
       table: users
@@ -110,7 +402,16 @@ cases:
     description: SQLite CHECK constraint lowers into Constraint::Check.
     dialect: sqlite
     status: success
-    entities:
+    expected_entities:
+    - kind: constraint
+      name: users_age_check
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: age
+      table: users
     - kind: constraint
       name: users_age_check
       table: users
@@ -118,7 +419,16 @@ cases:
     description: SQLite expression CREATE INDEX is preserved as an opaque index.
     dialect: sqlite
     status: success
-    entities:
+    expected_entities:
+    - kind: index
+      name: users_lower_email_idx
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: email
+      table: users
     - kind: index
       name: users_lower_email_idx
       table: users
@@ -126,15 +436,47 @@ cases:
     description: SQLite FOREIGN KEY lowers into ForeignKey metadata.
     dialect: sqlite
     status: success
-    entities:
+    expected_entities:
     - kind: foreign_key
       name: posts_user_id_fkey
       table: posts
+    observed_entities:
+    - kind: table
+      name: posts
+    - kind: column
+      name: id
+      table: posts
+    - kind: column
+      name: user_id
+      table: posts
+    - kind: constraint
+      name: posts_pkey
+      table: posts
+    - kind: foreign_key
+      name: posts_user_id_fkey
+      table: posts
+    - kind: table
+      name: users
+    - kind: column
+      name: id
+      table: users
+    - kind: constraint
+      name: users_pkey
+      table: users
   sqlite_generated_column:
     description: SQLite generated column lowers with generated expression.
     dialect: sqlite
     status: success
-    entities:
+    expected_entities:
+    - kind: column
+      name: email_norm
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: email
+      table: users
     - kind: column
       name: email_norm
       table: users
@@ -142,22 +484,37 @@ cases:
     description: SQLite ALTER TABLE is rejected because parser input is CREATE-only.
     dialect: sqlite
     status: success
-    entities: []
+    expected_entities: []
+    observed_entities: []
   sqlite_non_create_delete:
     description: SQLite DELETE is rejected because parser input is CREATE-only.
     dialect: sqlite
     status: success
-    entities: []
+    expected_entities: []
+    observed_entities: []
   sqlite_non_create_drop_table:
     description: SQLite DROP TABLE is rejected because parser input is CREATE-only.
     dialect: sqlite
     status: success
-    entities: []
+    expected_entities: []
+    observed_entities: []
   sqlite_partial_index:
     description: SQLite partial CREATE INDEX preserves predicate metadata.
     dialect: sqlite
     status: success
-    entities:
+    expected_entities:
+    - kind: index
+      name: users_active_email_idx
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: email
+      table: users
+    - kind: column
+      name: active
+      table: users
     - kind: index
       name: users_active_email_idx
       table: users
@@ -165,7 +522,19 @@ cases:
     description: SQLite PRIMARY KEY lowers into primary key metadata.
     dialect: sqlite
     status: success
-    entities:
+    expected_entities:
+    - kind: constraint
+      name: users_pkey
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: id
+      table: users
+    - kind: column
+      name: email
+      table: users
     - kind: constraint
       name: users_pkey
       table: users
@@ -173,7 +542,16 @@ cases:
     description: SQLite CREATE INDEX lowers into Index metadata.
     dialect: sqlite
     status: success
-    entities:
+    expected_entities:
+    - kind: index
+      name: users_email_idx
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: email
+      table: users
     - kind: index
       name: users_email_idx
       table: users
@@ -181,9 +559,18 @@ cases:
     description: SQLite CREATE TABLE lowers table and column entities.
     dialect: sqlite
     status: success
-    entities:
+    expected_entities:
     - kind: table
       name: users
+    - kind: column
+      name: email
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: id
+      table: users
     - kind: column
       name: email
       table: users
@@ -191,7 +578,19 @@ cases:
     description: SQLite CREATE TRIGGER lowers statement body into TriggerDef query.
     dialect: sqlite
     status: success
-    entities:
+    expected_entities:
+    - kind: trigger
+      name: users_ai
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: id
+      table: users
+    - kind: column
+      name: created_at
+      table: users
     - kind: trigger
       name: users_ai
       table: users
@@ -199,7 +598,16 @@ cases:
     description: SQLite UNIQUE constraint lowers into Constraint::Unique.
     dialect: sqlite
     status: success
-    entities:
+    expected_entities:
+    - kind: constraint
+      name: users_email_key
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: email
+      table: users
     - kind: constraint
       name: users_email_key
       table: users
@@ -207,29 +615,44 @@ cases:
     description: SQLite CREATE TYPE enum is not represented in Schema.
     dialect: sqlite
     status: success
-    entities: []
+    expected_entities: []
+    observed_entities: []
   sqlite_unsupported_extension:
     description: SQLite CREATE EXTENSION is not represented in Schema.
     dialect: sqlite
     status: success
-    entities: []
+    expected_entities: []
+    observed_entities: []
   sqlite_unsupported_function:
     description: SQLite CREATE FUNCTION is not represented in Schema.
     dialect: sqlite
     status: success
-    entities: []
+    expected_entities: []
+    observed_entities: []
   sqlite_view:
     description: SQLite CREATE VIEW lowers into ViewDef.
     dialect: sqlite
     status: success
-    entities:
+    expected_entities:
+    - kind: view
+      name: active_users
+    observed_entities:
     - kind: view
       name: active_users
   standalone_index:
     description: PostgreSQL CREATE INDEX lowers into Index metadata.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
+    - kind: index
+      name: users_email_idx
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: email
+      table: users
     - kind: index
       name: users_email_idx
       table: users
@@ -237,7 +660,16 @@ cases:
     description: PostgreSQL CREATE TABLE lowers table and column entities.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: id
+      table: users
+    - kind: column
+      name: email
+      table: users
+    observed_entities:
     - kind: table
       name: users
     - kind: column
@@ -250,15 +682,47 @@ cases:
     description: PostgreSQL table FOREIGN KEY lowers into named ForeignKey metadata.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
     - kind: foreign_key
       name: fk_posts_user
       table: posts
+    observed_entities:
+    - kind: table
+      name: posts
+    - kind: column
+      name: id
+      table: posts
+    - kind: column
+      name: user_id
+      table: posts
+    - kind: constraint
+      name: posts_pkey
+      table: posts
+    - kind: foreign_key
+      name: fk_posts_user
+      table: posts
+    - kind: table
+      name: users
+    - kind: column
+      name: id
+      table: users
+    - kind: constraint
+      name: users_pkey
+      table: users
   unique_constraint:
     description: PostgreSQL UNIQUE constraint lowers into Constraint::Unique.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
+    - kind: constraint
+      name: users_email_key
+      table: users
+    observed_entities:
+    - kind: table
+      name: users
+    - kind: column
+      name: email
+      table: users
     - kind: constraint
       name: users_email_key
       table: users
@@ -266,16 +730,21 @@ cases:
     description: PostgreSQL GRANT is rejected because parser input is CREATE-only.
     dialect: postgres
     status: success
-    entities: []
+    expected_entities: []
+    observed_entities: []
   unsupported_policy:
     description: PostgreSQL CREATE POLICY is rejected because Schema does not model policies.
     dialect: postgres
     status: success
-    entities: []
+    expected_entities: []
+    observed_entities: []
   view:
     description: PostgreSQL CREATE VIEW lowers into ViewDef.
     dialect: postgres
     status: success
-    entities:
+    expected_entities:
+    - kind: view
+      name: active_users
+    observed_entities:
     - kind: view
       name: active_users

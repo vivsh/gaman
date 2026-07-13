@@ -20,7 +20,11 @@ mutate_sql: |
 dialects:
   postgres:
     checks: [verify]
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []
   sqlite:
     checks: [verify]
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []

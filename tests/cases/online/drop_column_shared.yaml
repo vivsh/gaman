@@ -65,10 +65,10 @@ dialects:
             columns: [id]
           columns:
             - name: id
-              type: integer
+              type: INTEGER
               primary_key: true
             - name: display_name
-              type: text
+              type: TEXT
     data:
       - sql: "SELECT display_name FROM profiles ORDER BY id"
         expect: ["Ada"]

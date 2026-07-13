@@ -37,12 +37,15 @@ mutate_sql: |
 dialects:
   postgres:
     checks: [verify]
-    expect_verify:
-      - type: create_trigger
-        table_name: users
-        trigger:
-          name: users_audit_trg
-          timing: after
-          events: [insert]
-          scope: row
-          function_name: audit_users_fn
+    expect_verification:
+      findings:
+      - {operation: create_trigger, entity_kind: trigger, entity_name: users.users_audit_trg, property: presence, expected: present, observed: "<missing>", note: null}
+      operations:
+        - type: create_trigger
+          table_name: users
+          trigger:
+            name: users_audit_trg
+            timing: after
+            events: [insert]
+            scope: row
+            function_name: audit_users_fn

@@ -1,10 +1,12 @@
 //! Structured semantic drift results shared by verification, repair, and CLI reporting.
 
+use serde::Serialize;
+
 use crate::operations::Operation;
 use crate::states::EntityKind;
 
 /// Result of comparing replayed migration state with inspected database state.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct VerificationReport {
     /// Property and presence differences found in migration-owned entities.
     pub findings: Vec<DriftFinding>,
@@ -15,7 +17,7 @@ pub struct VerificationReport {
 }
 
 /// One actionable entity-property difference reported by semantic drift.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DriftFinding {
     /// Repair operation category associated with this difference.
     pub operation: &'static str,

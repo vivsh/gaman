@@ -55,8 +55,8 @@ dialects:
             columns: [id]
           columns:
             - name: id
-              type: integer
+              type: INTEGER
               primary_key: true
             - name: status
-              type: text
+              type: TEXT
               default: "'todo'"

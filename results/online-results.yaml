@@ -1,5 +1,9 @@
+generation: 20260713T170126Z-51770
 features:
   check_constraints:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
     mysql:
       status: unimplemented
       reason: dialect section missing
@@ -38,9 +42,30 @@ features:
         checks:
         - verify
   column_add_drop_rename:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_rename_table_column
+        description: MySQL renames tables and columns while preserving stored data.
+        checks:
+        - migrate
+        - migration_records
+        - data
+      - case: mysql_rollback_tracking
+        description: MySQL rollback reverses later migrations and removes their tracking records.
+        checks:
+        - rollback
+        - migration_records
+        - data
+      - case: mysql_target_apply
+        description: MySQL target application stops at the requested migration.
+        checks:
+        - migrate_to
+        - migration_records
+        - data
     postgres:
       status: success
       evidence:
@@ -92,9 +117,16 @@ features:
         - inspect
         - data
   composite_foreign_keys:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
     postgres:
       status: success
       evidence:
@@ -174,9 +206,16 @@ features:
         checks:
         - verify
   composite_primary_keys:
-    mysql:
+    mariadb:
       status: unimplemented
-      reason: dialect section missing
+      reason: MARIADB_DATABASE_URL is not set
+    mysql:
+      status: success
+      evidence:
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
     postgres:
       status: success
       evidence:
@@ -224,9 +263,29 @@ features:
         checks:
         - verify
   data_preservation:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_rename_table_column
+        description: MySQL renames tables and columns while preserving stored data.
+        checks:
+        - migrate
+        - migration_records
+        - data
+      - case: mysql_rollback_tracking
+        description: MySQL rollback reverses later migrations and removes their tracking records.
+        checks:
+        - rollback
+        - migration_records
+        - data
+      - case: mysql_single_fk_actions
+        description: MySQL preserves single-column foreign keys and update-delete actions.
+        checks:
+        - verify
+        - data
     postgres:
       status: success
       evidence:
@@ -474,6 +533,9 @@ features:
         - migrate
         - data
   enums:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
     mysql:
       status: unimplemented
       reason: dialect section missing
@@ -506,6 +568,9 @@ features:
       status: unimplemented
       reason: dialect section missing
   extensions:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
     mysql:
       status: unimplemented
       reason: dialect section missing
@@ -523,9 +588,17 @@ features:
       status: unimplemented
       reason: dialect section missing
   foreign_key_actions:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_single_fk_actions
+        description: MySQL preserves single-column foreign keys and update-delete actions.
+        checks:
+        - verify
+        - data
     postgres:
       status: success
       evidence:
@@ -577,6 +650,9 @@ features:
         - verify
         - data
   functions_opaque:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
     mysql:
       status: unimplemented
       reason: dialect section missing
@@ -618,9 +694,20 @@ features:
       status: unimplemented
       reason: dialect section missing
   generated_columns:
-    mysql:
+    mariadb:
       status: unimplemented
-      reason: dialect section missing
+      reason: MARIADB_DATABASE_URL is not set
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_mariadb_column_metadata_no_drift
+        description: MySQL and MariaDB verify product-owned column metadata without false drift.
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
     postgres:
       status: success
       evidence:
@@ -665,9 +752,18 @@ features:
         checks:
         - verify
   idempotent_migrations:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_lifecycle_tracking
+        description: MySQL repeatedly applies migrations idempotently and preserves tracking records.
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
     postgres:
       status: success
       evidence:
@@ -697,9 +793,16 @@ features:
         - migrate_twice
         - migration_records
   indexes:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_advanced_indexes
+        description: MySQL advanced index forms remain opaque and never block live verification.
+        checks:
+        - verify
     postgres:
       status: success
       evidence:
@@ -753,9 +856,20 @@ features:
         checks:
         - verify
   indexes_constraints:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_mariadb_advanced_index_inspection
+        description: MySQL invisible and MariaDB ignored indexes remain opaque without blocking verification.
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
     postgres:
       status: success
       evidence:
@@ -837,9 +951,45 @@ features:
         checks:
         - verify
   live_inspect_verify:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_advanced_indexes
+        description: MySQL advanced index forms remain opaque and never block live verification.
+        checks:
+        - verify
+      - case: mysql_column_default_drift
+        description: MySQL verify reports an observed column default that differs from migration history.
+        checks:
+        - verify
+      - case: mysql_mariadb_advanced_index_inspection
+        description: MySQL invisible and MariaDB ignored indexes remain opaque without blocking verification.
+        checks:
+        - verify
+      - case: mysql_mariadb_column_metadata_no_drift
+        description: MySQL and MariaDB verify product-owned column metadata without false drift.
+        checks:
+        - verify
+      - case: mysql_mariadb_row_format_inspection
+        description: MySQL and MariaDB inspect explicit row format without false drift.
+        checks:
+        - verify
+      - case: mysql_opaque_objects
+        description: MySQL opaque views coexist with modeled verification.
+        checks:
+        - verify
+      - case: mysql_single_fk_actions
+        description: MySQL preserves single-column foreign keys and update-delete actions.
+        checks:
+        - verify
+        - data
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
     postgres:
       status: success
       evidence:
@@ -1176,9 +1326,61 @@ features:
         checks:
         - verify
   live_migration_application:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_advanced_indexes
+        description: MySQL advanced index forms remain opaque and never block live verification.
+        checks:
+        - verify
+      - case: mysql_lifecycle_tracking
+        description: MySQL repeatedly applies migrations idempotently and preserves tracking records.
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
+      - case: mysql_lock_cleanup
+        description: MySQL releases its named migration lock after application.
+        checks:
+        - migrate
+        - lock_behavior
+      - case: mysql_opaque_objects
+        description: MySQL opaque views coexist with modeled verification.
+        checks:
+        - verify
+      - case: mysql_partial_failure
+        description: MySQL reports non-transactional partial failure without recording the migration.
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - data
+      - case: mysql_rename_table_column
+        description: MySQL renames tables and columns while preserving stored data.
+        checks:
+        - migrate
+        - migration_records
+        - data
+      - case: mysql_rollback_tracking
+        description: MySQL rollback reverses later migrations and removes their tracking records.
+        checks:
+        - rollback
+        - migration_records
+        - data
+      - case: mysql_single_fk_actions
+        description: MySQL preserves single-column foreign keys and update-delete actions.
+        checks:
+        - verify
+        - data
+      - case: mysql_target_apply
+        description: MySQL target application stops at the requested migration.
+        checks:
+        - migrate_to
+        - migration_records
+        - data
     postgres:
       status: success
       evidence:
@@ -1574,9 +1776,17 @@ features:
         - migrate
         - data
   lock_cleanup:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_lock_cleanup
+        description: MySQL releases its named migration lock after application.
+        checks:
+        - migrate
+        - lock_behavior
     postgres:
       status: success
       evidence:
@@ -1590,9 +1800,42 @@ features:
       status: unimplemented
       reason: dialect section missing
   migration_tracking:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_lifecycle_tracking
+        description: MySQL repeatedly applies migrations idempotently and preserves tracking records.
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
+      - case: mysql_lock_cleanup
+        description: MySQL releases its named migration lock after application.
+        checks:
+        - migrate
+        - lock_behavior
+      - case: mysql_partial_failure
+        description: MySQL reports non-transactional partial failure without recording the migration.
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - data
+      - case: mysql_rollback_tracking
+        description: MySQL rollback reverses later migrations and removes their tracking records.
+        checks:
+        - rollback
+        - migration_records
+        - data
+      - case: mysql_target_apply
+        description: MySQL target application stops at the requested migration.
+        checks:
+        - migrate_to
+        - migration_records
+        - data
     postgres:
       status: success
       evidence:
@@ -1679,10 +1922,37 @@ features:
         - migrate_to
         - migration_records
         - data
-  opaque_index_metadata:
-    mysql:
+  non_transactional_failure_reporting:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_partial_failure
+        description: MySQL reports non-transactional partial failure without recording the migration.
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - data
+    postgres:
+      status: unimplemented
+      reason: dialect section missing
+    sqlite:
+      status: unimplemented
+      reason: dialect section missing
+  opaque_index_metadata:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_advanced_indexes
+        description: MySQL advanced index forms remain opaque and never block live verification.
+        checks:
+        - verify
     postgres:
       status: success
       evidence:
@@ -1714,6 +1984,9 @@ features:
       status: unimplemented
       reason: dialect section missing
   opaque_presence_verify:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
     mysql:
       status: unimplemented
       reason: dialect section missing
@@ -1736,9 +2009,20 @@ features:
       status: unimplemented
       reason: dialect section missing
   ownership_scoped_verify:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_column_default_drift
+        description: MySQL verify reports an observed column default that differs from migration history.
+        checks:
+        - verify
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
     postgres:
       status: success
       evidence:
@@ -1914,6 +2198,9 @@ features:
         checks:
         - verify
   partial_indexes:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
     mysql:
       status: unimplemented
       reason: dialect section missing
@@ -1935,6 +2222,9 @@ features:
         - verify
         - data
   quoted_identifiers:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
     mysql:
       status: unimplemented
       reason: dialect section missing
@@ -1959,9 +2249,22 @@ features:
         - verify
         - data
   raw_sql_statements:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_lifecycle_tracking
+        description: MySQL repeatedly applies migrations idempotently and preserves tracking records.
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
+      - case: mysql_opaque_objects
+        description: MySQL opaque views coexist with modeled verification.
+        checks:
+        - verify
     postgres:
       status: success
       evidence:
@@ -1979,9 +2282,18 @@ features:
         - migrate
         - data
   rollback_migrations:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_rollback_tracking
+        description: MySQL rollback reverses later migrations and removes their tracking records.
+        checks:
+        - rollback
+        - migration_records
+        - data
     postgres:
       status: success
       evidence:
@@ -2003,6 +2315,9 @@ features:
         - inspect
         - data
   schemas_namespaces:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
     mysql:
       status: unimplemented
       reason: dialect section missing
@@ -2017,9 +2332,17 @@ features:
       status: unimplemented
       reason: dialect section missing
   single_foreign_keys:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_single_fk_actions
+        description: MySQL preserves single-column foreign keys and update-delete actions.
+        checks:
+        - verify
+        - data
     postgres:
       status: success
       evidence:
@@ -2094,9 +2417,23 @@ features:
         - inspect
         - verify
   single_primary_keys:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_rename_table_column
+        description: MySQL renames tables and columns while preserving stored data.
+        checks:
+        - migrate
+        - migration_records
+        - data
+      - case: mysql_single_fk_actions
+        description: MySQL preserves single-column foreign keys and update-delete actions.
+        checks:
+        - verify
+        - data
     postgres:
       status: success
       evidence:
@@ -2163,6 +2500,9 @@ features:
         - migrate
         - data
   sqlite_rebuild_planner:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
     mysql:
       status: unimplemented
       reason: dialect section missing
@@ -2224,9 +2564,18 @@ features:
         checks:
         - verify
   table_create_drop_rename:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_rename_table_column
+        description: MySQL renames tables and columns while preserving stored data.
+        checks:
+        - migrate
+        - migration_records
+        - data
     postgres:
       status: success
       evidence:
@@ -2266,9 +2615,62 @@ features:
         - inspect
         - data
   tables_columns:
-    mysql:
+    mariadb:
       status: unimplemented
-      reason: dialect section missing
+      reason: MARIADB_DATABASE_URL is not set
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_column_default_drift
+        description: MySQL verify reports an observed column default that differs from migration history.
+        checks:
+        - verify
+      - case: mysql_lifecycle_tracking
+        description: MySQL repeatedly applies migrations idempotently and preserves tracking records.
+        checks:
+        - migrate_twice
+        - migration_records
+        - data
+      - case: mysql_lock_cleanup
+        description: MySQL releases its named migration lock after application.
+        checks:
+        - migrate
+        - lock_behavior
+      - case: mysql_mariadb_advanced_index_inspection
+        description: MySQL invisible and MariaDB ignored indexes remain opaque without blocking verification.
+        checks:
+        - verify
+      - case: mysql_mariadb_column_metadata_no_drift
+        description: MySQL and MariaDB verify product-owned column metadata without false drift.
+        checks:
+        - verify
+      - case: mysql_mariadb_row_format_inspection
+        description: MySQL and MariaDB inspect explicit row format without false drift.
+        checks:
+        - verify
+      - case: mysql_partial_failure
+        description: MySQL reports non-transactional partial failure without recording the migration.
+        checks:
+        - migrate
+        - error
+        - migration_records
+        - data
+      - case: mysql_rollback_tracking
+        description: MySQL rollback reverses later migrations and removes their tracking records.
+        checks:
+        - rollback
+        - migration_records
+        - data
+      - case: mysql_target_apply
+        description: MySQL target application stops at the requested migration.
+        checks:
+        - migrate_to
+        - migration_records
+        - data
+      - case: verify_no_drift_representative_schema
+        description: verify reports no drift for a representative owned schema
+        checks:
+        - verify
     postgres:
       status: success
       evidence:
@@ -2449,9 +2851,18 @@ features:
         checks:
         - verify
   target_migrations:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_target_apply
+        description: MySQL target application stops at the requested migration.
+        checks:
+        - migrate_to
+        - migration_records
+        - data
     postgres:
       status: success
       evidence:
@@ -2471,6 +2882,9 @@ features:
         - migration_records
         - data
   transaction_rollback:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
     mysql:
       status: unimplemented
       reason: dialect section missing
@@ -2513,6 +2927,9 @@ features:
         - inspect
         - data
   trigger_query_objects:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
     mysql:
       status: unimplemented
       reason: dialect section missing
@@ -2555,9 +2972,16 @@ features:
         checks:
         - verify
   type_null_default_changes:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_column_default_drift
+        description: MySQL verify reports an observed column default that differs from migration history.
+        checks:
+        - verify
     postgres:
       status: success
       evidence:
@@ -2636,6 +3060,9 @@ features:
         - inspect
         - data
   unique_constraints:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
     mysql:
       status: unimplemented
       reason: dialect section missing
@@ -2666,9 +3093,16 @@ features:
         - migrate
         - data
   unmanaged_table_options:
-    mysql:
+    mariadb:
       status: unimplemented
-      reason: dialect section missing
+      reason: MARIADB_DATABASE_URL is not set
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_mariadb_row_format_inspection
+        description: MySQL and MariaDB inspect explicit row format without false drift.
+        checks:
+        - verify
     postgres:
       status: success
       evidence:
@@ -2686,6 +3120,9 @@ features:
         - migrate_twice
         - migration_records
   unsupported_feature_errors:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
     mysql:
       status: unimplemented
       reason: dialect section missing
@@ -2757,9 +3194,16 @@ features:
         checks:
         - verify
   views_opaque:
-    mysql:
+    mariadb:
       status: unimplemented
       reason: dialect section missing
+    mysql:
+      status: success
+      evidence:
+      - case: mysql_opaque_objects
+        description: MySQL opaque views coexist with modeled verification.
+        checks:
+        - verify
     postgres:
       status: success
       evidence:

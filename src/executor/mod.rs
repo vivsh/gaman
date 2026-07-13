@@ -1,83 +1,11 @@
-use std::future::Future;
-use std::pin::Pin;
 use thiserror::Error;
 
 use crate::conf::TlsMode;
 use crate::environment::EnvironmentExecutor;
 use gaman_core::dialects::Dialect;
 
-/// Send boxed future used by object-safe live database traits.
-///
-/// Custom executors must return futures that can move across Tokio worker
-/// threads while live migration, inspect, or verify work is in progress.
-pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
-#[derive(Debug, Error)]
-/// Errors returned by live SQL execution, transaction, and introspection calls.
-pub enum ExecutorError {
-    /// A statement could not be prepared by the configured database driver.
-    #[error("prepare failed: {0}")]
-    Prepare(String),
-    /// A statement failed during execution.
-    #[error("execute failed: {0}")]
-    Execute(String),
-    /// A query failed while fetching data needed by Gaman.
-    #[error("fetch failed: {0}")]
-    Fetch(String),
-    /// A transaction boundary or rollback operation failed.
-    #[error("transaction error: {0}")]
-    Transaction(String),
-}
-
-/// Executes live SQL and migration lifecycle operations for a database backend.
-///
-/// Implementations are used only by native live migration paths. Offline
-/// planning and `sql_migrate` render SQL without an executor.
-pub trait Executor: Send {
-    /// Prepares one statement without executing it.
-    ///
-    /// Implementations should delegate to their database driver's prepare
-    /// operation. This is used by `MigrationEngine::check_sql_schema` and must
-    /// not execute SQL, begin a transaction, or change migration state.
-    fn prepare<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>>;
-
-    /// Executes a statement that does not return rows to Gaman.
-    fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>>;
-
-    /// Fetches a single string column from each returned row.
-    fn fetch_strings<'a>(
-        &'a mut self,
-        sql: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>>;
-
-    /// Starts a migration transaction.
-    fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>>;
-
-    /// Commits the current migration transaction.
-    fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>>;
-
-    /// Rolls back the current migration transaction.
-    fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>>;
-
-    /// Acquires the database-level migration lock when the backend supports one.
-    fn acquire_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
-        Box::pin(async { Ok(()) })
-    }
-
-    /// Releases a previously acquired migration lock.
-    fn release_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
-        Box::pin(async { Ok(()) })
-    }
-}
-
-/// Inspects a live database and returns Gaman's schema representation.
-pub trait Introspectable: Send {
-    /// Reads the requested schemas from the database catalog.
-    fn inspect_db<'a>(
-        &'a mut self,
-        schemas: &'a [&'a str],
-    ) -> BoxFuture<'a, Result<gaman_core::states::Schema, ExecutorError>>;
-}
+/// Core lifecycle traits implemented by native SQLx executors.
+pub use gaman_core::{BoxFuture, Executor, ExecutorError, InspectionError, SchemaInspector};
 
 #[derive(Debug, Error)]
 /// Errors returned while creating a backend-specific live executor.
@@ -94,7 +22,7 @@ pub enum ConnectError {
 /// Opens the configured live executor for the selected dialect.
 ///
 /// This is native-only connection plumbing for migration application,
-/// `inspect_db`, and live verification. Offline SQL planning never calls it.
+/// `inspect`, and live verification. Offline SQL planning never calls it.
 pub fn connect_environment_executor<'a>(
     dialect: Dialect,
     url: &'a str,
@@ -142,20 +70,38 @@ pub fn connect_environment_executor<'a>(
                     "sqlite executor is not enabled; rebuild with the 'sqlite' feature".into(),
                 ))
             }
-            (Dialect::Mysql, _) => {
-                let _ = url;
-                Err(ConnectError::Config(
-                    "mysql executor is not implemented".into(),
-                ))
+            #[cfg(feature = "mysql")]
+            (dialect @ Dialect::Mysql, TlsMode::NoTls) => {
+                MysqlFamilyExecutor::connect(url, dialect)
+                    .await
+                    .map(|executor| Box::new(executor) as Box<dyn EnvironmentExecutor + Send>)
             }
+            #[cfg(not(feature = "mysql"))]
+            (Dialect::Mysql, _) => Err(ConnectError::Config(
+                "mysql executor is not enabled; rebuild with the 'mysql' feature".into(),
+            )),
+            #[cfg(feature = "mariadb")]
+            (dialect @ Dialect::Mariadb, TlsMode::NoTls) => {
+                MysqlFamilyExecutor::connect(url, dialect)
+                    .await
+                    .map(|executor| Box::new(executor) as Box<dyn EnvironmentExecutor + Send>)
+            }
+            #[cfg(not(feature = "mariadb"))]
+            (Dialect::Mariadb, _) => Err(ConnectError::Config(
+                "mariadb executor is not enabled; rebuild with the 'mariadb' feature".into(),
+            )),
         }
     })
 }
 
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+pub mod mysql_family;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+pub use mysql_family::MysqlFamilyExecutor;
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresExecutor;
 #[cfg(feature = "sqlite")]

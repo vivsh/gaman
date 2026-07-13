@@ -19,12 +19,15 @@ mutate_sql: |
 dialects:
   postgres:
     checks: [verify]
-    expect_verify:
-      - type: drop_enum
-        enum_def:
-          name: ticket_status
-          values: [open, closed, pending]
-      - type: create_enum
-        enum_def:
-          name: ticket_status
-          values: [open, pending, closed]
+    expect_verification:
+      findings:
+      - {operation: alter_enum, entity_kind: enum, entity_name: ticket_status, property: values, expected: "[open, pending, closed]", observed: "[open, closed, pending]", note: null}
+      operations:
+        - type: drop_enum
+          enum_def:
+            name: ticket_status
+            values: [open, closed, pending]
+        - type: create_enum
+          enum_def:
+            name: ticket_status
+            values: [open, pending, closed]

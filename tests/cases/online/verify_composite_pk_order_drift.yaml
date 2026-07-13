@@ -27,7 +27,10 @@ dialects:
     mutate_sql: |
       ALTER TABLE memberships DROP CONSTRAINT memberships_pkey;
       ALTER TABLE memberships ADD CONSTRAINT memberships_pkey PRIMARY KEY (user_id, tenant_id);
-    expect_verify: []
+    expect_verification:
+      findings:
+      - {operation: alter_primary_key, entity_kind: constraint, entity_name: memberships.memberships_pkey, property: columns, expected: "[tenant_id, user_id]", observed: "[user_id, tenant_id]", note: null}
+      operations: []
   sqlite:
     checks: [verify]
     mutate_sql: |
@@ -41,4 +44,7 @@ dialects:
         SELECT tenant_id, user_id, role FROM memberships;
       DROP TABLE memberships;
       ALTER TABLE memberships_rebuild RENAME TO memberships;
-    expect_verify: []
+    expect_verification:
+      findings:
+      - {operation: alter_primary_key, entity_kind: constraint, entity_name: memberships.memberships_pkey, property: columns, expected: "[tenant_id, user_id]", observed: "[user_id, tenant_id]", note: null}
+      operations: []

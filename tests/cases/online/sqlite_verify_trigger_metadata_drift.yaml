@@ -41,16 +41,19 @@ mutate_sql: |
 dialects:
   sqlite:
     checks: [verify]
-    expect_verify:
-      - type: alter_trigger
-        table_name: users
-        old:
-          name: users_audit_trg
-          timing: before
-          events: [insert]
-          scope: row
-        new:
-          name: users_audit_trg
-          timing: after
-          events: [insert]
-          scope: row
+    expect_verification:
+      findings:
+      - {operation: alter_trigger, entity_kind: trigger, entity_name: users.users_audit_trg, property: timing, expected: After, observed: Before, note: null}
+      operations:
+        - type: alter_trigger
+          table_name: users
+          old:
+            name: users_audit_trg
+            timing: before
+            events: [insert]
+            scope: row
+          new:
+            name: users_audit_trg
+            timing: after
+            events: [insert]
+            scope: row

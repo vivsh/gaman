@@ -152,6 +152,12 @@ Do not hand-edit support claims. Accepted evidence files, generated README
 support tables, and the generated detailed support evidence page are the source
 of truth.
 
+Only `scripts/refresh-evidence.sh` may publish that bundle. It stages every
+harness result and generated document under one generation identifier, validates
+the complete bundle, and replaces accepted files only after all checks pass.
+Failed runs may be retained with `--failure-output`, but are never accepted
+evidence.
+
 Checked-in accepted evidence lives in:
 
 - `results/parser-results.yaml`
@@ -192,7 +198,7 @@ Detailed fixture format: [Offline fixtures](docs/offline-fixtures.md).
 ### Online harness
 
 `tests/online.rs` runs YAML fixtures in `tests/cases/online/`. These fixtures
-cover live PostgreSQL and SQLite behavior, including apply, rollback,
+cover live PostgreSQL, SQLite, MySQL, and MariaDB behavior, including apply, rollback,
 tracking, locks, inspect, verify, data checks, and expected live errors.
 
 Detailed fixture format: [Online fixtures](docs/online-fixtures.md).
@@ -281,14 +287,17 @@ Selection rules:
 
 PostgreSQL online tests require `POSTGRES_DATABASE_URL`. Cases run in generated
 temporary schemas. SQLite online tests can use `SQLITE_DATABASE_URL`; when it is
-omitted, the harness uses a temporary file-backed database. `MYSQL_DATABASE_URL`
-is reserved for future MySQL online cases.
+omitted, the harness uses a temporary file-backed database. MySQL and MariaDB
+use `MYSQL_DATABASE_URL` and `MARIADB_DATABASE_URL`; each case creates and drops
+an isolated temporary database.
 
 Typical live runs:
 
 ```bash
 cargo test --features sqlite --test online -- --dialect sqlite
 set -a; source .env; set +a; cargo test --features sqlite --test online -- --dialect postgres
+set -a; source .env; set +a; cargo test --features mysql --test online -- --dialect mysql
+set -a; source .env; set +a; cargo test --features mariadb --test online -- --dialect mariadb
 ```
 
 ## Adding Tests
@@ -344,5 +353,6 @@ Local outputs:
   explicit accepted evidence path is provided.
 - `results/coverage/`: local coverage reports.
 
-Accepted evidence should be refreshed deliberately. If a test run writes a
-checked-in result file, review the diff as part of the behavior change.
+Accepted evidence should be refreshed deliberately with
+`scripts/refresh-evidence.sh`. Review the complete result and documentation diff
+as one change; do not publish individual accepted result files manually.

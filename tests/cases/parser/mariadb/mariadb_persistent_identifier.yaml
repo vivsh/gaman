@@ -1,0 +1,22 @@
+description: MariaDB recovery rewrites only generated PERSISTENT storage keywords
+dialect: mariadb
+sql: |
+  CREATE TABLE metrics (
+    persistent INT,
+    doubled INT AS (persistent * 2) PERSISTENT
+  );
+expect_entities:
+- kind: table
+  name: metrics
+expect_schema:
+  tables:
+    metrics:
+      name: metrics
+      columns:
+      - { name: persistent, type: INT, nullable: true, primary_key: false }
+      - name: doubled
+        type: INT
+        nullable: true
+        primary_key: false
+        generated: persistent * 2
+        generated_storage: stored

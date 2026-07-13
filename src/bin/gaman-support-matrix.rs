@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -7,7 +7,7 @@ use thiserror::Error;
 
 const START: &str = "<!-- gaman:support-matrix:start -->";
 const END: &str = "<!-- gaman:support-matrix:end -->";
-const DIALECTS: &[&str] = &["postgres", "sqlite", "mysql"];
+const DIALECTS: &[&str] = &["postgres", "sqlite", "mysql", "mariadb"];
 
 #[derive(Debug, Error)]
 enum MatrixError {
@@ -43,9 +43,23 @@ struct SupportCell {
 #[derive(Debug, Default, Deserialize)]
 struct EvidenceRefs {
     #[serde(default)]
-    online: Vec<String>,
+    online: Vec<OnlineEvidenceRef>,
     #[serde(default)]
-    offline: Vec<String>,
+    offline: Vec<OfflineEvidenceRef>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OnlineEvidenceRef {
+    case: String,
+    checks: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OfflineEvidenceRef {
+    case: String,
+    assertions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -59,12 +73,21 @@ enum SupportStatus {
 
 #[derive(Debug, Deserialize)]
 struct OnlineResults {
+    generation: String,
     features: BTreeMap<String, BTreeMap<String, OnlineResultCell>>,
 }
 
 #[derive(Debug, Deserialize)]
 struct OnlineResultCell {
     status: OnlineResultStatus,
+    #[serde(default)]
+    evidence: Vec<OnlineEvidence>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OnlineEvidence {
+    case: String,
+    checks: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,7 +106,8 @@ struct OfflineFeatureEntry {
 
 #[derive(Debug, Deserialize)]
 struct OfflineResults {
-    features: BTreeMap<String, OfflineResultCell>,
+    generation: String,
+    features: BTreeMap<String, BTreeMap<String, OfflineResultCell>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,6 +124,8 @@ struct OfflineEvidence {
     kind: String,
     #[serde(default)]
     dialect: Option<String>,
+    #[serde(default)]
+    assertions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -138,7 +164,7 @@ fn run() -> Result<(), MatrixError> {
             let matrix = read_support_inputs(&root)?;
             let table = render_support_table(&matrix)?;
             if update_readme {
-                update_readme_table(&root.join("README.md"), &table)?;
+                update_readme_table(&input_path(&root, "GAMAN_README_PATH", "README.md"), &table)?;
             } else {
                 println!("{table}");
             }
@@ -181,14 +207,39 @@ fn parse_args() -> Result<Mode, MatrixError> {
 
 fn read_support_inputs(root: &Path) -> Result<ResolvedMatrix, MatrixError> {
     let manifest: SupportMatrix = read_yaml(&root.join("tests/cases/support-matrix.yaml"))?;
-    let online: OnlineResults = read_yaml(&root.join("results/online-results.yaml"))?;
-    let offline: OfflineResults = read_yaml(&root.join("results/offline-results.yaml"))?;
+    let online: OnlineResults = read_yaml(&input_path(
+        root,
+        "GAMAN_ONLINE_RESULTS",
+        "results/online-results.yaml",
+    ))?;
+    let offline: OfflineResults = read_yaml(&input_path(
+        root,
+        "GAMAN_OFFLINE_RESULTS",
+        "results/offline-results.yaml",
+    ))?;
+    if online.generation != offline.generation {
+        return Err(MatrixError::Message(format!(
+            "mixed evidence generations: online '{}' and offline '{}'",
+            online.generation, offline.generation
+        )));
+    }
     validate_support_matrix(&manifest, &online, &offline)?;
-    Ok(ResolvedMatrix { manifest })
+    Ok(ResolvedMatrix {
+        manifest,
+        generation: online.generation,
+    })
+}
+
+/// Resolves an optional staged input while retaining repository defaults.
+fn input_path(root: &Path, variable: &str, fallback: &str) -> PathBuf {
+    std::env::var_os(variable)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join(fallback))
 }
 
 struct ResolvedMatrix {
     manifest: SupportMatrix,
+    generation: String,
 }
 
 fn read_yaml<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, MatrixError> {
@@ -228,6 +279,7 @@ fn validate_support_cell(
     online: &OnlineResults,
     offline: &OfflineResults,
 ) -> Result<(), MatrixError> {
+    require_unique_descriptors(row, dialect, cell)?;
     match cell.status {
         SupportStatus::Supported => {
             require_evidence(row, dialect, cell)?;
@@ -247,6 +299,28 @@ fn validate_support_cell(
             Ok(())
         }
     }
+}
+
+/// Rejects duplicate case descriptors that could inflate one support claim.
+fn require_unique_descriptors(
+    row: &SupportRow,
+    dialect: &str,
+    cell: &SupportCell,
+) -> Result<(), MatrixError> {
+    let online = cell.evidence.online.iter().map(|item| item.case.as_str());
+    let offline = cell.evidence.offline.iter().map(|item| item.case.as_str());
+    for descriptors in [online.collect::<Vec<_>>(), offline.collect::<Vec<_>>()] {
+        let mut cases = BTreeSet::new();
+        for case in descriptors {
+            if !cases.insert(case) {
+                return Err(MatrixError::Message(format!(
+                    "support row '{}'.{} repeats evidence case '{}'",
+                    row.id, dialect, case
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn require_note(row: &SupportRow, dialect: &str, cell: &SupportCell) -> Result<(), MatrixError> {
@@ -284,59 +358,113 @@ fn require_successful_evidence(
     online: &OnlineResults,
     offline: &OfflineResults,
 ) -> Result<(), MatrixError> {
-    for feature in &cell.evidence.online {
-        let result = online_result(online, feature, dialect)?;
-        if result.status != OnlineResultStatus::Success {
-            return Err(MatrixError::Message(format!(
-                "support row '{}'.{} needs online feature '{}' to be success, got {:?}",
-                row.id, dialect, feature, result.status
-            )));
-        }
+    for descriptor in &cell.evidence.online {
+        require_online_case(row, dialect, descriptor, online)?;
     }
-    for feature in &cell.evidence.offline {
-        let result = offline.features.get(feature).ok_or_else(|| {
-            MatrixError::Message(format!(
-                "support row '{}'.{} references unknown offline feature '{}'",
-                row.id, dialect, feature
-            ))
-        })?;
-        if result.status != OfflineResultStatus::Success {
-            return Err(MatrixError::Message(format!(
-                "support row '{}'.{} needs offline feature '{}' to be success, got {:?}",
-                row.id, dialect, feature, result.status
-            )));
-        }
+    for descriptor in &cell.evidence.offline {
+        require_offline_case(row, dialect, descriptor, offline)?;
     }
     Ok(())
 }
 
-fn online_result<'a>(
-    results: &'a OnlineResults,
-    feature: &str,
+/// Requires exact successful online evidence with all declared checks.
+fn require_online_case(
+    row: &SupportRow,
     dialect: &str,
-) -> Result<&'a OnlineResultCell, MatrixError> {
-    let dialects = results.features.get(feature).ok_or_else(|| {
-        MatrixError::Message(format!(
-            "support matrix references unknown online feature '{feature}'"
-        ))
-    })?;
-    dialects
-        .get(dialect)
-        .ok_or_else(|| MatrixError::Message(format!("online feature '{feature}' lacks {dialect}")))
+    descriptor: &OnlineEvidenceRef,
+    results: &OnlineResults,
+) -> Result<(), MatrixError> {
+    let evidence = results
+        .features
+        .values()
+        .filter_map(|dialects| dialects.get(dialect))
+        .filter(|cell| cell.status == OnlineResultStatus::Success)
+        .flat_map(|cell| &cell.evidence)
+        .find(|item| item.case == descriptor.case)
+        .ok_or_else(|| {
+            MatrixError::Message(format!(
+                "support row '{}'.{} lacks successful online case '{}'",
+                row.id, dialect, descriptor.case
+            ))
+        })?;
+    require_items(
+        row,
+        dialect,
+        &descriptor.case,
+        "check",
+        &descriptor.checks,
+        &evidence.checks,
+    )
+}
+
+/// Requires exact successful dialect-bound offline evidence.
+fn require_offline_case(
+    row: &SupportRow,
+    dialect: &str,
+    descriptor: &OfflineEvidenceRef,
+    results: &OfflineResults,
+) -> Result<(), MatrixError> {
+    let evidence = results
+        .features
+        .values()
+        .filter_map(|dialects| dialects.get(dialect))
+        .filter(|cell| cell.status == OfflineResultStatus::Success)
+        .flat_map(|cell| &cell.evidence)
+        .find(|item| item.case == descriptor.case && item.dialect.as_deref() == Some(dialect))
+        .ok_or_else(|| {
+            MatrixError::Message(format!(
+                "support row '{}'.{} lacks successful offline case '{}'",
+                row.id, dialect, descriptor.case
+            ))
+        })?;
+    require_items(
+        row,
+        dialect,
+        &descriptor.case,
+        "assertion",
+        &descriptor.assertions,
+        &evidence.assertions,
+    )
+}
+
+/// Verifies that a case executed every support claim declared by the matrix.
+fn require_items(
+    row: &SupportRow,
+    dialect: &str,
+    case: &str,
+    label: &str,
+    required: &[String],
+    observed: &[String],
+) -> Result<(), MatrixError> {
+    if required.is_empty() {
+        return Err(MatrixError::Message(format!(
+            "support row '{}'.{} case '{}' declares no {label}s",
+            row.id, dialect, case
+        )));
+    }
+    if let Some(missing) = required.iter().find(|value| !observed.contains(value)) {
+        return Err(MatrixError::Message(format!(
+            "support row '{}'.{} case '{}' did not execute {label} '{}'",
+            row.id, dialect, case, missing
+        )));
+    }
+    Ok(())
 }
 
 fn render_support_table(matrix: &ResolvedMatrix) -> Result<String, MatrixError> {
     let mut lines = vec![
-        "| Feature | PostgreSQL | SQLite | MySQL / MariaDB |".to_string(),
-        "| --- | --- | --- | --- |".to_string(),
+        format!("<!-- evidence-generation: {} -->", matrix.generation),
+        "| Feature | PostgreSQL | SQLite | MySQL | MariaDB |".to_string(),
+        "| --- | --- | --- | --- | --- |".to_string(),
     ];
     for row in &matrix.manifest.rows {
         lines.push(format!(
-            "| {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} |",
             row.label,
             support_symbol(row, "postgres")?,
             support_symbol(row, "sqlite")?,
-            support_symbol(row, "mysql")?
+            support_symbol(row, "mysql")?,
+            support_symbol(row, "mariadb")?
         ));
     }
     append_notes(&mut lines, &matrix.manifest);
@@ -400,20 +528,30 @@ fn render_offline_table(
         "| --- | --- | --- | --- | --- |".to_string(),
     ];
     for feature in &catalog.features {
-        let cell = results.features.get(&feature.id).ok_or_else(|| {
+        let dialects = results.features.get(&feature.id).ok_or_else(|| {
             MatrixError::Message(format!(
                 "offline results are missing feature '{}'",
                 feature.id
             ))
         })?;
-        lines.push(format!(
-            "| {} | {} | {} | {} | {} |",
-            feature.category,
-            feature.label,
-            feature.dialect.as_deref().unwrap_or("all"),
-            offline_symbol(&cell.status),
-            offline_evidence(cell)
-        ));
+        let selected = feature
+            .dialect
+            .as_deref()
+            .map(|dialect| vec![dialect])
+            .unwrap_or_else(|| DIALECTS.to_vec());
+        for dialect in selected {
+            let cell = dialects.get(dialect).ok_or_else(|| {
+                MatrixError::Message(format!("offline feature '{}' lacks {dialect}", feature.id))
+            })?;
+            lines.push(format!(
+                "| {} | {} | {} | {} | {} |",
+                feature.category,
+                feature.label,
+                dialect,
+                offline_symbol(&cell.status),
+                offline_evidence(cell)
+            ));
+        }
     }
     Ok(lines.join("\n"))
 }

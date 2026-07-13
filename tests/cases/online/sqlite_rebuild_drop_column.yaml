@@ -45,10 +45,10 @@ dialects:
             columns: [id]
           columns:
             - name: id
-              type: integer
+              type: INTEGER
               primary_key: true
             - name: email
-              type: text
+              type: TEXT
     data:
       - sql: "SELECT email FROM users ORDER BY id"
         expect: ["one@example.com"]

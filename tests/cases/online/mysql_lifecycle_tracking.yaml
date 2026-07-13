@@ -1,0 +1,27 @@
+description: MySQL repeatedly applies migrations idempotently and preserves tracking records.
+features: [live_migration_application, idempotent_migrations, migration_tracking, raw_sql_statements, tables_columns]
+migrations: []
+dialects:
+  mysql:
+    checks: [migrate_twice, migration_records, data]
+    migrations:
+    - id: 0001_mysql_users
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: users
+            columns:
+            - {name: id, type: INT, primary_key: true}
+            - {name: name, type: VARCHAR(64)}
+    - id: 0002_mysql_seed
+      dependencies: [0001_mysql_users]
+      atomic: false
+      operations:
+        - type: statement
+          up: "INSERT INTO users (id, name) VALUES (1, 'Ada')"
+          down: "DELETE FROM users WHERE id = 1"
+    expect_records: [0001_mysql_users, 0002_mysql_seed]
+    data:
+    - sql: SELECT name FROM users ORDER BY id
+      expect: [Ada]

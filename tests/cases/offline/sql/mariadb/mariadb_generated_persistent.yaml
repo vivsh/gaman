@@ -1,0 +1,20 @@
+description: MariaDB renders stored generated columns using PERSISTENT.
+group: sql_rendering
+features: [group.sql_rendering, kind.migration_to_sql]
+kind: migration_to_sql
+dialect: mariadb
+migrations:
+- id: 0001_mariadb_generated
+  atomic: false
+  operations:
+  - type: create_table
+    table:
+      name: metrics
+      columns:
+      - {name: base_value, type: INT}
+      - name: doubled
+        type: INT
+        generated: base_value * 2
+        generated_storage: stored
+expect_sql: |
+  CREATE TABLE `metrics` (`base_value` INT NOT NULL, `doubled` INT GENERATED ALWAYS AS (base_value * 2) PERSISTENT NOT NULL)

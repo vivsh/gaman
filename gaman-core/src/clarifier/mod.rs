@@ -47,6 +47,8 @@ mod tests {
             references: None,
             check: None,
             generated: None,
+            generated_storage: None,
+            dialect_options: Default::default(),
         }
     }
 

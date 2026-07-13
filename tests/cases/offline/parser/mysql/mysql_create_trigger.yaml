@@ -1,5 +1,5 @@
 ---
-description: MySQL trigger lowering is unsupported while MySQL remains a stub dialect.
+description: MySQL triggers are accepted as opaque table-owned entities.
 group: parser
 features:
 - group.parser
@@ -8,9 +8,9 @@ features:
 kind: parser
 parser_dialect: mysql
 sql: |
+  CREATE TABLE users (created_at timestamp);
   CREATE TRIGGER users_bi
   BEFORE INSERT ON users
   FOR EACH ROW SET NEW.created_at = NOW();
-expect_parse: error
-expect_lowering: error
-expect_error: unsupported SQL dialect
+expect_parse: ok
+expect_lowering: ok

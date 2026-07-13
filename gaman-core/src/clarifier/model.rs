@@ -57,6 +57,11 @@ pub enum ClarificationKind {
     UnmanagedTableOptions {
         table: String,
     },
+    ColumnMetadataChange {
+        table: String,
+        column: String,
+        properties: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

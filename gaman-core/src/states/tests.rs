@@ -1287,6 +1287,8 @@ fn normalize_moves_inline_fk_to_foreign_keys() {
         }),
         check: None,
         generated: None,
+        generated_storage: None,
+        dialect_options: Default::default(),
     };
     let table = Table {
         name: "posts".to_string(),
@@ -1329,6 +1331,8 @@ fn normalize_inline_fk_uses_explicit_name_when_provided() {
         }),
         check: None,
         generated: None,
+        generated_storage: None,
+        dialect_options: Default::default(),
     };
     let table = Table {
         name: "posts".to_string(),
@@ -1668,6 +1672,8 @@ fn normalize_moves_inline_check_to_constraints() {
         references: None,
         check: Some("score >= 0".to_string()),
         generated: None,
+        generated_storage: None,
+        dialect_options: Default::default(),
     };
     let table = Table {
         name: "results".to_string(),
@@ -1709,6 +1715,8 @@ fn normalize_is_idempotent() {
         }),
         check: None,
         generated: None,
+        generated_storage: None,
+        dialect_options: Default::default(),
     };
     let table = Table {
         name: "posts".to_string(),
@@ -1740,6 +1748,8 @@ fn col_type_serializes_as_type_in_yaml() {
         references: None,
         check: None,
         generated: None,
+        generated_storage: None,
+        dialect_options: Default::default(),
     };
     let yaml = serde_yaml::to_string(&col).expect("serialize");
     assert!(
@@ -3117,6 +3127,8 @@ mod property_states {
                 references: None,
                 check: None,
                 generated: None,
+                generated_storage: None,
+                dialect_options: Default::default(),
             },
         )
     }

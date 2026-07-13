@@ -1,0 +1,29 @@
+description: MySQL renders complete product-owned column definitions.
+group: sql_rendering
+features: [group.sql_rendering, kind.migration_to_sql]
+kind: migration_to_sql
+dialect: mysql
+migrations:
+- id: 0001_mysql_columns
+  atomic: false
+  operations:
+  - type: create_table
+    table:
+      name: users
+      columns:
+      - name: id
+        type: BIGINT
+        primary_key: true
+        mysql:
+          auto_increment: true
+      - name: code
+        type: VARCHAR(64)
+        nullable: false
+        default: "'unknown'"
+        mysql:
+          character_set: utf8mb4
+          collation: utf8mb4_bin
+          invisible: true
+          comment: private
+expect_sql: |
+  CREATE TABLE `users` (`id` BIGINT NOT NULL AUTO_INCREMENT, `code` VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT 'unknown' NOT NULL INVISIBLE COMMENT 'private', CONSTRAINT `users_pkey` PRIMARY KEY (`id`))

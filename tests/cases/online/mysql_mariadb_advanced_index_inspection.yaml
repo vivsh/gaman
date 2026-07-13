@@ -1,0 +1,40 @@
+description: MySQL invisible and MariaDB ignored indexes remain opaque without blocking verification.
+features: [live_inspect_verify, tables_columns, indexes_constraints]
+migrations: []
+dialects:
+  mysql:
+    checks: [verify]
+    migrations:
+    - id: 0001_mysql_invisible_index
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: indexed_items
+            columns:
+            - {name: id, type: INT, primary_key: true}
+            - {name: code, type: VARCHAR(64)}
+        - type: statement
+          up: CREATE INDEX indexed_items_code_idx ON indexed_items (code) INVISIBLE
+          down: DROP INDEX indexed_items_code_idx ON indexed_items
+    expect_verification:
+      findings: []
+      operations: []
+  mariadb:
+    checks: [verify]
+    migrations:
+    - id: 0001_mariadb_ignored_index
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: indexed_items
+            columns:
+            - {name: id, type: INT, primary_key: true}
+            - {name: code, type: VARCHAR(64)}
+        - type: statement
+          up: CREATE INDEX indexed_items_code_idx ON indexed_items (code) IGNORED
+          down: DROP INDEX indexed_items_code_idx ON indexed_items
+    expect_verification:
+      findings: []
+      operations: []

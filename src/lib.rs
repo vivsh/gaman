@@ -21,30 +21,22 @@ pub mod core {
     pub use gaman_core::{EmbeddedMigrations, Migration, OfflineError, OfflinePlanner};
 }
 
-#[cfg(feature = "native")]
-pub(crate) mod adapters;
 #[cfg(feature = "cli")]
 pub mod cli;
 #[cfg(feature = "native")]
 pub(crate) mod conf;
 #[cfg(feature = "db")]
-pub(crate) mod engine;
-#[cfg(feature = "db")]
 pub(crate) mod environment;
 #[cfg(feature = "db")]
 pub(crate) mod executor;
-#[cfg(feature = "db")]
-pub(crate) mod inspection;
-#[cfg(feature = "db")]
-pub(crate) mod migrator;
+#[cfg(feature = "fs")]
+mod migration_store;
 #[cfg(feature = "cli")]
 pub(crate) mod prompter;
 #[cfg(feature = "db")]
-mod schema_check;
+pub mod runner_factory;
 #[cfg(feature = "native")]
 pub mod schema_file;
-#[cfg(feature = "db")]
-pub(crate) mod tracking;
 
 #[cfg(feature = "native")]
 pub mod parsers {
@@ -61,18 +53,17 @@ pub mod drift {
 #[cfg(feature = "native")]
 pub use conf::{Config, ConfigError, TlsMode};
 #[cfg(feature = "db")]
-pub use engine::{EmbeddedMigrations, EngineError, MigrationEngine};
+pub use gaman_core::{
+    ApplyCommand, COMMAND_PROTOCOL_VERSION, Command as RunnerCommand, CommandDiagnostic,
+    CommandEnvelope, CommandError as RunnerCommandError, CommandFailure, CommandRequest,
+    CommandResponse, CommandResult, DatabaseTrackingStore, DiagnosticCode, Executor, ExecutorError,
+    InspectionError, MakeCommand, MakeResult, MigrationArtifact, MigrationCatalog, MigrationEngine,
+    MigrationMovement, MigrationRunner, MigrationStatus, RepairOptions, RepairReport,
+    SchemaCheckFailure, SchemaCheckInput, SchemaCheckResult, SchemaCheckStatus, SchemaInspector,
+    SqlInput, TrackingStore,
+};
 #[cfg(feature = "native")]
-pub use gaman_core::Migration;
-#[cfg(feature = "db")]
-pub use migrator::{
-    MigrationArtifact, MigrationListing, MigrationMovement, RepairOptions, RepairReport,
-};
-#[cfg(feature = "db")]
-pub use schema_check::{
-    SchemaCheckFailure, SchemaCheckFileReport, SchemaCheckFileStatus, SchemaCheckReport,
-    SqlSchemaInput,
-};
+pub use gaman_core::{EmbeddedMigrations, EngineError, Migration, OfflineError, OfflinePlanner};
 
 /// Schema types and builders.
 #[cfg(feature = "native")]
@@ -82,34 +73,26 @@ pub mod schema {
     pub use gaman_core::parsers::ParseError;
     pub use gaman_core::states::{
         Column, ColumnBuilder, ColumnRef, Constraint, ConstraintInput, EnumDef, EnumInput,
-        ExtensionDef, ExtensionInput, ForeignKey, FunctionDef, FunctionInput, Index, IndexInput,
-        InputSchema, IntoTable, PrimaryKey, ReplayError, Schema, SchemaBuilder, SchemaLoadError,
-        SchemaValidationError, Table, TableBuilder, TableInput, TriggerDef, TriggerEvent,
-        TriggerInput, TriggerScope, TriggerTiming, ViewDef, ViewInput, Volatility, is_volatile,
-        schema_qualified_key,
+        ExtensionDef, ExtensionInput, ForeignKey, FunctionDef, FunctionInput, GeneratedStorage,
+        Index, IndexInput, InputSchema, IntoTable, PrimaryKey, ReplayError, Schema, SchemaBuilder,
+        SchemaLoadError, SchemaValidationError, Table, TableBuilder, TableInput, TriggerDef,
+        TriggerEvent, TriggerInput, TriggerScope, TriggerTiming, ViewDef, ViewInput, Volatility,
+        is_volatile, schema_qualified_key,
     };
 }
 
 /// Lower-level APIs for custom executors, sources, and integration work.
 #[cfg(feature = "native")]
 pub mod core {
-    pub use crate::adapters::{AdapterError, MigrationSource, VecAdapter, YamlAdapter};
     #[cfg(feature = "db")]
     pub use crate::environment::{Environment, EnvironmentError, EnvironmentExecutor};
+    #[cfg(any(feature = "mysql", feature = "mariadb"))]
+    pub use crate::executor::MysqlFamilyExecutor;
     #[cfg(feature = "postgres")]
     pub use crate::executor::PostgresExecutor;
     #[cfg(feature = "sqlite")]
     pub use crate::executor::SqliteExecutor;
     #[cfg(feature = "db")]
-    pub use crate::executor::{BoxFuture, Executor, ExecutorError, Introspectable};
-    #[cfg(feature = "db")]
-    pub use crate::migrator::{
-        MigrationMovement, Migrator, MigratorError, RepairOptions, RepairReport,
-    };
-    #[cfg(feature = "db")]
-    pub use crate::tracking::{
-        DatabaseTrackingStore, TRACKING_TABLE, TrackingError, TrackingStore,
-    };
     pub use gaman_core::clarifier::{
         Answer, Clarification, ClarificationKind, ClarificationMessage, ClarificationOption,
         Decision, OptionAction, PromptEngine, Severity, clarification_message,
@@ -118,4 +101,9 @@ pub mod core {
     #[cfg(feature = "db")]
     pub use gaman_core::drift::{DriftFinding, VerificationReport};
     pub use gaman_core::graphs::{GraphError, MigrationGraph, MigrationNode};
+    pub use gaman_core::sql_plan::{SqlPlanError, SqlPlanRenderer};
+    pub use gaman_core::{
+        BoxFuture, DatabaseTrackingStore, Executor, ExecutorError, MigrationEngine, MigrationStore,
+        OfflineError, OfflinePlanner, SchemaInspector, StoreError, TRACKING_TABLE, TrackingStore,
+    };
 }

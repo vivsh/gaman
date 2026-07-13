@@ -20,7 +20,14 @@ pub(super) fn recover_table_sql(sql: &str, dialect: Dialect) -> Option<Recovered
     let close = find_body_close(&tokens, open_index)?;
     let (prefix, header_options) = recover_header(&sql[..open], dialect)?;
     let tail = sql[close + 1..].trim();
-    if header_options.is_empty() && tail.is_empty() {
+    let mut core_sql = format!("{prefix}{}", &sql[open..=close]);
+    if matches!(dialect, Dialect::Mysql | Dialect::Mariadb) {
+        core_sql = remove_zerofill(&core_sql, dialect)?;
+    }
+    if dialect == Dialect::Mariadb {
+        core_sql = replace_persistent_with_stored(&core_sql, dialect)?;
+    }
+    if header_options.is_empty() && tail.is_empty() && core_sql == sql.trim() {
         return None;
     }
     let tail_options = (!tail.is_empty())
@@ -28,10 +35,48 @@ pub(super) fn recover_table_sql(sql: &str, dialect: Dialect) -> Option<Recovered
         .into_iter()
         .collect();
     Some(RecoveredTableSql {
-        core_sql: format!("{prefix}{}", &sql[open..=close]),
+        core_sql,
         header_options,
         tail_options,
     })
+}
+
+/// Canonicalizes MariaDB's generated-column storage alias for the shared AST parser.
+fn replace_persistent_with_stored(sql: &str, dialect: Dialect) -> Option<String> {
+    let tokens = dialect.tokenizer().tokenize(sql).ok()?;
+    let mut output = sql.to_string();
+    for (index, token) in tokens.iter().enumerate().rev() {
+        if token.canonical_word() == Some("PERSISTENT")
+            && is_generated_storage_position(&tokens, index)
+        {
+            output.replace_range(token.span.clone(), "STORED");
+        }
+    }
+    Some(output)
+}
+
+fn remove_zerofill(sql: &str, dialect: Dialect) -> Option<String> {
+    let tokens = dialect.tokenizer().tokenize(sql).ok()?;
+    let mut output = sql.to_string();
+    for token in tokens
+        .iter()
+        .rev()
+        .filter(|token| token.canonical_word() == Some("ZEROFILL"))
+    {
+        output.replace_range(token.span.clone(), "");
+    }
+    Some(output)
+}
+
+/// Accepts `PERSISTENT` only after a balanced generated `AS (...)` expression.
+fn is_generated_storage_position(
+    tokens: &[crate::parsers::tokens::SqlToken],
+    index: usize,
+) -> bool {
+    (0..index)
+        .rev()
+        .find(|candidate| !tokens[*candidate].is_trivia())
+        .is_some_and(|candidate| matches!(tokens[candidate].kind, SqlTokenKind::RightParen))
 }
 
 /// Finds the opening delimiter of the top-level table definition.
@@ -54,7 +99,7 @@ fn find_body_close(
 
 /// Removes dialect-supported header modifiers that sqlparser cannot lower.
 fn recover_header(prefix: &str, dialect: Dialect) -> Option<(String, Vec<String>)> {
-    if dialect != Dialect::Postgres {
+    if !matches!(dialect, Dialect::Postgres) {
         return Some((prefix.to_string(), Vec::new()));
     }
     let tokens = dialect.tokenizer().tokenize(prefix).ok()?;

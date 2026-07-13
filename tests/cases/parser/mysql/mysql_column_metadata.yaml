@@ -1,0 +1,46 @@
+description: MySQL column metadata lowers into explicit product-owned options
+dialect: mysql
+sql: |
+  CREATE TABLE profile (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    code VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT 'unknown' INVISIBLE COMMENT 'private',
+    changed_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id)
+  );
+expect_entities:
+- kind: table
+  name: profile
+- kind: column
+  table: profile
+  name: code
+expect_schema:
+  tables:
+    profile:
+      name: profile
+      primary_key:
+        name: profile_pkey
+        columns: [id]
+      columns:
+      - name: id
+        type: BIGINT
+        nullable: false
+        primary_key: true
+        mysql:
+          auto_increment: true
+      - name: code
+        type: VARCHAR(64)
+        nullable: false
+        default: "'unknown'"
+        primary_key: false
+        mysql:
+          character_set: utf8mb4
+          collation: utf8mb4_bin
+          invisible: true
+          comment: private
+      - name: changed_at
+        type: TIMESTAMP(6)
+        nullable: true
+        default: CURRENT_TIMESTAMP(6)
+        primary_key: false
+        mysql:
+          on_update_expression: CURRENT_TIMESTAMP(6)

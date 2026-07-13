@@ -1,0 +1,6 @@
+description: MySQL rejects unsupported SET DEFAULT foreign key actions during preparation
+dialect: mysql
+sql: |
+  CREATE TABLE parent (id INT PRIMARY KEY);
+  CREATE TABLE child (parent_id INT, FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE SET DEFAULT);
+expect_error: SET DEFAULT

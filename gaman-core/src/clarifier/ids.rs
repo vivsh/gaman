@@ -42,6 +42,13 @@ pub fn clarification_id(kind: &ClarificationKind) -> String {
         ClarificationKind::UnmanagedTableOptions { table } => {
             format!("unmanaged_table_options:{}", encode_part(table))
         }
+        ClarificationKind::ColumnMetadataChange { table, column, .. } => {
+            format!(
+                "column_metadata:{}:{}",
+                encode_part(table),
+                encode_part(column)
+            )
+        }
     }
 }
 

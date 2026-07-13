@@ -22,7 +22,9 @@
 
 mod common;
 mod error;
+mod mariadb;
 mod mysql;
+mod mysql_family;
 mod postgres;
 mod segments;
 mod sql;

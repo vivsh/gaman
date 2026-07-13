@@ -88,6 +88,8 @@ pub(super) fn parse_create_table(
             references: None,
             check: None,
             generated: None,
+            generated_storage: None,
+            dialect_options: Default::default(),
         };
 
         for opt in &col_def.options {
@@ -96,8 +98,18 @@ pub(super) fn parse_create_table(
                 ColumnOption::NotNull => col.nullable = false,
                 ColumnOption::Default(expr) => col.default = Some(expr.to_string()),
                 ColumnOption::Generated {
-                    generation_expr, ..
-                } => col.generated = generation_expr.as_ref().map(ToString::to_string),
+                    generation_expr,
+                    generation_expr_mode,
+                    ..
+                } => {
+                    col.generated = generation_expr.as_ref().map(ToString::to_string);
+                    let _ = generation_expr_mode;
+                }
+                ColumnOption::CharacterSet(_)
+                | ColumnOption::Collation(_)
+                | ColumnOption::Comment(_)
+                | ColumnOption::OnUpdate(_)
+                | ColumnOption::DialectSpecific(_) => {}
                 ColumnOption::Identity(_) => {
                     col.default.get_or_insert_with(|| "identity".to_string());
                     col.nullable = false;

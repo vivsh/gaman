@@ -1,19 +1,20 @@
 mod support;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use support::{
-    FeatureCatalog, OnlineCase, OnlineCheck, OnlineDialect, OnlineEvidence, OnlineFeatureResult,
-    OnlineResultStatus, OnlineSupportResults, POSTGRES_DATABASE_URL_ENV, TestSupportError,
-    assert_error_contains, assert_ops_match, case_label, case_name, features_path,
-    online_cases_root, read_case_file, selected_cases,
+    FeatureCatalog, MARIADB_DATABASE_URL_ENV, MYSQL_DATABASE_URL_ENV, OnlineCase, OnlineCheck,
+    OnlineDialect, OnlineEvidence, OnlineFeatureResult, OnlineResultStatus, OnlineSupportResults,
+    POSTGRES_DATABASE_URL_ENV, TestSupportError, assert_error_contains, case_label, case_name,
+    features_path, online_cases_root, read_case_file, selected_cases,
 };
 
 struct OnlineArgs {
     dialect: Option<OnlineDialect>,
     record: PathBuf,
     explicit_record: bool,
+    failure_output: Option<PathBuf>,
     case_args: Vec<String>,
 }
 
@@ -45,11 +46,17 @@ async fn async_main(args: OnlineArgs, files: Vec<PathBuf>) -> Result<(), TestSup
         .map(|feature| feature.id.as_str())
         .collect::<BTreeSet<_>>();
     let mut descriptions = BTreeSet::new();
+    let mut names = BTreeSet::new();
     let mut results = initial_results(&catalog);
     let mut failures = Vec::new();
 
     for file in files {
         let name = case_name(&file)?;
+        if !names.insert(name.clone()) {
+            return Err(TestSupportError::message(format!(
+                "online case file stem '{name}' is duplicated"
+            )));
+        }
         let case: OnlineCase = read_case_file(&file)?;
         validate_online_case(&name, &case, &feature_ids, &mut descriptions)?;
         let label = case_label(&name, Some(&case.description));
@@ -74,13 +81,16 @@ async fn async_main(args: OnlineArgs, files: Vec<PathBuf>) -> Result<(), TestSup
         }
     }
 
-    write_results(&args.record, &results)?;
     if !failures.is_empty() {
+        if let Some(path) = args.failure_output {
+            write_results(&path, &results)?;
+        }
         return Err(TestSupportError::message(format!(
             "online cases failed:\n\n{}",
             failures.join("\n\n")
         )));
     }
+    write_results(&args.record, &results)?;
     if args.explicit_record {
         println!("recorded online support results: {}", args.record.display());
     }
@@ -91,13 +101,16 @@ fn parse_args() -> Result<OnlineArgs, TestSupportError> {
     let mut dialect = None;
     let mut record = PathBuf::from("results/online-support-results.yaml");
     let mut explicit_record = false;
+    let mut failure_output = None;
     let mut case_args = Vec::new();
     let mut raw = std::env::args().skip(1);
     while let Some(arg) = raw.next() {
         match arg.as_str() {
             "--dialect" => {
                 let value = raw.next().ok_or_else(|| {
-                    TestSupportError::message("--dialect requires postgres, sqlite, or mysql")
+                    TestSupportError::message(
+                        "--dialect requires postgres, sqlite, mysql, or mariadb",
+                    )
                 })?;
                 dialect = Some(parse_online_dialect(&value)?);
             }
@@ -107,6 +120,12 @@ fn parse_args() -> Result<OnlineArgs, TestSupportError> {
                     .ok_or_else(|| TestSupportError::message("--record requires a path"))?;
                 record = PathBuf::from(value);
                 explicit_record = true;
+            }
+            "--failure-output" => {
+                let value = raw
+                    .next()
+                    .ok_or_else(|| TestSupportError::message("--failure-output requires a path"))?;
+                failure_output = Some(PathBuf::from(value));
             }
             value if value.starts_with("--") => {
                 return Err(TestSupportError::message(format!(
@@ -120,6 +139,7 @@ fn parse_args() -> Result<OnlineArgs, TestSupportError> {
         dialect,
         record,
         explicit_record,
+        failure_output,
         case_args,
     })
 }
@@ -128,7 +148,8 @@ fn parse_online_dialect(value: &str) -> Result<OnlineDialect, TestSupportError> 
     match value {
         "postgres" | "postgresql" => Ok(OnlineDialect::Postgres),
         "sqlite" | "sqlite3" => Ok(OnlineDialect::Sqlite),
-        "mysql" | "mariadb" => Ok(OnlineDialect::Mysql),
+        "mysql" => Ok(OnlineDialect::Mysql),
+        "mariadb" => Ok(OnlineDialect::Mariadb),
         _ => Err(TestSupportError::message(format!(
             "unsupported online dialect '{value}'"
         ))),
@@ -166,13 +187,13 @@ fn assert_inspected_extensions(
     Ok(())
 }
 
-fn expected_verify_ops<'a>(
+fn expected_verification<'a>(
     name: &str,
     section: &'a support::OnlineDialectCase,
-) -> Result<&'a [gaman::schema::Operation], TestSupportError> {
-    section.expect_verify.as_deref().ok_or_else(|| {
+) -> Result<&'a support::ExpectedVerification, TestSupportError> {
+    section.expect_verification.as_ref().ok_or_else(|| {
         TestSupportError::message(format!(
-            "{name}: verify check succeeded, but the fixture has no expect_verify"
+            "{name}: verify check succeeded, but the fixture has no expect_verification"
         ))
     })
 }
@@ -292,11 +313,11 @@ fn validate_online_case(
             )));
         }
         if section.checks.contains(&OnlineCheck::Verify)
-            && section.expect_verify.is_none()
+            && section.expect_verification.is_none()
             && section.expect_error.is_none()
         {
             return Err(TestSupportError::message(format!(
-                "{name}: {} verify checks require expect_verify",
+                "{name}: {} verify checks require expect_verification",
                 dialect.as_str()
             )));
         }
@@ -339,7 +360,10 @@ fn validate_online_case(
 }
 
 fn initial_results(catalog: &FeatureCatalog) -> OnlineSupportResults {
-    let mut results = OnlineSupportResults::default();
+    let mut results = OnlineSupportResults {
+        generation: support::generation_id(),
+        ..OnlineSupportResults::default()
+    };
     for feature in &catalog.features {
         let mut dialects = BTreeMap::new();
         for dialect in OnlineDialect::all() {
@@ -430,10 +454,221 @@ async fn run_online_dialect(
                 )
         }
         OnlineDialect::Mysql => {
-            let _ = section;
-            CaseStatus::Unimplemented("mysql dialect is not implemented".to_string())
+            run_family_online_case(
+                name,
+                case,
+                section,
+                gaman::core::Dialect::Mysql,
+                MYSQL_DATABASE_URL_ENV,
+                explicit_dialect,
+            )
+            .await
+        }
+        OnlineDialect::Mariadb => {
+            run_family_online_case(
+                name,
+                case,
+                section,
+                gaman::core::Dialect::Mariadb,
+                MARIADB_DATABASE_URL_ENV,
+                explicit_dialect,
+            )
+            .await
         }
     }
+}
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+async fn run_family_online_case(
+    name: &str,
+    case: &OnlineCase,
+    section: &support::OnlineDialectCase,
+    dialect: gaman::core::Dialect,
+    env: &str,
+    explicit: bool,
+) -> CaseStatus {
+    if std::env::var(env).is_err() {
+        return if explicit {
+            CaseStatus::Failure(format!("{env} must be set"))
+        } else {
+            CaseStatus::Unimplemented(format!("{env} is not set"))
+        };
+    }
+    let harness = match support::MysqlFamilyHarness::new(dialect).await {
+        Ok(harness) => harness,
+        Err(error) => return CaseStatus::Failure(error.to_string()),
+    };
+    let result = run_family_checks(name, &harness, case, section).await;
+    let cleanup = harness.cleanup().await;
+    match (result, cleanup) {
+        (Ok(()), Ok(())) => CaseStatus::Success,
+        (Err(error), _) => CaseStatus::Failure(error.to_string()),
+        (Ok(()), Err(error)) => CaseStatus::Failure(error.to_string()),
+    }
+}
+
+#[cfg(not(any(feature = "mysql", feature = "mariadb")))]
+async fn run_family_online_case(
+    _: &str,
+    _: &OnlineCase,
+    _: &support::OnlineDialectCase,
+    _: gaman::core::Dialect,
+    _: &str,
+    explicit: bool,
+) -> CaseStatus {
+    if explicit {
+        CaseStatus::Failure("matching MySQL-family feature is not enabled".to_string())
+    } else {
+        CaseStatus::Unimplemented("matching MySQL-family feature is not enabled".to_string())
+    }
+}
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+async fn run_family_checks(
+    name: &str,
+    harness: &support::MysqlFamilyHarness,
+    case: &OnlineCase,
+    section: &support::OnlineDialectCase,
+) -> Result<(), TestSupportError> {
+    if let Some(sql) = section.setup_sql(case) {
+        harness.batch_execute(sql).await?;
+    }
+    let migrations = section.migrations(case);
+    let mut runner = support::build_mysql_family_runner(name, harness, migrations).await?;
+    let mut migrated = false;
+    let mut migration_attempted = false;
+    let error_action = expected_error_action(section);
+    if section.checks.contains(&OnlineCheck::Migrate) {
+        let result = support::apply_runner(&mut runner, None)
+            .await
+            .map(|_| ())
+            .map_err(|error| TestSupportError::message(error.to_string()));
+        migration_attempted = true;
+        if error_action == Some(ExpectedErrorAction::Migrate) {
+            assert_error_contains(name, result, expected_error(name, section)?)?;
+        } else {
+            result?;
+            migrated = true;
+        }
+    }
+    if section.checks.contains(&OnlineCheck::MigrateTwice) {
+        support::apply_runner(&mut runner, None)
+            .await
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
+        let second = support::apply_runner(&mut runner, None)
+            .await
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
+        if second.applied != 0 || second.reverted != 0 {
+            return Err(TestSupportError::message(format!(
+                "{name}: second apply was not idempotent"
+            )));
+        }
+        migration_attempted = true;
+        migrated = true;
+    }
+    if section.checks.contains(&OnlineCheck::MigrateTo) {
+        let target = required_target(name, section, "migrate_to")?;
+        let result = support::apply_runner(&mut runner, Some(target))
+            .await
+            .map(|_| ())
+            .map_err(|error| TestSupportError::message(error.to_string()));
+        migration_attempted = true;
+        if error_action == Some(ExpectedErrorAction::MigrateTo) {
+            assert_error_contains(name, result, expected_error(name, section)?)?;
+        } else {
+            result?;
+            migrated = true;
+        }
+    }
+    if section.checks.contains(&OnlineCheck::Rollback) {
+        if !migrated && !migration_attempted && !migrations.is_empty() {
+            support::apply_runner(&mut runner, None)
+                .await
+                .map_err(|error| TestSupportError::message(error.to_string()))?;
+            migration_attempted = true;
+        }
+        let target = required_target(name, section, "rollback")?;
+        let result = support::apply_runner(&mut runner, Some(target))
+            .await
+            .map(|_| ())
+            .map_err(|error| TestSupportError::message(error.to_string()));
+        if error_action == Some(ExpectedErrorAction::Rollback) {
+            assert_error_contains(name, result, expected_error(name, section)?)?;
+        } else {
+            result?;
+            migrated = true;
+        }
+    }
+    if section.checks.contains(&OnlineCheck::LockBehavior) {
+        harness.assert_lock_released().await?;
+    }
+    if section.checks.contains(&OnlineCheck::MigrationRecords) {
+        assert_records_match(
+            name,
+            harness.migration_records().await?,
+            &section.expect_records,
+        )?;
+    }
+    if section.checks.contains(&OnlineCheck::Inspect) {
+        let result = async {
+            let actual = support::inspect_runner(&mut runner, Vec::new()).await?;
+            let expected = expected_inspect_schema(name, section)?;
+            support::assert_inspected_schema_exact(name, actual, expected)
+        }
+        .await;
+        if error_action == Some(ExpectedErrorAction::Inspect) {
+            assert_error_contains(name, result, expected_error(name, section)?)?;
+        } else {
+            result?;
+        }
+    }
+    if section.checks.contains(&OnlineCheck::Verify) {
+        if !migrated && !migration_attempted && !migrations.is_empty() {
+            support::apply_runner(&mut runner, None)
+                .await
+                .map_err(|error| TestSupportError::message(error.to_string()))?;
+            migration_attempted = true;
+            migrated = true;
+        }
+        if let Some(sql) = section.mutate_sql(case) {
+            harness.batch_execute(sql).await?;
+        }
+        let result = async {
+            let actual = support::verify_runner(&mut runner, Vec::new()).await?;
+            support::assert_verification_matches(
+                name,
+                &actual,
+                expected_verification(name, section)?,
+            )
+        }
+        .await;
+        if error_action == Some(ExpectedErrorAction::Verify) {
+            assert_error_contains(name, result, expected_error(name, section)?)?;
+        } else {
+            result?;
+        }
+    }
+    if section.checks.contains(&OnlineCheck::Data) {
+        if !migrated && !migration_attempted && !migrations.is_empty() {
+            support::apply_runner(&mut runner, None)
+                .await
+                .map_err(|error| TestSupportError::message(error.to_string()))?;
+        }
+        for check in &section.data {
+            if let Some(expected) = &check.expect_error {
+                assert_error_contains(name, harness.batch_execute(&check.sql).await, expected)?;
+            } else {
+                let actual = harness.fetch_strings(&check.sql).await?;
+                if actual != check.expect {
+                    return Err(TestSupportError::message(format!(
+                        "{name}: data mismatch: expected {:?}, observed {:?}",
+                        check.expect, actual
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(feature = "postgres")]
@@ -480,14 +715,18 @@ async fn run_postgres_checks(
             harness.batch_execute(&sql).await?;
         }
         let migrations = section.migrations(case);
-        let migrator = support::build_postgres_migrator(name, harness, migrations)?;
+        let mut runner = support::build_postgres_runner(name, harness, migrations).await?;
         let mut migrated = false;
         let mut migration_attempted = false;
         let error_action = expected_error_action(section);
         if section.checks.contains(&OnlineCheck::Migrate) {
-            let result = migrator.apply(None, false).await.map_err(|error| {
-                TestSupportError::message(format!("{name}: migrate failed unexpectedly: {error}"))
-            });
+            let result = support::apply_runner(&mut runner, None)
+                .await
+                .map_err(|error| {
+                    TestSupportError::message(format!(
+                        "{name}: migrate failed unexpectedly: {error}"
+                    ))
+                });
             migration_attempted = true;
             if error_action == Some(ExpectedErrorAction::Migrate) {
                 assert_error_contains(name, result, expected_error(name, section)?)?;
@@ -497,12 +736,16 @@ async fn run_postgres_checks(
             }
         }
         if section.checks.contains(&OnlineCheck::MigrateTwice) {
-            let first = migrator.apply(None, false).await.map_err(|error| {
-                TestSupportError::message(format!("{name}: first migrate failed: {error}"))
-            })?;
-            let second = migrator.apply(None, false).await.map_err(|error| {
-                TestSupportError::message(format!("{name}: second migrate failed: {error}"))
-            })?;
+            let first = support::apply_runner(&mut runner, None)
+                .await
+                .map_err(|error| {
+                    TestSupportError::message(format!("{name}: first migrate failed: {error}"))
+                })?;
+            let second = support::apply_runner(&mut runner, None)
+                .await
+                .map_err(|error| {
+                    TestSupportError::message(format!("{name}: second migrate failed: {error}"))
+                })?;
             if second.applied != 0 || second.reverted != 0 {
                 return Err(TestSupportError::message(format!(
                     "{name}: second migrate should be idempotent but changed {second:?}"
@@ -513,9 +756,11 @@ async fn run_postgres_checks(
         }
         if section.checks.contains(&OnlineCheck::MigrateTo) {
             let target = required_target(name, section, "migrate_to")?;
-            let result = migrator.apply(Some(target), false).await.map_err(|error| {
-                TestSupportError::message(format!("{name}: migrate_to failed: {error}"))
-            });
+            let result = support::apply_runner(&mut runner, Some(target))
+                .await
+                .map_err(|error| {
+                    TestSupportError::message(format!("{name}: migrate_to failed: {error}"))
+                });
             migration_attempted = true;
             if error_action == Some(ExpectedErrorAction::MigrateTo) {
                 assert_error_contains(name, result.map(|_| ()), expected_error(name, section)?)?;
@@ -526,16 +771,20 @@ async fn run_postgres_checks(
         }
         if section.checks.contains(&OnlineCheck::Rollback) {
             if !migrated && !migration_attempted && !migrations.is_empty() {
-                migrator.apply(None, false).await.map_err(|error| {
-                    TestSupportError::message(format!(
-                        "{name}: setup migrate failed unexpectedly: {error}"
-                    ))
-                })?;
+                support::apply_runner(&mut runner, None)
+                    .await
+                    .map_err(|error| {
+                        TestSupportError::message(format!(
+                            "{name}: setup migrate failed unexpectedly: {error}"
+                        ))
+                    })?;
             }
             let target = required_target(name, section, "rollback")?;
-            let result = migrator.apply(Some(target), false).await.map_err(|error| {
-                TestSupportError::message(format!("{name}: rollback failed: {error}"))
-            });
+            let result = support::apply_runner(&mut runner, Some(target))
+                .await
+                .map_err(|error| {
+                    TestSupportError::message(format!("{name}: rollback failed: {error}"))
+                });
             if error_action == Some(ExpectedErrorAction::Rollback) {
                 assert_error_contains(name, result.map(|_| ()), expected_error(name, section)?)?;
             } else {
@@ -552,7 +801,9 @@ async fn run_postgres_checks(
         }
         if section.checks.contains(&OnlineCheck::Inspect) {
             let result = async {
-                let mut actual = harness.inspect_schema().await?;
+                let mut actual =
+                    support::inspect_runner(&mut runner, vec![harness.schema_name().to_string()])
+                        .await?;
                 support::scope_schema_for_compare(&mut actual, harness.schema_name());
                 if let Some(expected) = &section.expect_schema {
                     support::assert_schema_matches(
@@ -573,11 +824,13 @@ async fn run_postgres_checks(
         }
         if section.checks.contains(&OnlineCheck::Verify) {
             if !migrated && !migration_attempted && !migrations.is_empty() {
-                migrator.apply(None, false).await.map_err(|error| {
-                    TestSupportError::message(format!(
-                        "{name}: setup migrate failed unexpectedly: {error}"
-                    ))
-                })?;
+                support::apply_runner(&mut runner, None)
+                    .await
+                    .map_err(|error| {
+                        TestSupportError::message(format!(
+                            "{name}: setup migrate failed unexpectedly: {error}"
+                        ))
+                    })?;
                 migration_attempted = true;
                 migrated = true;
             }
@@ -586,9 +839,14 @@ async fn run_postgres_checks(
                 harness.batch_execute(&sql).await?;
             }
             let result = async {
-                let actual = harness.verify(&migrator).await?;
-                let expected = expected_verify_ops(name, section)?;
-                assert_ops_match(name, "verify operations", &actual, expected)
+                let actual =
+                    support::verify_runner(&mut runner, vec![harness.schema_name().to_string()])
+                        .await?;
+                support::assert_verification_matches(
+                    name,
+                    &actual,
+                    expected_verification(name, section)?,
+                )
             }
             .await;
             if error_action == Some(ExpectedErrorAction::Verify) {
@@ -599,11 +857,13 @@ async fn run_postgres_checks(
         }
         if section.checks.contains(&OnlineCheck::Data) {
             if !migrated && !migration_attempted && !migrations.is_empty() {
-                migrator.apply(None, false).await.map_err(|error| {
-                    TestSupportError::message(format!(
-                        "{name}: setup migrate failed unexpectedly: {error}"
-                    ))
-                })?;
+                support::apply_runner(&mut runner, None)
+                    .await
+                    .map_err(|error| {
+                        TestSupportError::message(format!(
+                            "{name}: setup migrate failed unexpectedly: {error}"
+                        ))
+                    })?;
             }
             for check in &section.data {
                 let sql = support::postgres_placeholder_text(&check.sql, harness.schema_name());
@@ -637,14 +897,18 @@ async fn run_sqlite_online_case(
             harness.batch_execute(sql).await?;
         }
         let migrations = section.migrations(case);
-        let migrator = support::build_sqlite_migrator(name, &harness, migrations)?;
+        let mut runner = support::build_sqlite_runner(name, &harness, migrations).await?;
         let mut migrated = false;
         let mut migration_attempted = false;
         let error_action = expected_error_action(section);
         if section.checks.contains(&OnlineCheck::Migrate) {
-            let result = migrator.apply(None, false).await.map_err(|error| {
-                TestSupportError::message(format!("{name}: migrate failed unexpectedly: {error}"))
-            });
+            let result = support::apply_runner(&mut runner, None)
+                .await
+                .map_err(|error| {
+                    TestSupportError::message(format!(
+                        "{name}: migrate failed unexpectedly: {error}"
+                    ))
+                });
             migration_attempted = true;
             if error_action == Some(ExpectedErrorAction::Migrate) {
                 assert_error_contains(name, result, expected_error(name, section)?)?;
@@ -654,12 +918,16 @@ async fn run_sqlite_online_case(
             }
         }
         if section.checks.contains(&OnlineCheck::MigrateTwice) {
-            let first = migrator.apply(None, false).await.map_err(|error| {
-                TestSupportError::message(format!("{name}: first migrate failed: {error}"))
-            })?;
-            let second = migrator.apply(None, false).await.map_err(|error| {
-                TestSupportError::message(format!("{name}: second migrate failed: {error}"))
-            })?;
+            let first = support::apply_runner(&mut runner, None)
+                .await
+                .map_err(|error| {
+                    TestSupportError::message(format!("{name}: first migrate failed: {error}"))
+                })?;
+            let second = support::apply_runner(&mut runner, None)
+                .await
+                .map_err(|error| {
+                    TestSupportError::message(format!("{name}: second migrate failed: {error}"))
+                })?;
             if second.applied != 0 || second.reverted != 0 {
                 return Err(TestSupportError::message(format!(
                     "{name}: second migrate should be idempotent but changed {second:?}"
@@ -670,9 +938,11 @@ async fn run_sqlite_online_case(
         }
         if section.checks.contains(&OnlineCheck::MigrateTo) {
             let target = required_target(name, section, "migrate_to")?;
-            let result = migrator.apply(Some(target), false).await.map_err(|error| {
-                TestSupportError::message(format!("{name}: migrate_to failed: {error}"))
-            });
+            let result = support::apply_runner(&mut runner, Some(target))
+                .await
+                .map_err(|error| {
+                    TestSupportError::message(format!("{name}: migrate_to failed: {error}"))
+                });
             migration_attempted = true;
             if error_action == Some(ExpectedErrorAction::MigrateTo) {
                 assert_error_contains(name, result.map(|_| ()), expected_error(name, section)?)?;
@@ -683,16 +953,20 @@ async fn run_sqlite_online_case(
         }
         if section.checks.contains(&OnlineCheck::Rollback) {
             if !migrated && !migration_attempted && !migrations.is_empty() {
-                migrator.apply(None, false).await.map_err(|error| {
-                    TestSupportError::message(format!(
-                        "{name}: setup migrate failed unexpectedly: {error}"
-                    ))
-                })?;
+                support::apply_runner(&mut runner, None)
+                    .await
+                    .map_err(|error| {
+                        TestSupportError::message(format!(
+                            "{name}: setup migrate failed unexpectedly: {error}"
+                        ))
+                    })?;
             }
             let target = required_target(name, section, "rollback")?;
-            let result = migrator.apply(Some(target), false).await.map_err(|error| {
-                TestSupportError::message(format!("{name}: rollback failed: {error}"))
-            });
+            let result = support::apply_runner(&mut runner, Some(target))
+                .await
+                .map_err(|error| {
+                    TestSupportError::message(format!("{name}: rollback failed: {error}"))
+                });
             if error_action == Some(ExpectedErrorAction::Rollback) {
                 assert_error_contains(name, result.map(|_| ()), expected_error(name, section)?)?;
             } else {
@@ -709,15 +983,9 @@ async fn run_sqlite_online_case(
         }
         if section.checks.contains(&OnlineCheck::Inspect) {
             let result = async {
-                let actual = harness.inspect_schema().await?;
+                let actual = support::inspect_runner(&mut runner, Vec::new()).await?;
                 let expected = expected_inspect_schema(name, section)?;
-                support::assert_schema_matches_with_dialect(
-                    name,
-                    "inspected schema",
-                    actual,
-                    expected,
-                    gaman::core::Dialect::Sqlite,
-                )
+                support::assert_inspected_schema_exact(name, actual, expected)
             }
             .await;
             if error_action == Some(ExpectedErrorAction::Inspect) {
@@ -728,11 +996,13 @@ async fn run_sqlite_online_case(
         }
         if section.checks.contains(&OnlineCheck::Verify) {
             if !migrated && !migration_attempted && !migrations.is_empty() {
-                migrator.apply(None, false).await.map_err(|error| {
-                    TestSupportError::message(format!(
-                        "{name}: setup migrate failed unexpectedly: {error}"
-                    ))
-                })?;
+                support::apply_runner(&mut runner, None)
+                    .await
+                    .map_err(|error| {
+                        TestSupportError::message(format!(
+                            "{name}: setup migrate failed unexpectedly: {error}"
+                        ))
+                    })?;
                 migration_attempted = true;
                 migrated = true;
             }
@@ -740,9 +1010,12 @@ async fn run_sqlite_online_case(
                 harness.batch_execute(sql).await?;
             }
             let result = async {
-                let actual = harness.verify(&migrator).await?;
-                let expected = expected_verify_ops(name, section)?;
-                assert_ops_match(name, "verify operations", &actual, expected)
+                let actual = support::verify_runner(&mut runner, Vec::new()).await?;
+                support::assert_verification_matches(
+                    name,
+                    &actual,
+                    expected_verification(name, section)?,
+                )
             }
             .await;
             if error_action == Some(ExpectedErrorAction::Verify) {
@@ -753,11 +1026,13 @@ async fn run_sqlite_online_case(
         }
         if section.checks.contains(&OnlineCheck::Data) {
             if !migrated && !migration_attempted && !migrations.is_empty() {
-                migrator.apply(None, false).await.map_err(|error| {
-                    TestSupportError::message(format!(
-                        "{name}: setup migrate failed unexpectedly: {error}"
-                    ))
-                })?;
+                support::apply_runner(&mut runner, None)
+                    .await
+                    .map_err(|error| {
+                        TestSupportError::message(format!(
+                            "{name}: setup migrate failed unexpectedly: {error}"
+                        ))
+                    })?;
             }
             for check in &section.data {
                 if let Some(expected) = &check.expect_error {
@@ -842,17 +1117,8 @@ fn record_case_status(
     }
 }
 
-fn write_results(path: &PathBuf, results: &OnlineSupportResults) -> Result<(), TestSupportError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| TestSupportError::Io {
-            path: parent.display().to_string(),
-            message: error.to_string(),
-        })?;
-    }
-    let yaml = serde_yaml::to_string(results).map_err(|error| {
-        TestSupportError::message(format!("failed to serialize results: {error}"))
-    })?;
-    std::fs::write(path, yaml).map_err(|error| TestSupportError::Io {
+fn write_results(path: &Path, results: &OnlineSupportResults) -> Result<(), TestSupportError> {
+    support::write_yaml_atomic(path, results).map_err(|error| TestSupportError::Io {
         path: path.display().to_string(),
         message: error.to_string(),
     })

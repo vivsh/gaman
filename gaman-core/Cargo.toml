@@ -7,12 +7,16 @@ license = "MIT"
 repository = "https://github.com/vivsh/gaman"
 
 [dependencies]
+argh = { version = "0.1.19", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_yaml = "0.9.34"
 sha2 = "0.10"
 sqlparser = "0.62.0"
 thiserror = "2.0.18"
+
+[features]
+command-args = ["dep:argh"]
 
 [dev-dependencies]
 proptest = "1"

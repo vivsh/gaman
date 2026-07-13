@@ -1,0 +1,28 @@
+description: MySQL renames tables and columns while preserving stored data.
+features: [live_migration_application, table_create_drop_rename, column_add_drop_rename, single_primary_keys, data_preservation]
+migrations: []
+dialects:
+  mysql:
+    checks: [migrate, migration_records, data]
+    migrations:
+    - id: 0001_mysql_users
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: users
+            columns:
+            - {name: id, type: INT, primary_key: true}
+            - {name: email, type: VARCHAR(255)}
+        - type: statement
+          up: "INSERT INTO users (id, email) VALUES (1, 'one@example.com')"
+    - id: 0002_mysql_rename
+      dependencies: [0001_mysql_users]
+      atomic: false
+      operations:
+        - {type: rename_table, old_name: users, new_name: accounts}
+        - {type: rename_column, table_name: accounts, old_name: email, new_name: email_address}
+    expect_records: [0001_mysql_users, 0002_mysql_rename]
+    data:
+    - sql: SELECT email_address FROM accounts WHERE id = 1
+      expect: [one@example.com]

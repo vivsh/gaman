@@ -7,6 +7,7 @@ pub mod names;
 mod normalize;
 mod replay;
 mod validate;
+pub(crate) use validate::reject_family_column_options;
 
 pub mod builder;
 pub mod errors;

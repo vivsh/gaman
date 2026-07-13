@@ -1,0 +1,43 @@
+description: MariaDB column metadata lowers into explicit MariaDB options
+dialect: mariadb
+sql: |
+  CREATE TABLE audit_log (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    secret VARCHAR(64) NOT NULL DEFAULT 'unknown' INVISIBLE COMMENT 'hidden',
+    changed_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  );
+expect_entities:
+- kind: table
+  name: audit_log
+- kind: column
+  table: audit_log
+  name: secret
+expect_schema:
+  tables:
+    audit_log:
+      name: audit_log
+      primary_key:
+        name: audit_log_pkey
+        columns: [id]
+      columns:
+      - name: id
+        type: BIGINT
+        nullable: false
+        primary_key: true
+        mariadb:
+          auto_increment: true
+      - name: secret
+        type: VARCHAR(64)
+        nullable: false
+        default: "'unknown'"
+        primary_key: false
+        mariadb:
+          invisible: true
+          comment: hidden
+      - name: changed_at
+        type: DATETIME
+        nullable: true
+        default: CURRENT_TIMESTAMP
+        primary_key: false
+        mariadb:
+          on_update_expression: CURRENT_TIMESTAMP

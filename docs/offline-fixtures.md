@@ -201,8 +201,8 @@ cargo test -p gaman --test offline -- tests/cases/offline/verify
 cargo test -p gaman --test offline -- 'tests/cases/offline/parser/postgres/*.yaml'
 ```
 
-Record accepted offline evidence deliberately:
+Record a local offline result for review:
 
 ```bash
-cargo test -p gaman --features sqlite --test offline -- --record results/offline-results.yaml
+cargo test -p gaman --features sqlite --test offline -- --record /tmp/offline-results.yaml
 ```

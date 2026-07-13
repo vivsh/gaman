@@ -59,7 +59,7 @@ dialects:
             columns: [id]
           columns:
             - name: id
-              type: integer
+              type: INTEGER
               primary_key: true
     data:
       - sql: "SELECT failed_column FROM users"

@@ -135,7 +135,7 @@ the project-local approval record for custom and user-defined types.
 
 ## Deterministic Offline Pipeline
 
-Planning, replay, diffing, disambiguation, and SQL rendering are deterministic,
+Planning, replay, diffing, clarification, and SQL rendering are deterministic,
 offline, and side-effect free. They operate only on strings and in-memory
 values; they do not need a driver, live connection, filesystem, environment,
 terminal, or tracking store.
@@ -163,7 +163,7 @@ Rollback planning reverses selected migrations and their operations only when
 every required inverse exists. If an inverse is unavailable, planning fails
 before partial rollback SQL is emitted.
 
-## Disambiguation And Risk
+## Clarification And Risk
 
 Gaman does not silently guess when a schema diff is ambiguous or risky. It
 produces structured clarification requests for cases such as:
@@ -198,10 +198,24 @@ Each dialect owns its database-specific behavior:
 Shared planning code asks a dialect to prepare schema and render a migration; it
 does not embed PostgreSQL, SQLite, or future MySQL syntax rules.
 
-PostgreSQL and SQLite are the current live dialects. SQLite uses a deterministic
-table-rebuild strategy for supported alterations that SQLite cannot express
-directly. MySQL/MariaDB remains a planned dialect and is not represented as
-implemented lifecycle support.
+PostgreSQL, SQLite, MySQL, and MariaDB are separate dialect contracts. MySQL and
+MariaDB share private family infrastructure for tokenization, wire execution,
+and common DDL, but retain distinct processors, type canonicalization, catalog
+interpretation, drift registries, evidence, and release gates. MySQL targets the
+8.4 LTS line; MariaDB targets the 11.4 and 11.8 LTS lines.
+
+SQLite uses a deterministic table-rebuild strategy for supported alterations
+that SQLite cannot express directly. MySQL-family DDL implicitly commits, so
+modeled schema migrations are non-atomic and partial failures are reported
+without claiming rollback.
+
+MySQL-family tables and stable column metadata are granular. Auto-increment,
+generated storage, automatic update expressions, explicit character set and
+collation, visibility, and comments participate in the normal modeled
+lifecycle. Advanced indexes and stored program source use the opaque lifecycle.
+Storage engines, table defaults, partitions, and other table-level vendor
+clauses are unmanaged table options: they are preserved, clarified, rendered,
+and excluded from live drift.
 
 ## Live Application Lifecycle
 
@@ -258,13 +272,54 @@ repair work into a migration implicitly.
 ## Runtime And Storage Boundaries
 
 The offline core owns the schema model, preparation, replay, graph handling,
-diffing, disambiguation, dialect rendering, and offline planning. It is
-featureless and practical for browser/WASM use.
+diffing, clarification, dialect rendering, offline planning, and the reusable
+migration lifecycle engine. The lifecycle engine depends only on caller-supplied
+storage, tracking, and SQL-execution traits; it performs no filesystem, network,
+database-driver, or runtime I/O. It is featureless and practical for browser/WASM
+use.
 
 Native integrations add live execution, inspection, tracking, filesystem-backed
 sources, and presentation layers. Migration definitions and applied-migration
 state are separate storage concerns so callers can provide in-memory, embedded,
 filesystem, database, or host-specific implementations as appropriate.
+
+Hosts cross the command boundary in three stages. `command_args` defines the
+shared token grammar, help, and parser diagnostics through `argh` annotations.
+Each host resolves paths, configuration, and direct schema input into a typed
+runner command. `MigrationRunner` is the sole lifecycle-command facade over a
+flexible `MigrationEngine`; it coordinates migration storage, tracking, SQL
+execution, inspection, drift, and repair through caller-owned adapters. It does
+not read process arguments, files, environment variables, stdin, or produce
+terminal output.
+
+Runner commands form a versioned, serializable protocol. Commands are borrowed
+during execution, so a host retains resolved input and can create an immutable
+retry with additional clarification decisions. Results and diagnostics contain
+only Gaman-owned data; driver errors and host handles do not cross this
+boundary. CLI presentation, WASM serialization, and future FFI bindings are
+adapters over the same command contract.
+
+Each runner command observes one immutable `MigrationCatalog`. The runner loads
+and validates the catalog once, then creates a command-scoped engine view backed
+by that snapshot. The base engine never retains command state, so cancellation
+or failure cannot affect a later command. Direct `MigrationEngine` calls remain
+available and observe a fresh snapshot for each independent call.
+
+Storage, tracking, execution, and inspection errors retain distinct categories.
+Database tracking orchestration is generic, while installation, listing,
+recording, and removal SQL are owned by the selected dialect processor.
+
+Clarification is a typed suspension, not host behavior. A runner returns
+`CommandError::NeedsInput` with the exact clarification list. The host may
+collect `Decision` values, add them to the same resolved make command, and
+retry. CLI uses terminal prompts; WASM and future FFI hosts return the request
+as structured data.
+
+The native crate contains only configuration/path resolution, lazy SQLx
+connection adapters, filesystem migration storage, and presentation. It does
+not have a second migrator or command-orchestration layer. WASM follows the same
+runner protocol. Exact token arrays are its only textual browser input and use
+the shared `argh` grammar; command-line string splitting is not a host contract.
 
 | Concern | Required environment |
 |---|---|
@@ -297,7 +352,8 @@ Current deliberate limits include:
 - SQL schema input accepts recognized `CREATE` definitions only.
 - Opaque source changes are not reliable live verification inputs.
 - Primary-key mutation generation remains manual SQL.
-- MySQL/MariaDB live schema lifecycle support is not implemented.
+- MySQL and MariaDB support is released independently only after each product's
+  parser, offline, drift, and live evidence gates pass.
 
 Architecture changes must be deliberate. Implementation must not silently
 broaden, weaken, or contradict these guarantees.

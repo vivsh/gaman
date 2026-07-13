@@ -27,10 +27,14 @@ dialects:
     checks: [verify]
     mutate_sql: |
       CREATE OR REPLACE VIEW user_ids AS SELECT id FROM users WHERE active;
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []
   sqlite:
     checks: [verify]
     mutate_sql: |
       DROP VIEW user_ids;
       CREATE VIEW user_ids AS SELECT id FROM users WHERE active;
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []

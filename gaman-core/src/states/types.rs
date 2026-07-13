@@ -70,6 +70,9 @@ pub struct OpaqueMeta {
     #[doc(hidden)]
     #[serde(default)]
     pub(crate) fingerprint: Option<String>,
+    #[doc(hidden)]
+    #[serde(default)]
+    pub(crate) identity_only: bool,
 }
 
 impl OpaqueMeta {
@@ -81,12 +84,29 @@ impl OpaqueMeta {
             raw: Some(raw),
             trusted: false,
             fingerprint,
+            identity_only: false,
+        }
+    }
+
+    /// Creates trusted opaque identity when a catalog cannot return executable source.
+    #[doc(hidden)]
+    pub fn trusted_identity() -> Self {
+        Self {
+            raw: None,
+            trusted: true,
+            fingerprint: None,
+            identity_only: true,
         }
     }
 
     #[doc(hidden)]
+    pub fn is_opaque(&self) -> bool {
+        self.raw.is_some() || self.identity_only
+    }
+
+    #[doc(hidden)]
     pub fn is_empty(&self) -> bool {
-        self.raw.is_none() && !self.trusted && self.fingerprint.is_none()
+        self.raw.is_none() && !self.trusted && self.fingerprint.is_none() && !self.identity_only
     }
 }
 
@@ -169,6 +189,13 @@ pub struct FunctionDef {
 }
 
 impl FunctionDef {
+    /// Builds trusted opaque identity when executable source is unavailable.
+    #[doc(hidden)]
+    pub fn from_trusted_identity(name: impl Into<String>) -> Self {
+        let mut value = Self::from_raw(name, "");
+        value.opaque = OpaqueMeta::trusted_identity();
+        value
+    }
     pub fn qualified_name(&self) -> String {
         schema_qualified_key(&self.name, self.schema.as_deref())
     }
@@ -198,7 +225,7 @@ impl FunctionDef {
 
     #[doc(hidden)]
     pub fn is_opaque(&self) -> bool {
-        self.opaque.raw.is_some()
+        self.opaque.is_opaque()
     }
 
     #[doc(hidden)]
@@ -236,6 +263,16 @@ pub enum TriggerScope {
     Statement,
 }
 
+/// Storage behavior for a generated column.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneratedStorage {
+    /// Compute the value when it is read.
+    Virtual,
+    /// Persist the computed value in the table.
+    Stored,
+}
+
 /// A trigger attached to a table.
 ///
 /// `query` stores authored trigger statements. PostgreSQL renders query
@@ -263,6 +300,21 @@ pub struct TriggerDef {
 }
 
 impl TriggerDef {
+    /// Builds trusted opaque identity when executable source is unavailable.
+    #[doc(hidden)]
+    pub fn from_trusted_identity(name: impl Into<String>) -> Self {
+        let mut value = Self::from_raw(name, "");
+        value.opaque = OpaqueMeta::trusted_identity();
+        value
+    }
+
+    /// Builds an opaque trigger from canonical trusted catalog source.
+    #[doc(hidden)]
+    pub fn from_trusted_raw(name: impl Into<String>, raw: impl Into<String>) -> Self {
+        let mut value = Self::from_raw(name, raw);
+        value.mark_trusted();
+        value
+    }
     #[doc(hidden)]
     pub fn from_raw(name: impl Into<String>, raw: impl Into<String>) -> Self {
         Self {
@@ -280,7 +332,7 @@ impl TriggerDef {
 
     #[doc(hidden)]
     pub fn is_opaque(&self) -> bool {
-        self.opaque.raw.is_some()
+        self.opaque.is_opaque()
     }
 
     #[doc(hidden)]
@@ -306,6 +358,21 @@ pub struct ViewDef {
 }
 
 impl ViewDef {
+    /// Builds trusted opaque identity when executable source is unavailable.
+    #[doc(hidden)]
+    pub fn from_trusted_identity(name: impl Into<String>) -> Self {
+        let mut value = Self::from_raw(name, "");
+        value.opaque = OpaqueMeta::trusted_identity();
+        value
+    }
+
+    /// Builds an opaque view from canonical trusted catalog source.
+    #[doc(hidden)]
+    pub fn from_trusted_raw(name: impl Into<String>, raw: impl Into<String>) -> Self {
+        let mut value = Self::from_raw(name, raw);
+        value.mark_trusted();
+        value
+    }
     pub fn qualified_name(&self) -> String {
         schema_qualified_key(&self.name, self.schema.as_deref())
     }
@@ -322,7 +389,7 @@ impl ViewDef {
 
     #[doc(hidden)]
     pub fn is_opaque(&self) -> bool {
-        self.opaque.raw.is_some()
+        self.opaque.is_opaque()
     }
 
     #[doc(hidden)]
@@ -366,7 +433,7 @@ impl ExtensionDef {
 
     #[doc(hidden)]
     pub fn is_opaque(&self) -> bool {
-        self.opaque.raw.is_some()
+        self.opaque.is_opaque()
     }
 
     #[doc(hidden)]
@@ -399,7 +466,7 @@ impl EnumDef {
 
     #[doc(hidden)]
     pub fn is_opaque(&self) -> bool {
-        self.opaque.raw.is_some()
+        self.opaque.is_opaque()
     }
 }
 
@@ -511,6 +578,18 @@ impl Index {
         self
     }
 
+    /// Builds a trusted opaque index whose source is unavailable from the catalog.
+    #[doc(hidden)]
+    pub fn from_trusted_identity(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            columns: Vec::new(),
+            unique: false,
+            predicate: None,
+            opaque: OpaqueMeta::trusted_identity(),
+        }
+    }
+
     #[doc(hidden)]
     pub fn from_raw(name: impl Into<String>, raw: impl Into<String>) -> Self {
         Self {
@@ -532,7 +611,7 @@ impl Index {
 
     #[doc(hidden)]
     pub fn is_opaque(&self) -> bool {
-        self.opaque.raw.is_some()
+        self.opaque.is_opaque()
     }
 
     #[doc(hidden)]
@@ -593,7 +672,7 @@ impl Constraint {
 
     #[doc(hidden)]
     pub fn is_opaque(&self) -> bool {
-        matches!(self, Self::Opaque { opaque, .. } if opaque.raw.is_some())
+        matches!(self, Self::Opaque { opaque, .. } if opaque.is_opaque())
     }
 
     #[doc(hidden)]
@@ -642,6 +721,129 @@ pub struct ColumnRef {
     pub on_update: Option<String>,
 }
 
+/// MySQL-specific column properties.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MysqlColumnOptions {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto_increment: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_update_expression: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character_set: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collation: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub invisible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
+
+impl MysqlColumnOptions {
+    /// Enables automatic sequence generation for this column.
+    pub fn auto_increment(mut self) -> Self {
+        self.auto_increment = true;
+        self
+    }
+    /// Sets the automatic row-update expression.
+    pub fn on_update(mut self, value: impl Into<String>) -> Self {
+        self.on_update_expression = Some(value.into());
+        self
+    }
+    /// Pins the column character set.
+    pub fn character_set(mut self, value: impl Into<String>) -> Self {
+        self.character_set = Some(value.into());
+        self
+    }
+    /// Pins the column collation.
+    pub fn collation(mut self, value: impl Into<String>) -> Self {
+        self.collation = Some(value.into());
+        self
+    }
+    /// Hides the column from implicit projections.
+    pub fn invisible(mut self) -> Self {
+        self.invisible = true;
+        self
+    }
+    /// Sets the column comment.
+    pub fn comment(mut self, value: impl Into<String>) -> Self {
+        self.comment = Some(value.into());
+        self
+    }
+}
+
+/// MariaDB-specific column properties.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MariadbColumnOptions {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto_increment: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_update_expression: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character_set: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collation: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub invisible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
+
+impl MariadbColumnOptions {
+    /// Enables automatic sequence generation for this column.
+    pub fn auto_increment(mut self) -> Self {
+        self.auto_increment = true;
+        self
+    }
+    /// Sets the automatic row-update expression.
+    pub fn on_update(mut self, value: impl Into<String>) -> Self {
+        self.on_update_expression = Some(value.into());
+        self
+    }
+    /// Pins the column character set.
+    pub fn character_set(mut self, value: impl Into<String>) -> Self {
+        self.character_set = Some(value.into());
+        self
+    }
+    /// Pins the column collation.
+    pub fn collation(mut self, value: impl Into<String>) -> Self {
+        self.collation = Some(value.into());
+        self
+    }
+    /// Hides the column from implicit projections.
+    pub fn invisible(mut self) -> Self {
+        self.invisible = true;
+        self
+    }
+    /// Sets the column comment.
+    pub fn comment(mut self, value: impl Into<String>) -> Self {
+        self.comment = Some(value.into());
+        self
+    }
+}
+
+/// Product-specific column metadata with mutually exclusive product blocks.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ColumnDialectOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mysql: Option<MysqlColumnOptions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mariadb: Option<MariadbColumnOptions>,
+}
+
+impl ColumnDialectOptions {
+    /// Returns the MySQL properties when selected.
+    pub fn mysql(&self) -> Option<&MysqlColumnOptions> {
+        self.mysql.as_ref()
+    }
+
+    /// Returns the MariaDB properties when selected.
+    pub fn mariadb(&self) -> Option<&MariadbColumnOptions> {
+        self.mariadb.as_ref()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Column {
@@ -660,6 +862,12 @@ pub struct Column {
     pub check: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generated: Option<String>,
+    /// Storage behavior for a generated expression.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated_storage: Option<GeneratedStorage>,
+    /// Dialect-owned metadata excluded from generic schema semantics.
+    #[serde(flatten)]
+    pub dialect_options: ColumnDialectOptions,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

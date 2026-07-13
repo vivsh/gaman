@@ -1,0 +1,45 @@
+description: MySQL table columns and auto increment lower into modeled schema entities
+dialect: mysql
+sql: |
+  CREATE TABLE users (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  );
+expect_entities:
+- kind: table
+  name: users
+- kind: column
+  table: users
+  name: id
+- kind: column
+  table: users
+  name: email
+- kind: column
+  table: users
+  name: updated_at
+expect_schema:
+  tables:
+    users:
+      name: users
+      primary_key:
+        name: users_pkey
+        columns: [id]
+      columns:
+      - name: id
+        type: BIGINT
+        nullable: false
+        primary_key: true
+        mysql:
+          auto_increment: true
+      - name: email
+        type: VARCHAR(255)
+        nullable: false
+        primary_key: false
+      - name: updated_at
+        type: TIMESTAMP
+        nullable: true
+        default: CURRENT_TIMESTAMP
+        primary_key: false
+        mysql:
+          on_update_expression: CURRENT_TIMESTAMP

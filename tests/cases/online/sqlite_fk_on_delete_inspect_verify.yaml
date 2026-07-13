@@ -42,10 +42,10 @@ dialects:
             columns: [id]
           columns:
             - name: id
-              type: integer
+              type: INTEGER
               primary_key: true
             - name: user_id
-              type: integer
+              type: INTEGER
           foreign_keys:
             - name: preferences_user_id_fkey
               columns: [user_id]
@@ -59,6 +59,8 @@ dialects:
             columns: [id]
           columns:
             - name: id
-              type: integer
+              type: INTEGER
               primary_key: true
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []

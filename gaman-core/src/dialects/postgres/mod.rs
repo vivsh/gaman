@@ -95,6 +95,36 @@ impl DialectProcessor for PostgresProcessor {
         schema.prepare(crate::dialects::Dialect::Postgres)
     }
 
+    fn tracking_install_sql(&self, table: &str) -> Option<Vec<String>> {
+        Some(vec![format!(
+            "CREATE TABLE IF NOT EXISTS \"{}\" (id TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+            table.replace('"', "\"\"")
+        )])
+    }
+
+    fn tracking_list_sql(&self, table: &str) -> Option<String> {
+        Some(format!(
+            "SELECT id FROM \"{}\" ORDER BY applied_at, id",
+            table.replace('"', "\"\"")
+        ))
+    }
+
+    fn tracking_record_sql(&self, table: &str, id: &str) -> Option<String> {
+        Some(format!(
+            "INSERT INTO \"{}\" (id) VALUES ('{}')",
+            table.replace('"', "\"\""),
+            id.replace('\'', "''")
+        ))
+    }
+
+    fn tracking_unrecord_sql(&self, table: &str, id: &str) -> Option<String> {
+        Some(format!(
+            "DELETE FROM \"{}\" WHERE id = '{}'",
+            table.replace('"', "\"\""),
+            id.replace('\'', "''")
+        ))
+    }
+
     fn validate_migration(&self, migration: &Migration) -> Result<(), DialectError> {
         validate_migration(migration)
     }
@@ -245,8 +275,8 @@ pub fn canonical_type(t: &str) -> String {
     }
 }
 
-pub fn validate_schema(_schema: &Schema) -> Result<(), SchemaValidationError> {
-    Ok(())
+pub fn validate_schema(schema: &Schema) -> Result<(), SchemaValidationError> {
+    crate::states::reject_family_column_options(schema, "PostgreSQL")
 }
 
 pub fn is_catalog_type(t: &str) -> bool {

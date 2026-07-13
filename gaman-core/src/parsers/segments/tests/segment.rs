@@ -184,34 +184,34 @@ fn unterminated_dollar_quote_is_segment_error() {
     assert!(matches!(err, ParseError::Segment { .. }));
 }
 
-/// Verifies MySQL dialect names and URLs resolve to the MySQL stub dialect.
+/// Verifies MySQL and MariaDB names and URLs resolve independently.
 #[test]
 fn mysql_dialect_names_and_urls_parse() {
     assert_eq!(Dialect::parse("mysql"), Some(Dialect::Mysql));
-    assert_eq!(Dialect::parse("mariadb"), Some(Dialect::Mysql));
+    assert_eq!(Dialect::parse("mariadb"), Some(Dialect::Mariadb));
     assert_eq!(
         Dialect::parse_from_url("mysql://localhost/app"),
         Ok(Dialect::Mysql)
     );
     assert_eq!(
         Dialect::parse_from_url("mariadb://localhost/app"),
-        Ok(Dialect::Mysql)
+        Ok(Dialect::Mariadb)
     );
 }
 
-/// Verifies MySQL migration rendering remains explicitly unsupported.
+/// Verifies MySQL migration rendering accepts an empty non-atomic migration.
 #[test]
-fn mysql_rendering_is_unsupported() {
+fn mysql_rendering_accepts_empty_migration() {
     let migration = crate::migrations::Migration {
         id: "m1".to_string(),
         dependencies: Vec::new(),
         operations: Vec::new(),
-        atomic: true,
+        atomic: false,
     };
-    let err = Dialect::Mysql
+    let sql = Dialect::Mysql
         .migration_to_sql(&migration, &crate::states::Schema::default())
-        .unwrap_err();
-    assert!(err.to_string().contains("MySQL dialect is not implemented"));
+        .expect("render mysql migration");
+    assert!(sql.is_empty());
 }
 
 /// Verifies byte offsets extract the exact returned SQL slice.

@@ -1,0 +1,25 @@
+description: MariaDB renders complete product-owned column definitions.
+group: sql_rendering
+features: [group.sql_rendering, kind.migration_to_sql]
+kind: migration_to_sql
+dialect: mariadb
+migrations:
+- id: 0001_mariadb_columns
+  atomic: false
+  operations:
+  - type: create_table
+    table:
+      name: audit_log
+      columns:
+      - name: id
+        type: BIGINT
+        primary_key: true
+        mariadb:
+          auto_increment: true
+      - name: changed_at
+        type: DATETIME
+        default: CURRENT_TIMESTAMP
+        mariadb:
+          on_update_expression: CURRENT_TIMESTAMP
+expect_sql: |
+  CREATE TABLE `audit_log` (`id` BIGINT NOT NULL AUTO_INCREMENT, `changed_at` DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL ON UPDATE CURRENT_TIMESTAMP, CONSTRAINT `audit_log_pkey` PRIMARY KEY (`id`))

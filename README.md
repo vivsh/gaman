@@ -55,9 +55,12 @@ gaman apply
 gaman verify
 ```
 
-The installed CLI includes all currently supported live dialects: PostgreSQL and
-SQLite. MySQL/MariaDB remains planned and is not included in the supported CLI
-profile yet.
+The default CLI includes PostgreSQL and SQLite. MySQL and MariaDB remain
+separate opt-in feature builds while their full live-server matrices are being
+qualified. MySQL now has accepted live fixtures for product-owned column
+metadata, row-format inspection, opaque invisible indexes, and representative
+no-drift verification. MariaDB currently has parser and offline evidence but
+still requires accepted live-server evidence.
 
 The loop is intentionally small:
 
@@ -160,52 +163,67 @@ metadata, but their bodies are not drift inputs unless a dialect-specific
 verifier can inspect them deterministically.
 
 <!-- gaman:support-matrix:start -->
-| Feature | PostgreSQL | SQLite | MySQL / MariaDB |
-| --- | --- | --- | --- |
-| Offline replay, diff, and migration generation | ✅ | ✅ | 🚧 |
-| Offline SQL rendering through `sql_migrate` | ✅ | ✅ | 🚧 |
-| Live migration application | ✅ | ✅ | 🚧 |
-| Live database introspection | ✅ | ✅ | 🚧 |
-| Live `verify_db` | ✅ | ✅ | 🚧 |
-| Migration tracking table | ✅ | ✅ | 🚧 |
-| Dedicated migration lock | ✅ | ❌ | 🚧 |
-| Tables: create, drop, rename | ✅ | ✅ | 🚧 |
-| Columns: add, drop, rename | ✅ | ✅ | 🚧 |
-| Columns: type, nullability, default changes | ✅ | ✅ | 🚧 |
-| Generated columns | ✅ | ✅ | 🚧 |
-| Single-column primary keys | ✅ | ✅ | 🚧 |
-| Multi-column / composite primary keys | ✅ | ✅ | 🚧 |
-| Automatic primary-key mutation generation | ❌ | ❌ | ❌ |
-| Single-column foreign keys | ✅ | ✅ | 🚧 |
-| Multi-column / composite foreign keys | ✅ | ✅ | 🚧 |
-| Unique constraints | ✅ | ✅ | 🚧 |
-| Check constraints | ✅ | ✅ | 🚧 |
-| Indexes | ✅ | ✅ | 🚧 |
-| Partial indexes | ✅ | ◐ | 🚧 |
-| Concurrent indexes | ✅ | ❌ | 🚧 |
-| Schemas / namespaces | ✅ | ❌ | ❌ |
-| Extensions as opaque schema objects | ✅ | ❌ | ❌ |
-| Enums | ✅ | ❌ | 🚧 |
-| Functions as opaque schema objects | ✅ | ❌ | 🚧 |
-| Trigger query schema objects | ✅ | ✅ | 🚧 |
-| Views as opaque schema objects | ✅ | ✅ | 🚧 |
-| Raw SQL statements | ✅ | ✅ | 🚧 |
-| SQLite table-rebuild planner for ALTER TABLE | ❌ | ✅ | ❌ |
-| Opaque source formatting fallback in offline diff | ✅ | ✅ | 🚧 |
-| Ownership-scoped `verify_db` | ✅ | ✅ | 🚧 |
+<!-- evidence-generation: 20260713T170126Z-51770 -->
+| Feature | PostgreSQL | SQLite | MySQL | MariaDB |
+| --- | --- | --- | --- | --- |
+| Offline replay, diff, and migration generation | ✅ | ✅ | ✅ | 🚧 |
+| Offline SQL rendering through `sql_migrate` | ✅ | ✅ | ✅ | 🚧 |
+| Live migration application | ✅ | ✅ | ◐ | 🚧 |
+| Live database introspection | ✅ | ✅ | ✅ | 🚧 |
+| Live `verify_db` | ✅ | ✅ | ✅ | 🚧 |
+| Non-transactional partial-failure reporting | ❌ | ❌ | ✅ | 🚧 |
+| Migration tracking table | ✅ | ✅ | ✅ | 🚧 |
+| Dedicated migration lock | ✅ | ❌ | ◐ | 🚧 |
+| Tables: create, drop, rename | ✅ | ✅ | ◐ | 🚧 |
+| Columns: add, drop, rename | ✅ | ✅ | ✅ | 🚧 |
+| Columns: type, nullability, default changes | ✅ | ✅ | ◐ | 🚧 |
+| Generated columns | ✅ | ✅ | ✅ | 🚧 |
+| Single-column primary keys | ✅ | ✅ | ✅ | 🚧 |
+| Multi-column / composite primary keys | ✅ | ✅ | ✅ | 🚧 |
+| Automatic primary-key mutation generation | ❌ | ❌ | ❌ | ❌ |
+| Single-column foreign keys | ✅ | ✅ | ✅ | 🚧 |
+| Multi-column / composite foreign keys | ✅ | ✅ | ✅ | 🚧 |
+| Unique constraints | ✅ | ✅ | ✅ | 🚧 |
+| Check constraints | ✅ | ✅ | ✅ | 🚧 |
+| Indexes | ✅ | ✅ | ✅ | 🚧 |
+| Partial indexes | ✅ | ◐ | ❌ | 🚧 |
+| Concurrent indexes | ✅ | ❌ | 🚧 | 🚧 |
+| Schemas / namespaces | ✅ | ❌ | ❌ | ❌ |
+| Extensions as opaque schema objects | ✅ | ❌ | ❌ | ❌ |
+| Enums | ✅ | ❌ | 🚧 | 🚧 |
+| Functions as opaque schema objects | ✅ | ❌ | ◐ | 🚧 |
+| Trigger query schema objects | ✅ | ✅ | ◐ | 🚧 |
+| Views as opaque schema objects | ✅ | ✅ | ◐ | 🚧 |
+| Raw SQL statements | ✅ | ✅ | ✅ | 🚧 |
+| SQLite table-rebuild planner for ALTER TABLE | ❌ | ✅ | ❌ | ❌ |
+| Opaque source formatting fallback in offline diff | ✅ | 🚧 | 🚧 | 🚧 |
+| Ownership-scoped `verify_db` | ✅ | ✅ | ✅ | 🚧 |
 
 Notes:
+- Live migration application (mysql): Apply, target application, rollback, idempotency, and partial-failure behavior are live-tested. Fake application is not yet accepted evidence.
+- Non-transactional partial-failure reporting (postgres): PostgreSQL modeled migrations use transactional DDL; this failure mode does not apply.
+- Non-transactional partial-failure reporting (sqlite): SQLite modeled migrations use transactional DDL; this failure mode does not apply.
+- Dedicated migration lock (mysql): Named-lock release after application is live-tested; contention and timeout behavior are not yet accepted evidence.
 - Dedicated migration lock (sqlite): SQLite has no dedicated advisory-lock primitive; migration atomicity relies on SQLite transactions and file locking.
-- Automatic primary-key mutation generation (postgres/sqlite/mysql): Primary-key surgery is intentionally manual/raw SQL for every dialect.
+- Tables: create, drop, rename (mysql): MySQL table creation and rename are live-tested; direct live table-drop coverage is not yet accepted evidence.
+- Columns: type, nullability, default changes (mysql): MySQL column type, nullability, default, and product metadata round trips are live-tested; mutation cases are not yet accepted evidence.
+- Automatic primary-key mutation generation (postgres/sqlite/mysql/mariadb): Primary-key surgery is intentionally manual/raw SQL for every dialect.
+- Partial indexes (mysql): MySQL does not support predicate-based partial indexes; prefix and advanced indexes use Gaman's opaque index lifecycle.
 - Partial indexes (sqlite): SQLite partial-index SQL rendering is proven offline; live predicate introspection/verify is not yet accepted evidence.
 - Concurrent indexes (sqlite): SQLite has no CREATE INDEX CONCURRENTLY syntax.
+- Schemas / namespaces (mariadb): MariaDB does not use PostgreSQL-style schemas/namespaces in Gaman.
 - Schemas / namespaces (mysql): MySQL does not use PostgreSQL-style schemas/namespaces in Gaman.
 - Schemas / namespaces (sqlite): SQLite does not support PostgreSQL-style schemas/namespaces in Gaman.
+- Extensions as opaque schema objects (mariadb): MariaDB extensions are not modeled as migratable schema objects.
 - Extensions as opaque schema objects (mysql): MySQL extensions are not modeled as migratable schema objects.
 - Extensions as opaque schema objects (sqlite): SQLite extensions are not modeled as migratable schema objects.
 - Enums (sqlite): SQLite has no native enum schema object in Gaman.
+- Functions as opaque schema objects (mysql): MySQL stored functions are accepted as opaque SQL offline; live function inspection and verification are not yet accepted evidence.
 - Functions as opaque schema objects (sqlite): SQLite stored functions are not supported by Gaman.
+- Trigger query schema objects (mysql): MySQL triggers are accepted as opaque SQL offline; live trigger inspection and verification are not yet accepted evidence.
+- Views as opaque schema objects (mysql): Opaque view creation and inspection coexistence are live-tested; missing-view presence drift and repair are not yet accepted evidence.
 - SQLite table-rebuild planner for ALTER TABLE (postgres): PostgreSQL uses native ALTER TABLE paths; SQLite rebuild planning does not apply.
+- SQLite table-rebuild planner for ALTER TABLE (mariadb): SQLite rebuild planning does not apply to MariaDB.
 - SQLite table-rebuild planner for ALTER TABLE (mysql): SQLite rebuild planning does not apply to MySQL.
 <!-- gaman:support-matrix:end -->
 
@@ -278,8 +296,9 @@ YAML and JSON use the same direct database type strings as `schema.sql`; they
 do not introduce an alternate type vocabulary. Rust builders and live inspection
 also feed this same schema model.
 
-Rust applications can also use builders, `EmbeddedMigrations`, `MigrationSource`,
-and `MigrationEngine` directly. See [Embedding Gaman In Rust](docs/rust-embedding.md).
+Rust applications can also use builders, `EmbeddedMigrations`, `MigrationStore`,
+`MigrationEngine`, and `MigrationRunner` directly. See
+[Embedding Gaman In Rust](docs/rust-embedding.md).
 
 ## Clarification
 
@@ -339,3 +358,5 @@ More detail lives in:
 - [ARCHITECTURE.md](ARCHITECTURE.md)
 - [TESTING.md](TESTING.md)
 - [Embedding Gaman In Rust](docs/rust-embedding.md)
+- [Command Protocol](docs/command-protocol.md)
+- [Future C/FFI Embedding](docs/ffi-embedding.md)

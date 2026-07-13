@@ -40,9 +40,8 @@ fn property_semantics(property: &str) -> (&'static str, &'static str) {
             "dialect schema canonicalization",
         ),
         "type" => ("canonical column type", "dialect type alias normalization"),
-        "nullable" | "primary_key" | "unique" | "security_definer" => {
-            ("modeled boolean state", "exact boolean comparison")
-        }
+        "nullable" | "primary_key" | "unique" | "security_definer" | "auto_increment"
+        | "invisible" => ("modeled boolean state", "exact boolean comparison"),
         "default" => (
             "modeled default expression",
             "dialect-safe literal canonicalization",
@@ -55,7 +54,7 @@ fn property_semantics(property: &str) -> (&'static str, &'static str) {
             "canonical foreign-key action",
             "canonical action keyword comparison",
         ),
-        "definition" | "predicate" | "check" | "generated" => (
+        "definition" | "predicate" | "check" | "generated" | "on_update_expression" => (
             "stable inspected expression text",
             "dialect comparator normalization",
         ),

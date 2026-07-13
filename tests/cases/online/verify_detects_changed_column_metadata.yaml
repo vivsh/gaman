@@ -25,14 +25,17 @@ mutate_sql: |
 dialects:
   postgres:
     checks: [verify]
-    expect_verify:
-      - type: alter_column
-        table_name: tasks
-        old:
-          name: status
-          type: text
-          default: "'done'"
-        new:
-          name: status
-          type: text
-          default: "'todo'"
+    expect_verification:
+      findings:
+      - {operation: alter_column, entity_kind: column, entity_name: tasks.status, property: default, expected: "'todo'", observed: "'done'", note: null}
+      operations:
+        - type: alter_column
+          table_name: tasks
+          old:
+            name: status
+            type: text
+            default: "'done'"
+          new:
+            name: status
+            type: text
+            default: "'todo'"

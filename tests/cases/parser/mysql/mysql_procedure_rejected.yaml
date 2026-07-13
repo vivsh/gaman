@@ -1,0 +1,5 @@
+description: MySQL procedures remain outside the closed EntityKind schema model
+dialect: mysql
+sql: |
+  CREATE PROCEDURE refresh_cache() SELECT 1;
+expect_error: unsupported

@@ -87,13 +87,13 @@ dialects:
             columns: [tenant_id, region_id, account_id]
           columns:
             - name: tenant_id
-              type: integer
+              type: INTEGER
               primary_key: true
             - name: region_id
-              type: integer
+              type: INTEGER
               primary_key: true
             - name: account_id
-              type: integer
+              type: INTEGER
               primary_key: true
           foreign_keys:
             - name: accounts_tenant_id_region_id_fkey
@@ -107,8 +107,8 @@ dialects:
             columns: [tenant_id, region_id]
           columns:
             - name: tenant_id
-              type: integer
+              type: INTEGER
               primary_key: true
             - name: region_id
-              type: integer
+              type: INTEGER
               primary_key: true

@@ -1,5 +1,5 @@
 use sqlparser::ast::Statement;
-use sqlparser::dialect::{PostgreSqlDialect, SQLiteDialect};
+use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
 
 use super::error::ParseError;
@@ -70,10 +70,6 @@ pub fn parse_sql(sql: &str, dialect: Dialect) -> Result<Schema, ParseError> {
 
 pub(crate) fn parse_sql_raw(sql: &str, dialect: Dialect) -> Result<Schema, ParseError> {
     let segments = segment_sql(sql, dialect)?;
-    if matches!(dialect, Dialect::Mysql) {
-        return Err(ParseError::UnsupportedDialect("mysql".to_string()));
-    }
-
     let mut ctx = ParseContext::new();
     for segment in segments {
         ensure_schema_segment(&segment, dialect)?;
@@ -94,7 +90,8 @@ pub(crate) fn parse_sql_raw(sql: &str, dialect: Dialect) -> Result<Schema, Parse
             let lowered = match dialect {
                 Dialect::Postgres => postgres::lower_statement(stmt, &mut ctx),
                 Dialect::Sqlite => sqlite::lower_statement(stmt, &mut ctx),
-                Dialect::Mysql => unreachable!("mysql returned above"),
+                Dialect::Mysql => super::mysql::lower_statement(stmt, &mut ctx, dialect),
+                Dialect::Mariadb => super::mariadb::lower_statement(stmt, &mut ctx),
             };
             if let Err(error) = lowered {
                 if matches!(segment.kind, Some(SqlStatementKind::Ddl(ref ddl)) if ddl.entity == EntityKind::Table)
@@ -102,7 +99,10 @@ pub(crate) fn parse_sql_raw(sql: &str, dialect: Dialect) -> Result<Schema, Parse
                     return Err(error);
                 }
                 lower_raw_segment(&segment, &mut ctx, dialect)?;
-            } else if matches!(
+            } else {
+                preserve_family_table_types(&segment, &mut ctx, dialect);
+            }
+            if matches!(
                 segment.kind,
                 Some(SqlStatementKind::Ddl(ref ddl)) if ddl.entity == EntityKind::Index
             ) {
@@ -133,7 +133,8 @@ fn parse_segment(
     match dialect {
         Dialect::Postgres => Parser::parse_sql(&PostgreSqlDialect {}, sql),
         Dialect::Sqlite => Parser::parse_sql(&SQLiteDialect {}, sql),
-        Dialect::Mysql => unreachable!("mysql returned before segment parsing"),
+        Dialect::Mariadb => Parser::parse_sql(&MySqlDialect {}, sql),
+        Dialect::Mysql => Parser::parse_sql(&MySqlDialect {}, sql),
     }
 }
 
@@ -160,11 +161,33 @@ fn recover_modeled_table(
         match dialect {
             Dialect::Postgres => postgres::lower_statement(statement, ctx)?,
             Dialect::Sqlite => sqlite::lower_statement(statement, ctx)?,
-            Dialect::Mysql => unreachable!("mysql returned before table recovery"),
+            Dialect::Mysql => super::mysql::lower_statement(statement, ctx, dialect)?,
+            Dialect::Mariadb => super::mariadb::lower_statement(statement, ctx)?,
         }
     }
     attach_recovered_options(ddl.name.as_ref(), recovered, ctx);
+    preserve_family_table_types(segment, ctx, dialect);
     Ok(true)
+}
+
+fn preserve_family_table_types(segment: &SqlSegment, ctx: &mut ParseContext, dialect: Dialect) {
+    if !matches!(dialect, Dialect::Mysql | Dialect::Mariadb) {
+        return;
+    }
+    let Some(SqlStatementKind::Ddl(ddl)) = &segment.kind else {
+        return;
+    };
+    if ddl.entity != EntityKind::Table {
+        return;
+    }
+    let Some(name) = &ddl.name else {
+        return;
+    };
+    let (name, schema) = object_name_parts(name);
+    let key = crate::states::schema_qualified_key(&name, schema.as_deref());
+    if let Some(table) = ctx.schema.tables.get_mut(&key) {
+        super::mysql_family::preserve_native_types(&segment.sql, table, dialect);
+    }
 }
 
 /// Attaches recovered outer syntax to the table produced from the cleaned core.

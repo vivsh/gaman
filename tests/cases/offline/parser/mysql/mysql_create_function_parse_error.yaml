@@ -1,5 +1,5 @@
 ---
-description: MySQL routine lowering is unsupported while MySQL remains a stub dialect.
+description: MySQL stored functions are accepted through opaque source fallback.
 group: parser
 features:
 - group.parser
@@ -10,6 +10,5 @@ parser_dialect: mysql
 sql: 'CREATE FUNCTION f(x INT) RETURNS INT DETERMINISTIC RETURN x + 1;
 
 '
-expect_parse: error
-expect_lowering: error
-expect_error: unsupported SQL dialect
+expect_parse: ok
+expect_lowering: ok

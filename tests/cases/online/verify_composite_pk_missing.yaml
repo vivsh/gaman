@@ -26,7 +26,10 @@ dialects:
     checks: [verify]
     mutate_sql: |
       ALTER TABLE memberships DROP CONSTRAINT memberships_pkey;
-    expect_verify: []
+    expect_verification:
+      findings:
+      - {operation: alter_primary_key, entity_kind: constraint, entity_name: memberships.memberships_pkey, property: presence, expected: present, observed: "<missing>", note: null}
+      operations: []
   sqlite:
     checks: [verify]
     mutate_sql: |
@@ -39,4 +42,7 @@ dialects:
         SELECT tenant_id, user_id, role FROM memberships;
       DROP TABLE memberships;
       ALTER TABLE memberships_rebuild RENAME TO memberships;
-    expect_verify: []
+    expect_verification:
+      findings:
+      - {operation: alter_primary_key, entity_kind: constraint, entity_name: memberships.memberships_pkey, property: presence, expected: present, observed: "<missing>", note: null}
+      operations: []

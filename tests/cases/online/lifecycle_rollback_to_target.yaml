@@ -62,10 +62,10 @@ dialects:
             columns: [id]
           columns:
             - name: id
-              type: integer
+              type: INTEGER
               primary_key: true
             - name: name
-              type: text
+              type: TEXT
     data:
       - sql: "SELECT email FROM users"
         expect_error: "no such column"

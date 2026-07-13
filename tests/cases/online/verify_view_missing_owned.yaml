@@ -25,15 +25,21 @@ mutate_sql: |
 dialects:
   postgres:
     checks: [verify]
-    expect_verify:
-      - type: create_view
-        view:
-          name: user_ids
-          definition: ""
+    expect_verification:
+      findings:
+      - {operation: create_view, entity_kind: view, entity_name: user_ids, property: presence, expected: present, observed: "<missing>", note: null}
+      operations:
+        - type: create_view
+          view:
+            name: user_ids
+            definition: ""
   sqlite:
     checks: [verify]
-    expect_verify:
-      - type: create_view
-        view:
-          name: user_ids
-          definition: ""
+    expect_verification:
+      findings:
+      - {operation: create_view, entity_kind: view, entity_name: user_ids, property: presence, expected: present, observed: "<missing>", note: null}
+      operations:
+        - type: create_view
+          view:
+            name: user_ids
+            definition: ""

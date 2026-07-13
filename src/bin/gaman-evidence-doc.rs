@@ -8,7 +8,7 @@ use gaman_core::states::types::EntityKind;
 use serde::Deserialize;
 use thiserror::Error;
 
-const DIALECTS: &[&str] = &["postgres", "sqlite", "mysql"];
+const DIALECTS: &[&str] = &["postgres", "sqlite", "mysql", "mariadb"];
 const DOC_PATH: &str = "docs/support-evidence.md";
 
 #[derive(Debug, Error)]
@@ -23,6 +23,7 @@ enum EvidenceError {
 
 #[derive(Debug, Deserialize)]
 struct ParserResults {
+    generation: String,
     cases: BTreeMap<String, ParserCaseResult>,
 }
 
@@ -31,7 +32,9 @@ struct ParserCaseResult {
     dialect: String,
     status: String,
     #[serde(default)]
-    entities: Vec<ParserEntity>,
+    _expected_entities: Vec<ParserEntity>,
+    #[serde(default)]
+    observed_entities: Vec<ParserEntity>,
     #[serde(default)]
     reason: Option<String>,
 }
@@ -43,6 +46,7 @@ struct ParserEntity {
 
 #[derive(Debug, Deserialize)]
 struct OnlineResults {
+    generation: String,
     features: BTreeMap<String, BTreeMap<String, OnlineResultCell>>,
 }
 
@@ -65,7 +69,8 @@ struct OnlineEvidence {
 
 #[derive(Debug, Deserialize)]
 struct OfflineResults {
-    features: BTreeMap<String, OfflineResultCell>,
+    generation: String,
+    features: BTreeMap<String, BTreeMap<String, OfflineResultCell>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,6 +88,8 @@ struct OfflineEvidence {
     kind: String,
     #[serde(default)]
     dialect: Option<String>,
+    #[serde(default)]
+    assertions: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,10 +149,15 @@ fn run() -> Result<(), EvidenceError> {
     let doc = render_doc(&inputs);
     match mode {
         Mode::Print => println!("{doc}"),
-        Mode::UpdateDoc => write_doc(&root, &doc)?,
-        Mode::Check => check_doc(&root, &doc)?,
+        Mode::UpdateDoc => write_doc_path(&doc_path(&root), &doc)?,
+        Mode::Check => check_doc_path(&doc_path(&root), &doc)?,
     }
     Ok(())
+}
+
+/// Resolves the generated document destination for staged publication.
+fn doc_path(root: &Path) -> PathBuf {
+    input_path(root, "GAMAN_EVIDENCE_DOC", DOC_PATH)
 }
 
 fn parse_args() -> Result<Mode, EvidenceError> {
@@ -165,9 +177,21 @@ fn parse_args() -> Result<Mode, EvidenceError> {
 }
 
 fn read_inputs(root: &Path) -> Result<EvidenceInputs, EvidenceError> {
-    let parser = read_yaml(&root.join("results/parser-results.yaml"))?;
-    let online = read_yaml(&root.join("results/online-results.yaml"))?;
-    let offline = read_yaml(&root.join("results/offline-results.yaml"))?;
+    let parser = read_yaml(&input_path(
+        root,
+        "GAMAN_PARSER_RESULTS",
+        "results/parser-results.yaml",
+    ))?;
+    let online = read_yaml(&input_path(
+        root,
+        "GAMAN_ONLINE_RESULTS",
+        "results/online-results.yaml",
+    ))?;
+    let offline = read_yaml(&input_path(
+        root,
+        "GAMAN_OFFLINE_RESULTS",
+        "results/offline-results.yaml",
+    ))?;
     let online_catalog: FeatureCatalog = read_yaml(&root.join("tests/cases/features.yaml"))?;
     let offline_catalog: OfflineFeatureCatalog =
         read_yaml(&root.join("tests/cases/offline-features.yaml"))?;
@@ -182,6 +206,13 @@ fn read_inputs(root: &Path) -> Result<EvidenceInputs, EvidenceError> {
         online_paths: case_paths(root, &root.join("tests/cases/online"))?,
         offline_paths: case_paths(root, &root.join("tests/cases/offline"))?,
     })
+}
+
+/// Resolves staged evidence inputs without embedding machine-specific paths.
+fn input_path(root: &Path, variable: &str, fallback: &str) -> PathBuf {
+    std::env::var_os(variable)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join(fallback))
 }
 
 fn read_yaml<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, EvidenceError> {
@@ -276,15 +307,34 @@ fn insert_case_path(
 }
 
 fn validate_inputs(inputs: &EvidenceInputs) -> Result<(), EvidenceError> {
+    validate_generation(inputs)?;
     validate_parser_evidence(inputs)?;
     validate_online_evidence(inputs)?;
     validate_offline_evidence(inputs)?;
     Ok(())
 }
 
+/// Rejects a bundle assembled from different harness generations.
+fn validate_generation(inputs: &EvidenceInputs) -> Result<(), EvidenceError> {
+    let expected = &inputs.parser.generation;
+    if inputs.online.generation == *expected && inputs.offline.generation == *expected {
+        Ok(())
+    } else {
+        Err(EvidenceError::Message(format!(
+            "mixed evidence generations: parser '{}', online '{}', offline '{}'",
+            expected, inputs.online.generation, inputs.offline.generation
+        )))
+    }
+}
+
 fn validate_parser_evidence(inputs: &EvidenceInputs) -> Result<(), EvidenceError> {
-    for case in inputs.parser.cases.keys() {
+    for (case, result) in &inputs.parser.cases {
         require_case_path(case, &inputs.parser_paths, "parser")?;
+        if result.status != "success" {
+            return Err(EvidenceError::Message(format!(
+                "accepted parser evidence contains failed case '{case}'"
+            )));
+        }
     }
     Ok(())
 }
@@ -299,19 +349,37 @@ fn validate_online_evidence(inputs: &EvidenceInputs) -> Result<(), EvidenceError
         for evidence in dialects.values().flat_map(|cell| &cell.evidence) {
             require_case_path(&evidence.case, &inputs.online_paths, "online")?;
         }
+        if dialects.values().any(|cell| cell.status == "failure") {
+            return Err(EvidenceError::Message(format!(
+                "accepted online evidence contains failed feature '{feature}'"
+            )));
+        }
     }
     Ok(())
 }
 
 fn validate_offline_evidence(inputs: &EvidenceInputs) -> Result<(), EvidenceError> {
-    for (feature, cell) in &inputs.offline.features {
+    for (feature, dialects) in &inputs.offline.features {
         if !inputs.offline_labels.contains_key(feature) {
             return Err(EvidenceError::Message(format!(
                 "unknown offline feature '{feature}'"
             )));
         }
-        for evidence in &cell.evidence {
-            require_case_path(&evidence.case, &inputs.offline_paths, "offline")?;
+        for (dialect, cell) in dialects {
+            if cell.status == "failure" {
+                return Err(EvidenceError::Message(format!(
+                    "accepted offline evidence contains failed feature '{feature}' for {dialect}"
+                )));
+            }
+            for evidence in &cell.evidence {
+                if evidence.dialect.as_deref() != Some(dialect.as_str()) {
+                    return Err(EvidenceError::Message(format!(
+                        "offline case '{}' is recorded under the wrong dialect",
+                        evidence.case
+                    )));
+                }
+                require_case_path(&evidence.case, &inputs.offline_paths, "offline")?;
+            }
         }
     }
     Ok(())
@@ -333,7 +401,7 @@ fn require_case_path(
 
 fn render_doc(inputs: &EvidenceInputs) -> String {
     let mut lines = Vec::new();
-    render_header(&mut lines);
+    render_header(&mut lines, &inputs.parser.generation);
     render_parser_support(&mut lines, inputs);
     render_inspection_support(&mut lines, inputs);
     render_verify_support(&mut lines, inputs);
@@ -343,8 +411,10 @@ fn render_doc(inputs: &EvidenceInputs) -> String {
     lines.join("\n") + "\n"
 }
 
-fn render_header(lines: &mut Vec<String>) {
+fn render_header(lines: &mut Vec<String>, generation: &str) {
     lines.push("# Support Evidence".to_string());
+    lines.push(String::new());
+    lines.push(format!("Evidence generation: `{generation}`."));
     lines.push(String::new());
     lines.push("This generated document expands the condensed README support matrix with accepted fixture evidence for parser loading, live inspection, and `verify` drift detection.".to_string());
     lines.push(String::new());
@@ -363,13 +433,9 @@ fn render_parser_support(lines: &mut Vec<String>, inputs: &EvidenceInputs) {
     lines.push(String::new());
     lines.push("Parser evidence records SQL accepted or deliberately rejected by `gaman::parsers::parse_sql(sql, dialect)`.".to_string());
     lines.push(String::new());
-    for dialect in ["postgres", "sqlite"] {
+    for dialect in ["postgres", "sqlite", "mysql", "mariadb"] {
         render_parser_dialect(lines, inputs, dialect);
     }
-    lines.push("### MySQL / MariaDB".to_string());
-    lines.push(String::new());
-    lines.push("MySQL/MariaDB statement segmentation is covered in core tests. Schema lowering is explicitly unsupported in offline parser evidence until MySQL schema support is implemented.".to_string());
-    lines.push(String::new());
 }
 
 fn render_parser_dialect(lines: &mut Vec<String>, inputs: &EvidenceInputs, dialect: &str) {
@@ -390,7 +456,7 @@ fn render_parser_dialect(lines: &mut Vec<String>, inputs: &EvidenceInputs, diale
 fn parser_capabilities(inputs: &EvidenceInputs, dialect: &str) -> BTreeMap<String, Vec<String>> {
     let mut rows = BTreeMap::<String, Vec<String>>::new();
     for (case, result) in &inputs.parser.cases {
-        if result.dialect != dialect {
+        if result.dialect != dialect || result.status != "success" {
             continue;
         }
         let capability = parser_capability(result);
@@ -402,8 +468,8 @@ fn parser_capabilities(inputs: &EvidenceInputs, dialect: &str) -> BTreeMap<Strin
 }
 
 fn parser_capability(result: &ParserCaseResult) -> String {
-    if !result.entities.is_empty() {
-        return parser_entity_summary(&result.entities);
+    if !result.observed_entities.is_empty() {
+        return parser_entity_summary(&result.observed_entities);
     }
     if result.status == "success" {
         "expected rejection / unsupported boundary".to_string()
@@ -477,6 +543,7 @@ fn drift_docs_for(dialect: &str) -> &'static [DriftPropertyDoc] {
         "postgres" => contract_for(Dialect::Postgres),
         "sqlite" => contract_for(Dialect::Sqlite),
         "mysql" => contract_for(Dialect::Mysql),
+        "mariadb" => contract_for(Dialect::Mariadb),
         _ => &[],
     }
 }
@@ -591,7 +658,7 @@ fn render_offline_drift_support(lines: &mut Vec<String>, inputs: &EvidenceInputs
     lines.push(String::new());
     lines.push("| Feature | Status | Evidence |".to_string());
     lines.push("| --- | --- | --- |".to_string());
-    for (feature, cell) in offline_verify_rows(inputs) {
+    for (feature, dialect, cell) in offline_verify_rows(inputs) {
         let evidence = cell
             .evidence
             .iter()
@@ -599,9 +666,10 @@ fn render_offline_drift_support(lines: &mut Vec<String>, inputs: &EvidenceInputs
             .collect::<Vec<_>>()
             .join("<br>");
         lines.push(format!(
-            "| {} (`{}`) | {} | {} |",
+            "| {} (`{}`, {}) | {} | {} |",
             md(&offline_label(inputs, feature)),
             feature,
+            dialect,
             md(&cell.status),
             evidence
         ));
@@ -609,7 +677,7 @@ fn render_offline_drift_support(lines: &mut Vec<String>, inputs: &EvidenceInputs
     lines.push(String::new());
 }
 
-fn offline_verify_rows(inputs: &EvidenceInputs) -> Vec<(&str, &OfflineResultCell)> {
+fn offline_verify_rows(inputs: &EvidenceInputs) -> Vec<(&str, &str, &OfflineResultCell)> {
     inputs
         .offline
         .features
@@ -617,19 +685,24 @@ fn offline_verify_rows(inputs: &EvidenceInputs) -> Vec<(&str, &OfflineResultCell
         .filter(|(feature, _)| {
             inputs.offline_categories.get(*feature) == Some(&"verify".to_string())
         })
-        .map(|(feature, cell)| (feature.as_str(), cell))
+        .flat_map(|(feature, dialects)| {
+            dialects.iter().filter_map(move |(dialect, cell)| {
+                (cell.status == "success").then_some((feature.as_str(), dialect.as_str(), cell))
+            })
+        })
         .collect()
 }
 
 fn offline_evidence_link(item: &OfflineEvidence, inputs: &EvidenceInputs) -> String {
     let dialect = item.dialect.as_deref().unwrap_or("all");
     format!(
-        "{}: {} (`{}/{}/{}`)",
+        "{}: {} (`{}/{}/{}`; {})",
         case_link(&item.case, &inputs.offline_paths),
         md(&item.description),
         item.group,
         dialect,
-        item.kind
+        item.kind,
+        item.assertions.join(", ")
     )
 }
 
@@ -638,7 +711,7 @@ fn render_boundaries(lines: &mut Vec<String>) {
     lines.push(String::new());
     lines.push("- PostgreSQL parser rejects non-`CREATE` schema-loading statements, event triggers, policies, grants, and unsupported materialized view tail syntax.".to_string());
     lines.push("- SQLite parser rejects non-`CREATE` schema-loading statements and reports functions, enums, and extensions as unsupported schema constructs.".to_string());
-    lines.push("- MySQL/MariaDB has SQL segmentation and dialect selection support, but schema lowering, SQL rendering, live inspection, and `verify` are not implemented in accepted evidence.".to_string());
+    lines.push("- MySQL and MariaDB support is reported independently from accepted parser, offline, and online evidence.".to_string());
     lines.push("- `verify` is property-based: unregistered properties and opaque body/source-only differences are ignored unless promoted into the drift contract.".to_string());
     lines.push(String::new());
 }
@@ -720,7 +793,8 @@ fn dialect_label(dialect: &str) -> &'static str {
     match dialect {
         "postgres" => "PostgreSQL",
         "sqlite" => "SQLite",
-        "mysql" => "MySQL / MariaDB",
+        "mysql" => "MySQL",
+        "mariadb" => "MariaDB",
         _ => "unknown",
     }
 }
@@ -729,17 +803,15 @@ fn md(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
 }
 
-fn write_doc(root: &Path, doc: &str) -> Result<(), EvidenceError> {
-    let path = root.join(DOC_PATH);
-    fs::write(&path, doc).map_err(|error| EvidenceError::Io {
+fn write_doc_path(path: &Path, doc: &str) -> Result<(), EvidenceError> {
+    write_atomic(path, doc.as_bytes()).map_err(|error| EvidenceError::Io {
         path: path.display().to_string(),
         message: error.to_string(),
     })
 }
 
-fn check_doc(root: &Path, expected: &str) -> Result<(), EvidenceError> {
-    let path = root.join(DOC_PATH);
-    let actual = fs::read_to_string(&path).map_err(|error| EvidenceError::Io {
+fn check_doc_path(path: &Path, expected: &str) -> Result<(), EvidenceError> {
+    let actual = fs::read_to_string(path).map_err(|error| EvidenceError::Io {
         path: path.display().to_string(),
         message: error.to_string(),
     })?;
@@ -750,6 +822,26 @@ fn check_doc(root: &Path, expected: &str) -> Result<(), EvidenceError> {
             "{DOC_PATH} is stale; run `cargo run --bin gaman-evidence-doc -- --update-doc`"
         )))
     }
+}
+
+/// Publishes generated documentation without exposing partial content.
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    let result = (|| {
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    result
 }
 
 const INSPECTION_FEATURES: &[&str] = &[

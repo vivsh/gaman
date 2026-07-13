@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gaman Browser Demo</title>
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="masthead">
+        <div class="brand"><span class="brand-mark">G</span> GAMAN</div>
+        <div class="runtime"><span class="pulse"></span> WASM runtime / PostgreSQL</div>
+      </header>
+      <div class="workspace">
+      <section class="editor">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Schema source</p>
+            <h1>Shape the next change.</h1>
+          </div>
+          <span class="file-chip">schema.sql</span>
+        </div>
+        <textarea id="schema" spellcheck="false">CREATE TABLE users (
+  id serial PRIMARY KEY,
+  email text NOT NULL
+);</textarea>
+        <p class="hint">The editor is parsed in the browser. Run <code>make</code> to generate a migration.</p>
+      </section>
+      <section class="terminal" aria-label="Gaman terminal">
+        <div class="terminal-head"><span>migration console</span><span>local session</span></div>
+        <div id="output">Type <code>make</code>, then <code>apply</code>.</div>
+        <form id="prompt">
+          <span>gaman&gt;</span>
+          <input id="command" value="make" autocomplete="off" />
+        </form>
+      </section>
+      </div>
+    </main>
+  </body>
+</html>

@@ -20,7 +20,8 @@ struct OfflineFeatureEntry {
 
 #[derive(Debug, Deserialize)]
 struct OfflineResults {
-    features: BTreeMap<String, OfflineResultCell>,
+    generation: String,
+    features: BTreeMap<String, BTreeMap<String, OfflineResultCell>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -28,8 +29,6 @@ struct OfflineResultCell {
     status: OfflineResultStatus,
     #[serde(default)]
     evidence: Vec<OfflineEvidence>,
-    #[serde(default)]
-    reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -48,6 +47,8 @@ struct OfflineEvidence {
     kind: String,
     #[serde(default)]
     dialect: Option<String>,
+    #[serde(default)]
+    assertions: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,10 +57,6 @@ struct OfflineCaseSummary {
     group: String,
     features: Vec<String>,
     kind: String,
-    #[serde(default)]
-    dialect: Option<String>,
-    #[serde(default)]
-    parser_dialect: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +72,7 @@ struct FeatureEntry {
 
 #[derive(Debug, Deserialize)]
 struct OnlineResults {
+    generation: String,
     features: BTreeMap<String, BTreeMap<String, OnlineResultCell>>,
 }
 
@@ -136,9 +134,21 @@ struct SupportCell {
 #[derive(Debug, Default, Deserialize)]
 struct SupportEvidenceRefs {
     #[serde(default)]
-    online: Vec<String>,
+    online: Vec<OnlineEvidenceRef>,
     #[serde(default)]
-    offline: Vec<String>,
+    offline: Vec<OfflineEvidenceRef>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OnlineEvidenceRef {
+    case: String,
+    checks: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OfflineEvidenceRef {
+    case: String,
+    assertions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -155,7 +165,11 @@ enum SupportStatus {
 fn offline_evidence_matrix_is_complete_and_current() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let catalog_path = root.join("tests/cases/offline-features.yaml");
-    let results_path = root.join("results/offline-results.yaml");
+    let results_path = evidence_path(
+        root,
+        "GAMAN_OFFLINE_RESULTS",
+        "results/offline-results.yaml",
+    );
     let catalog: OfflineFeatureCatalog = read_yaml(&catalog_path);
     let results: OfflineResults = read_yaml(&results_path);
     let cases = read_offline_cases(root);
@@ -173,13 +187,22 @@ fn support_matrix_is_complete_and_readme_is_current() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let catalog_path = root.join("tests/cases/features.yaml");
     let support_path = root.join("tests/cases/support-matrix.yaml");
-    let results_path = root.join("results/online-results.yaml");
-    let offline_results_path = root.join("results/offline-results.yaml");
+    let results_path = evidence_path(root, "GAMAN_ONLINE_RESULTS", "results/online-results.yaml");
+    let offline_results_path = evidence_path(
+        root,
+        "GAMAN_OFFLINE_RESULTS",
+        "results/offline-results.yaml",
+    );
     let catalog: FeatureCatalog = read_yaml(&catalog_path);
     let support: SupportMatrix = read_yaml(&support_path);
     let results: OnlineResults = read_yaml(&results_path);
     let offline_results: OfflineResults = read_yaml(&offline_results_path);
     let cases = read_online_cases(root);
+
+    assert_eq!(
+        results.generation, offline_results.generation,
+        "accepted evidence files belong to different generations"
+    );
 
     assert_feature_catalog_shape(&catalog);
     assert_online_case_metadata(&catalog, &cases);
@@ -195,6 +218,13 @@ fn read_yaml<T: for<'de> Deserialize<'de>>(path: &Path) -> T {
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
     serde_yaml::from_str(&raw)
         .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()))
+}
+
+/// Resolves staged evidence paths when validating a publication transaction.
+fn evidence_path(root: &Path, variable: &str, fallback: &str) -> PathBuf {
+    std::env::var_os(variable)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join(fallback))
 }
 
 fn read_offline_cases(root: &Path) -> BTreeMap<String, OfflineCaseSummary> {
@@ -332,22 +362,19 @@ fn assert_offline_results_shape(catalog: &OfflineFeatureCatalog, results: &Offli
         .collect::<BTreeSet<_>>();
     assert_eq!(actual, expected, "offline result feature rows drifted");
 
-    for (feature, cell) in &results.features {
-        assert_eq!(
-            cell.status,
-            OfflineResultStatus::Success,
-            "accepted offline result '{feature}' must be successful; regenerate with a full sqlite-enabled run"
+    for (feature, dialects) in &results.features {
+        assert!(
+            dialects
+                .values()
+                .any(|cell| cell.status == OfflineResultStatus::Success),
+            "accepted offline result '{feature}' must have successful dialect evidence"
         );
         assert!(
-            !cell.evidence.is_empty(),
-            "accepted offline result '{feature}' must include evidence"
+            dialects
+                .values()
+                .all(|cell| cell.status != OfflineResultStatus::Failure),
+            "accepted offline result '{feature}' contains failed evidence"
         );
-        if let Some(reason) = &cell.reason {
-            assert!(
-                reason.trim().is_empty(),
-                "successful accepted offline result '{feature}' should not keep reason '{reason}'"
-            );
-        }
     }
 }
 
@@ -355,53 +382,48 @@ fn assert_offline_results_evidence(
     results: &OfflineResults,
     cases: &BTreeMap<String, OfflineCaseSummary>,
 ) {
-    for (feature, cell) in &results.features {
-        for evidence in &cell.evidence {
-            let case = cases.get(&evidence.case).unwrap_or_else(|| {
-                panic!(
-                    "offline result {feature} references missing case '{}'",
+    for (feature, dialects) in &results.features {
+        for (dialect, cell) in dialects {
+            for evidence in &cell.evidence {
+                let case = cases.get(&evidence.case).unwrap_or_else(|| {
+                    panic!(
+                        "offline result {feature} references missing case '{}'",
+                        evidence.case
+                    )
+                });
+                assert!(
+                    case.features.iter().any(|value| value == feature),
+                    "offline result {feature} references case '{}' that does not list it",
                     evidence.case
-                )
-            });
-            assert!(
-                case.features.iter().any(|value| value == feature),
-                "offline result {feature} references case '{}' that does not list it",
-                evidence.case
-            );
-            assert_eq!(
-                evidence.description, case.description,
-                "offline result {feature} has stale description for case '{}'",
-                evidence.case
-            );
-            assert_eq!(
-                evidence.group, case.group,
-                "offline result {feature} has stale group for case '{}'",
-                evidence.case
-            );
-            assert_eq!(
-                evidence.kind, case.kind,
-                "offline result {feature} has stale kind for case '{}'",
-                evidence.case
-            );
-            assert_eq!(
-                evidence.dialect,
-                offline_case_dialect(case),
-                "offline result {feature} has stale dialect for case '{}'",
-                evidence.case
-            );
+                );
+                assert_eq!(
+                    evidence.description, case.description,
+                    "offline result {feature} has stale description for case '{}'",
+                    evidence.case
+                );
+                assert_eq!(
+                    evidence.group, case.group,
+                    "offline result {feature} has stale group for case '{}'",
+                    evidence.case
+                );
+                assert_eq!(
+                    evidence.kind, case.kind,
+                    "offline result {feature} has stale kind for case '{}'",
+                    evidence.case
+                );
+                assert_eq!(
+                    evidence.dialect,
+                    Some(dialect.clone()),
+                    "offline result {feature} has stale dialect for case '{}'",
+                    evidence.case
+                );
+                assert!(
+                    !evidence.assertions.is_empty(),
+                    "offline evidence must list assertions"
+                );
+            }
         }
     }
-}
-
-fn offline_case_dialect(case: &OfflineCaseSummary) -> Option<String> {
-    if case.kind == "parser" {
-        return case.parser_dialect.clone();
-    }
-    Some(
-        case.dialect
-            .clone()
-            .unwrap_or_else(|| "postgres".to_string()),
-    )
 }
 
 fn assert_offline_modeled_feature_coverage(results: &OfflineResults) {
@@ -429,34 +451,29 @@ fn assert_offline_modeled_feature_coverage(results: &OfflineResults) {
 }
 
 fn assert_success_feature(results: &OfflineResults, feature: &str) {
-    let cell = results
+    let dialects = results
         .features
         .get(feature)
         .unwrap_or_else(|| panic!("offline results are missing feature '{feature}'"));
-    assert_eq!(
-        cell.status,
-        OfflineResultStatus::Success,
-        "offline feature '{feature}' is not accepted as successful evidence"
-    );
     assert!(
-        !cell.evidence.is_empty(),
-        "offline feature '{feature}' must list evidence"
+        dialects
+            .values()
+            .any(|cell| cell.status == OfflineResultStatus::Success && !cell.evidence.is_empty()),
+        "offline feature '{feature}' is not accepted as successful evidence"
     );
 }
 
 fn assert_prefixed_evidence(results: &OfflineResults, prefix: &str) {
     let mut matches = 0;
-    for (feature, cell) in &results.features {
+    for (feature, dialects) in &results.features {
         if feature.starts_with(prefix) {
             matches += 1;
-            assert_eq!(
-                cell.status,
-                OfflineResultStatus::Success,
-                "offline feature '{feature}' is not accepted as successful evidence"
-            );
             assert!(
-                !cell.evidence.is_empty(),
-                "offline feature '{feature}' must list evidence"
+                dialects
+                    .values()
+                    .any(|cell| cell.status == OfflineResultStatus::Success
+                        && !cell.evidence.is_empty()),
+                "offline feature '{feature}' is not accepted as successful evidence"
             );
         }
     }
@@ -688,41 +705,49 @@ fn assert_support_evidence_success(
     online: &OnlineResults,
     offline: &OfflineResults,
 ) {
-    for feature in &cell.evidence.online {
-        let result = online
+    for descriptor in &cell.evidence.online {
+        let evidence = online
             .features
-            .get(feature)
-            .and_then(|dialects| dialects.get(dialect))
+            .values()
+            .filter_map(|dialects| dialects.get(dialect))
+            .filter(|result| result.status == OnlineResultStatus::Success)
+            .flat_map(|result| &result.evidence)
+            .find(|evidence| evidence.case == descriptor.case)
             .unwrap_or_else(|| {
                 panic!(
-                    "support matrix row '{}'.{} references missing online feature '{}'",
-                    row.id, dialect, feature
+                    "support matrix row '{}'.{} lacks online case '{}'",
+                    row.id, dialect, descriptor.case
                 )
             });
-        assert_eq!(
-            result.status,
-            OnlineResultStatus::Success,
-            "support matrix row '{}'.{} needs online feature '{}' to be success",
-            row.id,
-            dialect,
-            feature
-        );
+        for check in &descriptor.checks {
+            assert!(
+                evidence.checks.contains(check),
+                "online case '{}' did not execute check '{check}'",
+                descriptor.case
+            );
+        }
     }
-    for feature in &cell.evidence.offline {
-        let result = offline.features.get(feature).unwrap_or_else(|| {
-            panic!(
-                "support matrix row '{}'.{} references missing offline feature '{}'",
-                row.id, dialect, feature
-            )
-        });
-        assert_eq!(
-            result.status,
-            OfflineResultStatus::Success,
-            "support matrix row '{}'.{} needs offline feature '{}' to be success",
-            row.id,
-            dialect,
-            feature
-        );
+    for descriptor in &cell.evidence.offline {
+        let evidence = offline
+            .features
+            .values()
+            .filter_map(|dialects| dialects.get(dialect))
+            .filter(|result| result.status == OfflineResultStatus::Success)
+            .flat_map(|result| &result.evidence)
+            .find(|evidence| evidence.case == descriptor.case)
+            .unwrap_or_else(|| {
+                panic!(
+                    "support matrix row '{}'.{} lacks offline case '{}'",
+                    row.id, dialect, descriptor.case
+                )
+            });
+        for assertion in &descriptor.assertions {
+            assert!(
+                evidence.assertions.contains(assertion),
+                "offline case '{}' did not execute assertion '{assertion}'",
+                descriptor.case
+            );
+        }
     }
 }
 
@@ -732,7 +757,7 @@ fn assert_readme_support_table(
     online: &OnlineResults,
     offline: &OfflineResults,
 ) {
-    let readme_path = root.join("README.md");
+    let readme_path = evidence_path(root, "GAMAN_README_PATH", "README.md");
     let readme = fs::read_to_string(&readme_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", readme_path.display()));
     let actual = generated_block(&readme);
@@ -775,19 +800,21 @@ fn generated_block(readme: &str) -> &str {
 
 fn render_support_table(
     support: &SupportMatrix,
-    _online: &OnlineResults,
+    online: &OnlineResults,
     _offline: &OfflineResults,
 ) -> String {
     let mut lines = vec![
-        "| Feature | PostgreSQL | SQLite | MySQL / MariaDB |".to_string(),
-        "| --- | --- | --- | --- |".to_string(),
+        format!("<!-- evidence-generation: {} -->", online.generation),
+        "| Feature | PostgreSQL | SQLite | MySQL | MariaDB |".to_string(),
+        "| --- | --- | --- | --- | --- |".to_string(),
     ];
     for row in &support.rows {
         let postgres = support_symbol(row, "postgres");
         let sqlite = support_symbol(row, "sqlite");
         let mysql = support_symbol(row, "mysql");
+        let mariadb = support_symbol(row, "mariadb");
         lines.push(format!(
-            "| {} | {postgres} | {sqlite} | {mysql} |",
+            "| {} | {postgres} | {sqlite} | {mysql} | {mariadb} |",
             row.label
         ));
     }
@@ -906,7 +933,7 @@ const EXPECTED_UNSUPPORTED_FEATURES: &[&str] = &[
     "unsupported.sqlite_schema_qualified_table",
 ];
 
-const SUPPORT_DIALECTS: &[&str] = &["postgres", "sqlite", "mysql"];
+const SUPPORT_DIALECTS: &[&str] = &["postgres", "sqlite", "mysql", "mariadb"];
 
 const SUPPORT_TABLE_START: &str = "<!-- gaman:support-matrix:start -->";
 const SUPPORT_TABLE_END: &str = "<!-- gaman:support-matrix:end -->";
@@ -917,6 +944,7 @@ const EXPECTED_ONLINE_FEATURES: &[&str] = &[
     "target_migrations",
     "rollback_migrations",
     "transaction_rollback",
+    "non_transactional_failure_reporting",
     "lock_cleanup",
     "migration_tracking",
     "live_inspect_verify",

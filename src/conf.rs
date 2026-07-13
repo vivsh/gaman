@@ -169,9 +169,19 @@ fn validate_dialect_available(dialect: Dialect) -> Result<(), ConfigError> {
             dialect: "sqlite",
             reason: "rebuild with the 'sqlite' feature",
         }),
+        #[cfg(not(feature = "mysql"))]
         Dialect::Mysql => Err(ConfigError::DialectUnavailable {
             dialect: "mysql",
-            reason: "MySQL migration support is not implemented",
+            reason: "rebuild with the 'mysql' feature",
+        }),
+        #[cfg(feature = "mysql")]
+        Dialect::Mysql => Ok(()),
+        #[cfg(feature = "mariadb")]
+        Dialect::Mariadb => Ok(()),
+        #[cfg(not(feature = "mariadb"))]
+        Dialect::Mariadb => Err(ConfigError::DialectUnavailable {
+            dialect: "mariadb",
+            reason: "rebuild with the 'mariadb' feature",
         }),
     }
 }
@@ -362,20 +372,41 @@ mod tests {
         ));
     }
 
-    /// Verifies the native configuration rejects the unimplemented MySQL lifecycle.
+    /// Verifies the native configuration accepts MySQL when its executor is enabled.
+    #[cfg(feature = "mysql")]
     #[test]
-    fn validate_rejects_unimplemented_mysql_dialect() {
-        let config = Config::new(
-            "mysql://localhost/app".to_string(),
-            PathBuf::from("migrations"),
-            PathBuf::from("schema.yaml"),
-            Dialect::Mysql,
-        );
+    fn validate_accepts_enabled_mysql_dialect() {
+        assert!(super::validate_dialect_available(Dialect::Mysql).is_ok());
+    }
 
+    /// Verifies the native configuration rejects MySQL when its executor is disabled.
+    #[cfg(not(feature = "mysql"))]
+    #[test]
+    fn validate_rejects_disabled_mysql_dialect() {
         assert!(matches!(
-            config.validate_read_only(),
+            super::validate_dialect_available(Dialect::Mysql),
             Err(ConfigError::DialectUnavailable {
                 dialect: "mysql",
+                ..
+            })
+        ));
+    }
+
+    /// Verifies the native configuration accepts MariaDB when its executor is enabled.
+    #[cfg(feature = "mariadb")]
+    #[test]
+    fn validate_accepts_enabled_mariadb_dialect() {
+        assert!(super::validate_dialect_available(Dialect::Mariadb).is_ok());
+    }
+
+    /// Verifies the native configuration rejects MariaDB when its executor is disabled.
+    #[cfg(not(feature = "mariadb"))]
+    #[test]
+    fn validate_rejects_disabled_mariadb_dialect() {
+        assert!(matches!(
+            super::validate_dialect_available(Dialect::Mariadb),
+            Err(ConfigError::DialectUnavailable {
+                dialect: "mariadb",
                 ..
             })
         ));

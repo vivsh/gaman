@@ -1,15 +1,16 @@
 use gaman::cli::{GamanArgs, handle_cmd};
+use gaman_core::command_args::{BuildInfo, product_presentation};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn print_header() {
-    eprintln!();
-    eprintln!("  Gaman v{VERSION}");
-    eprintln!("  Offline-first migration tool");
-    eprintln!();
-    eprintln!("  Type 'gaman --help' for usage.");
-    eprintln!("  Type 'gaman <command> --help' for help on a specific command.");
-    eprintln!();
+    eprintln!(
+        "{}",
+        product_presentation().banner(BuildInfo {
+            executable: "gaman",
+            version: VERSION,
+        })
+    );
 }
 
 fn print_version() {

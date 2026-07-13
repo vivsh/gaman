@@ -3,8 +3,9 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::conf::Config;
-use crate::executor::{BoxFuture, Executor, Introspectable};
+use crate::executor::BoxFuture;
 use gaman_core::dialects::Dialect;
+use gaman_core::{Executor, SchemaInspector};
 
 #[derive(Debug, Error)]
 /// Errors returned while preparing a live database executor for migration work.
@@ -35,9 +36,9 @@ impl From<crate::executor::ConnectError> for EnvironmentError {
 /// is not limited to SQLx: it is also the integration point for future dialects
 /// or database clients outside SQLx, and for mock executors used by lifecycle
 /// tests.
-pub trait EnvironmentExecutor: Executor + Introspectable + Send {}
+pub trait EnvironmentExecutor: Executor + SchemaInspector + Send {}
 
-impl<T> EnvironmentExecutor for T where T: Executor + Introspectable + Send {}
+impl<T> EnvironmentExecutor for T where T: Executor + SchemaInspector + Send {}
 
 /// Native live-database boundary for migration application, inspect, and verify.
 ///

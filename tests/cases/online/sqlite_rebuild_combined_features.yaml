@@ -56,7 +56,9 @@ migrations:
 dialects:
   sqlite:
     checks: [migrate, verify, data]
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []
     data:
       - sql: SELECT CAST(total AS text) FROM items WHERE tenant_id = 1 AND item_id = 5
         expect: ['24']

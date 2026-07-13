@@ -18,9 +18,12 @@ Parser fixtures live under `tests/cases/parser/` and are grouped by dialect:
 
 - `tests/cases/parser/postgres/`
 - `tests/cases/parser/sqlite/`
+- `tests/cases/parser/mysql/`
+- `tests/cases/parser/mariadb/`
 
-MySQL statement segmentation exists in `gaman-core`, but MySQL schema lowering is
-not part of this harness until Gaman has MySQL schema support.
+MySQL and MariaDB are recorded independently. Both use the private MySQL-family
+AST parser where syntax overlaps, while MariaDB-specific recovery and opaque
+fallback remain separate dialect behavior.
 
 ## Fixture shape
 
@@ -120,8 +123,9 @@ cargo test -p gaman --test parser -- tests/cases/parser/sqlite/sqlite_trigger_bo
 cargo test -p gaman --test parser -- 'tests/cases/parser/postgres/*.yaml'
 ```
 
-Record accepted parser evidence deliberately:
+Record a local parser result for review. Successful records contain expected and
+observed entities separately; rejected cases never count as lowering support.
 
 ```bash
-cargo test -p gaman --test parser -- --record results/parser-results.yaml
+cargo test -p gaman --test parser -- --record /tmp/parser-results.yaml
 ```

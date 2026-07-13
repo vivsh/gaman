@@ -26,13 +26,16 @@ mutate_sql: ALTER TABLE users ALTER COLUMN email SET DEFAULT 'changed'
 dialects:
   postgres:
     checks: [verify]
-    expect_verify:
-      - type: alter_column
-        table_name: users
-        old:
-          name: email
-          type: text
-          default: "'changed'"
-        new:
-          name: email
-          type: text
+    expect_verification:
+      findings:
+      - {operation: alter_column, entity_kind: column, entity_name: users.email, property: default, expected: "<none>", observed: "'changed'", note: null}
+      operations:
+        - type: alter_column
+          table_name: users
+          old:
+            name: email
+            type: text
+            default: "'changed'"
+          new:
+            name: email
+            type: text

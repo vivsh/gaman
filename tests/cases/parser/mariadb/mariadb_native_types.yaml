@@ -1,0 +1,23 @@
+description: MariaDB native UUID INET JSON enum and set types remain distinct
+dialect: mariadb
+sql: |
+  CREATE TABLE native_types (
+    identifier UUID,
+    address INET6,
+    payload JSON,
+    mood ENUM('Ready', 'needs, review'),
+    tags SET('A', 'B')
+  );
+expect_entities:
+- kind: table
+  name: native_types
+expect_schema:
+  tables:
+    native_types:
+      name: native_types
+      columns:
+      - { name: identifier, type: UUID, nullable: true, primary_key: false }
+      - { name: address, type: INET6, nullable: true, primary_key: false }
+      - { name: payload, type: JSON, nullable: true, primary_key: false }
+      - { name: mood, type: "ENUM('Ready', 'needs, review')", nullable: true, primary_key: false }
+      - { name: tags, type: "SET('A', 'B')", nullable: true, primary_key: false }

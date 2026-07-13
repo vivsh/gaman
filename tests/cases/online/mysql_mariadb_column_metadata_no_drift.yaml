@@ -1,0 +1,67 @@
+description: MySQL and MariaDB verify product-owned column metadata without false drift.
+features: [live_inspect_verify, tables_columns, generated_columns]
+migrations: []
+dialects:
+  mysql:
+    checks: [verify]
+    migrations:
+    - id: 0001_mysql_metadata
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: family_columns
+            columns:
+            - name: id
+              type: BIGINT
+              primary_key: true
+              mysql:
+                auto_increment: true
+            - name: secret
+              type: VARCHAR(64)
+              nullable: false
+              default: "'unknown'"
+              mysql:
+                character_set: utf8mb4
+                collation: utf8mb4_bin
+                invisible: true
+                comment: private
+            - name: changed_at
+              type: TIMESTAMP(6)
+              nullable: true
+              default: CURRENT_TIMESTAMP(6)
+              mysql:
+                on_update_expression: CURRENT_TIMESTAMP(6)
+    expect_verification:
+      findings: []
+      operations: []
+  mariadb:
+    checks: [verify]
+    migrations:
+    - id: 0001_mariadb_metadata
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: family_columns
+            columns:
+            - name: id
+              type: BIGINT
+              primary_key: true
+              mariadb:
+                auto_increment: true
+            - name: base_value
+              type: INT
+            - name: doubled
+              type: INT
+              generated: base_value * 2
+              generated_storage: stored
+            - name: changed_at
+              type: DATETIME
+              nullable: true
+              default: CURRENT_TIMESTAMP
+              mariadb:
+                on_update_expression: CURRENT_TIMESTAMP
+    expect_verification:
+      findings: []
+      operations: []

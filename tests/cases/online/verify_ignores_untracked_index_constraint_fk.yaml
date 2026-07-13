@@ -29,9 +29,13 @@ mutate_sql: |
 dialects:
   postgres:
     checks: [verify]
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []
   sqlite:
     checks: [verify]
     mutate_sql: |
       CREATE INDEX users_email_external_idx ON users (email);
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []

@@ -4,24 +4,34 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 #[cfg(feature = "postgres")]
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use gaman::Config;
 use gaman::Migration;
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
-use gaman::core::Introspectable;
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "mariadb"))]
+use gaman::core::Executor;
 use gaman::core::{
     BoxFuture, Clarification, Decision, Dialect, Environment, EnvironmentError,
-    EnvironmentExecutor, Migrator, TRACKING_TABLE, VecAdapter,
+    EnvironmentExecutor, MigrationStore, OfflineError, OfflinePlanner, SqlPlanError,
+    SqlPlanRenderer, StoreError, TRACKING_TABLE,
 };
 #[cfg(feature = "postgres")]
-use gaman::core::{Executor, ExecutorError, PostgresExecutor};
+use gaman::core::{ExecutorError, PostgresExecutor};
 use gaman::schema::{Operation, Schema};
+use gaman::{
+    ApplyCommand, CommandResult as RunnerResult, DatabaseTrackingStore, MigrationRunner,
+    RunnerCommand, SchemaInspector,
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
+#[cfg(any(
+    feature = "postgres",
+    feature = "sqlite",
+    feature = "mysql",
+    feature = "mariadb"
+))]
 use sqlx::ConnectOptions;
 #[cfg(feature = "postgres")]
 use sqlx::Row;
@@ -36,6 +46,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 pub const POSTGRES_DATABASE_URL_ENV: &str = "POSTGRES_DATABASE_URL";
 pub const SQLITE_DATABASE_URL_ENV: &str = "SQLITE_DATABASE_URL";
 pub const MYSQL_DATABASE_URL_ENV: &str = "MYSQL_DATABASE_URL";
+pub const MARIADB_DATABASE_URL_ENV: &str = "MARIADB_DATABASE_URL";
 
 #[derive(Debug, Error)]
 pub enum TestSupportError {
@@ -47,12 +58,182 @@ pub enum TestSupportError {
     Message(String),
 }
 
+/// Offline fixture façade over the canonical planner, graph, replay, and SQL APIs.
+#[derive(Debug, Clone)]
+pub struct FixturePlanner {
+    dialect: Dialect,
+    migrations: Vec<Migration>,
+}
+
+/// In-memory migration storage used by live YAML fixture runners.
+pub struct MemoryMigrationStore {
+    migrations: Mutex<Vec<Migration>>,
+}
+
+impl MemoryMigrationStore {
+    /// Creates storage from fixture migration history.
+    pub fn new(migrations: Vec<Migration>) -> Self {
+        Self {
+            migrations: Mutex::new(migrations),
+        }
+    }
+}
+
+impl MigrationStore for MemoryMigrationStore {
+    fn load_all<'a>(&'a self) -> BoxFuture<'a, Result<Vec<Migration>, StoreError>> {
+        Box::pin(async move {
+            self.migrations
+                .lock()
+                .map(|migrations| migrations.clone())
+                .map_err(|error| {
+                    StoreError::unavailable(format!("fixture migration lock failed: {error}"))
+                })
+        })
+    }
+
+    fn save<'a>(&'a self, migration: &'a Migration) -> BoxFuture<'a, Result<(), StoreError>> {
+        Box::pin(async move {
+            self.migrations
+                .lock()
+                .map_err(|error| {
+                    StoreError::unavailable(format!("fixture migration lock failed: {error}"))
+                })?
+                .push(migration.clone());
+            Ok(())
+        })
+    }
+}
+
+/// Type-erased live executor retained by one fixture runner session.
+pub struct TestLiveExecutor {
+    inner: Box<dyn EnvironmentExecutor + Send>,
+}
+
+impl TestLiveExecutor {
+    /// Wraps one connected dialect executor for runner-based fixture execution.
+    pub fn new(inner: Box<dyn EnvironmentExecutor + Send>) -> Self {
+        Self { inner }
+    }
+}
+
+impl gaman::Executor for TestLiveExecutor {
+    fn prepare<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), gaman::ExecutorError>> {
+        self.inner.prepare(sql)
+    }
+
+    fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), gaman::ExecutorError>> {
+        self.inner.execute(sql)
+    }
+
+    fn fetch_strings<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<String>, gaman::ExecutorError>> {
+        self.inner.fetch_strings(sql)
+    }
+
+    fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), gaman::ExecutorError>> {
+        self.inner.begin()
+    }
+
+    fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), gaman::ExecutorError>> {
+        self.inner.commit()
+    }
+
+    fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), gaman::ExecutorError>> {
+        self.inner.rollback()
+    }
+
+    fn acquire_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), gaman::ExecutorError>> {
+        self.inner.acquire_lock()
+    }
+
+    fn release_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), gaman::ExecutorError>> {
+        self.inner.release_lock()
+    }
+}
+
+impl SchemaInspector for TestLiveExecutor {
+    fn inspect<'a>(
+        &'a mut self,
+        schemas: &'a [&'a str],
+    ) -> BoxFuture<'a, Result<Schema, gaman::InspectionError>> {
+        self.inner.inspect(schemas)
+    }
+}
+
+/// Canonical runner type used by online YAML fixtures.
+pub type TestRunner =
+    MigrationRunner<MemoryMigrationStore, DatabaseTrackingStore, TestLiveExecutor>;
+
+impl FixturePlanner {
+    /// Creates a deterministic planner from fixture migration history.
+    pub fn new(dialect: Dialect, migrations: Vec<Migration>) -> Self {
+        Self {
+            dialect,
+            migrations,
+        }
+    }
+
+    /// Returns the fixture dialect used for preparation and SQL rendering.
+    pub fn dialect(&self) -> Dialect {
+        self.dialect
+    }
+
+    /// Returns migration history in deterministic graph order.
+    pub fn ordered_migrations(&self) -> Result<Vec<Migration>, gaman::core::GraphError> {
+        let mut graph = gaman::core::MigrationGraph::new();
+        for migration in self.migrations.iter().cloned() {
+            graph.add(migration)?;
+        }
+        let ordered = graph
+            .topological_order()?
+            .into_iter()
+            .filter_map(|id| graph.get(id).cloned())
+            .collect::<Vec<_>>();
+        Ok(ordered)
+    }
+
+    /// Replays fixture history through the canonical offline lifecycle.
+    pub fn replay(&self) -> Result<Schema, OfflineError> {
+        OfflinePlanner::new(self.dialect)
+            .from_migrations(self.migrations.clone())
+            .replay()
+    }
+
+    /// Generates one fixture migration without filesystem persistence.
+    pub fn make_migrations(
+        &self,
+        name: Option<String>,
+        schema: Schema,
+        _dry_run: bool,
+        decisions: &[Decision],
+    ) -> Result<Option<Migration>, OfflineError> {
+        OfflinePlanner::new(self.dialect)
+            .from_migrations(self.migrations.clone())
+            .make_named_migration(schema, name.as_deref(), decisions)
+    }
+
+    /// Renders selected forward migrations against fixture history.
+    pub fn sql_migrate(&self, migrations: &[Migration]) -> Result<Vec<String>, SqlPlanError> {
+        SqlPlanRenderer::new(self.dialect, self.migrations.clone())?.render_migrations(migrations)
+    }
+
+    /// Renders selected rollback migrations against fixture history.
+    pub fn sql_rollback(&self, migrations: &[Migration]) -> Result<Vec<String>, SqlPlanError> {
+        SqlPlanRenderer::new(self.dialect, self.migrations.clone())?
+            .render_rollback_migrations(migrations)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FixtureDialect {
     #[default]
     Postgres,
     Sqlite,
+    Mysql,
+    Mariadb,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
@@ -61,6 +242,7 @@ pub enum OnlineDialect {
     Postgres,
     Sqlite,
     Mysql,
+    Mariadb,
 }
 
 impl OnlineDialect {
@@ -69,11 +251,12 @@ impl OnlineDialect {
             Self::Postgres => "postgres",
             Self::Sqlite => "sqlite",
             Self::Mysql => "mysql",
+            Self::Mariadb => "mariadb",
         }
     }
 
-    pub fn all() -> [Self; 3] {
-        [Self::Postgres, Self::Sqlite, Self::Mysql]
+    pub fn all() -> [Self; 4] {
+        [Self::Postgres, Self::Sqlite, Self::Mysql, Self::Mariadb]
     }
 }
 
@@ -127,7 +310,7 @@ pub struct OnlineDialectCase {
     #[serde(default)]
     pub expect_extensions: Vec<String>,
     #[serde(default)]
-    pub expect_verify: Option<Vec<Operation>>,
+    pub expect_verification: Option<ExpectedVerification>,
     #[serde(default)]
     pub expect_error: Option<String>,
     #[serde(default)]
@@ -136,6 +319,14 @@ pub struct OnlineDialectCase {
     pub expect_records: Vec<String>,
     #[serde(default)]
     pub data: Vec<OnlineDataCheck>,
+}
+
+/// Complete deterministic verification expectation for an online fixture.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpectedVerification {
+    pub findings: Vec<ExpectedDriftFinding>,
+    pub operations: Vec<Operation>,
 }
 
 impl OnlineDialectCase {
@@ -193,7 +384,8 @@ pub struct OfflineFeatureEntry {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct OfflineSupportResults {
-    pub features: BTreeMap<String, OfflineFeatureResult>,
+    pub generation: String,
+    pub features: BTreeMap<String, BTreeMap<String, OfflineFeatureResult>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,10 +413,13 @@ pub struct OfflineEvidence {
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dialect: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assertions: Vec<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
 pub struct OnlineSupportResults {
+    pub generation: String,
     pub features:
         std::collections::BTreeMap<String, std::collections::BTreeMap<String, OnlineFeatureResult>>,
 }
@@ -263,6 +458,18 @@ impl FixtureDialect {
             Self::Sqlite => Err(TestSupportError::Message(
                 "sqlite fixture requires the sqlite feature".to_string(),
             )),
+            #[cfg(feature = "mysql")]
+            Self::Mysql => Ok(Dialect::Mysql),
+            #[cfg(not(feature = "mysql"))]
+            Self::Mysql => Err(TestSupportError::Message(
+                "mysql fixture requires the mysql feature".to_string(),
+            )),
+            #[cfg(feature = "mariadb")]
+            Self::Mariadb => Ok(Dialect::Mariadb),
+            #[cfg(not(feature = "mariadb"))]
+            Self::Mariadb => Err(TestSupportError::Message(
+                "mariadb fixture requires the mariadb feature".to_string(),
+            )),
         }
     }
 
@@ -270,6 +477,8 @@ impl FixtureDialect {
         match self {
             Self::Postgres => true,
             Self::Sqlite => cfg!(feature = "sqlite"),
+            Self::Mysql => cfg!(feature = "mysql"),
+            Self::Mariadb => cfg!(feature = "mariadb"),
         }
     }
 }
@@ -281,6 +490,7 @@ pub enum ParserFixtureDialect {
     Postgres,
     Sqlite,
     Mysql,
+    Mariadb,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -1183,44 +1393,33 @@ where
     }
 }
 
-pub fn build_migrator(
+pub fn build_fixture_planner(
     case_name: &str,
     dialect: FixtureDialect,
     migrations: &[InlineMigration],
-) -> Result<Migrator, TestSupportError> {
+) -> Result<FixturePlanner, TestSupportError> {
     let dialect = dialect.to_dialect()?;
-    let config = Arc::new(Config::new(
-        "postgres:///".to_string(),
-        PathBuf::from("migrations"),
-        PathBuf::from("schema.yaml"),
-        dialect,
-    ));
-    let source = Box::new(VecAdapter::new(to_migrations(migrations)));
-    let environment = Box::new(FixtureEnvironment::new(config, dialect));
-    Migrator::new(source, environment).map_err(|error| {
-        TestSupportError::message(format!(
-            "{case_name}: failed to construct migrator: {error}"
-        ))
-    })
+    let _ = case_name;
+    Ok(FixturePlanner::new(dialect, to_migrations(migrations)))
 }
 
 #[cfg(feature = "postgres")]
-pub fn build_postgres_migrator(
+pub async fn build_postgres_runner(
     case_name: &str,
     harness: &PgHarness,
     migrations: &[InlineMigration],
-) -> Result<Migrator, TestSupportError> {
+) -> Result<TestRunner, TestSupportError> {
     let migrations = postgres_placeholder_migrations(migrations, &harness.schema)?;
-    let source = Box::new(VecAdapter::new(to_migrations(&migrations)));
-    let environment = Box::new(PostgresHarnessEnvironment::new(
-        &harness.url,
-        &harness.schema,
-    ));
-    Migrator::new(source, environment).map_err(|error| {
-        TestSupportError::message(format!(
-            "{case_name}: failed to construct migrator: {error}"
-        ))
-    })
+    let environment = PostgresHarnessEnvironment::new(&harness.url, &harness.schema);
+    let executor = environment.executor().await.map_err(|error| {
+        TestSupportError::message(format!("{case_name}: failed to connect runner: {error}"))
+    })?;
+    Ok(MigrationRunner::new(
+        Dialect::Postgres,
+        MemoryMigrationStore::new(to_migrations(&migrations)),
+        DatabaseTrackingStore,
+        TestLiveExecutor::new(executor),
+    ))
 }
 
 #[cfg(feature = "postgres")]
@@ -1243,64 +1442,195 @@ fn postgres_placeholder_migrations(
 }
 
 #[cfg(feature = "sqlite")]
-pub fn build_sqlite_migrator(
+pub async fn build_sqlite_runner(
     case_name: &str,
     harness: &SqliteHarness,
     migrations: &[InlineMigration],
-) -> Result<Migrator, TestSupportError> {
-    let source = Box::new(VecAdapter::new(to_migrations(migrations)));
-    let environment = Box::new(SqliteHarnessEnvironment::new(&harness.url));
-    Migrator::new(source, environment).map_err(|error| {
-        TestSupportError::message(format!(
-            "{case_name}: failed to construct migrator: {error}"
-        ))
-    })
+) -> Result<TestRunner, TestSupportError> {
+    let environment = SqliteHarnessEnvironment::new(&harness.url);
+    let executor = environment.executor().await.map_err(|error| {
+        TestSupportError::message(format!("{case_name}: failed to connect runner: {error}"))
+    })?;
+    Ok(MigrationRunner::new(
+        Dialect::Sqlite,
+        MemoryMigrationStore::new(to_migrations(migrations)),
+        DatabaseTrackingStore,
+        TestLiveExecutor::new(executor),
+    ))
+}
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+pub async fn build_mysql_family_runner(
+    case_name: &str,
+    harness: &MysqlFamilyHarness,
+    migrations: &[InlineMigration],
+) -> Result<TestRunner, TestSupportError> {
+    let environment = MysqlFamilyHarnessEnvironment::new(&harness.url, harness.dialect);
+    let executor = environment.executor().await.map_err(|error| {
+        TestSupportError::message(format!("{case_name}: failed to connect runner: {error}"))
+    })?;
+    Ok(MigrationRunner::new(
+        harness.dialect,
+        MemoryMigrationStore::new(to_migrations(migrations)),
+        DatabaseTrackingStore,
+        TestLiveExecutor::new(executor),
+    ))
+}
+
+/// Applies fixture migrations through the same typed runner command used by hosts.
+pub async fn apply_runner(
+    runner: &mut TestRunner,
+    target: Option<&str>,
+) -> Result<gaman::MigrationMovement, TestSupportError> {
+    match runner
+        .run_command(&RunnerCommand::Apply(ApplyCommand::Execute {
+            target: target.map(str::to_string),
+            fake: false,
+        }))
+        .await
+        .map_err(|error| TestSupportError::message(error.to_string()))?
+    {
+        RunnerResult::Movement(movement) => Ok(movement),
+        _ => Err(TestSupportError::message(
+            "apply runner returned an unexpected result",
+        )),
+    }
+}
+
+/// Verifies fixture-owned schema through the shared runner drift lifecycle.
+pub async fn verify_runner(
+    runner: &mut TestRunner,
+    schemas: Vec<String>,
+) -> Result<gaman::drift::VerificationReport, TestSupportError> {
+    match runner
+        .run_command(&RunnerCommand::Verify { schemas })
+        .await
+        .map_err(|error| TestSupportError::message(error.to_string()))?
+    {
+        RunnerResult::Verify(report) => Ok(report),
+        _ => Err(TestSupportError::message(
+            "verify runner returned an unexpected result",
+        )),
+    }
+}
+
+/// Compares every deterministic drift finding and repair operation.
+pub fn assert_verification_matches(
+    case_name: &str,
+    actual: &gaman::drift::VerificationReport,
+    expected: &ExpectedVerification,
+) -> Result<(), TestSupportError> {
+    assert_drift_findings(case_name, &actual.findings, &expected.findings)?;
+    assert_ops_match(
+        case_name,
+        "verify operations",
+        &actual.operations,
+        &expected.operations,
+    )
+}
+
+/// Compares complete property-level findings without discarding diagnostics.
+fn assert_drift_findings(
+    case_name: &str,
+    actual: &[gaman::drift::DriftFinding],
+    expected: &[ExpectedDriftFinding],
+) -> Result<(), TestSupportError> {
+    let actual = actual.iter().map(expected_finding).collect::<Vec<_>>();
+    if actual == expected {
+        return Ok(());
+    }
+    Err(TestSupportError::message(format!(
+        "{case_name}: verification findings mismatch\nexpected: {}\nobserved: {}",
+        serde_yaml::to_string(expected).unwrap_or_default(),
+        serde_yaml::to_string(&actual).unwrap_or_default()
+    )))
+}
+
+/// Converts a core drift finding into the stable fixture representation.
+fn expected_finding(finding: &gaman::drift::DriftFinding) -> ExpectedDriftFinding {
+    ExpectedDriftFinding {
+        operation: finding.operation.to_string(),
+        entity_kind: drift_entity_kind_name(finding.entity_kind).to_string(),
+        entity_name: finding.entity_name.clone(),
+        property: finding.property.to_string(),
+        expected: finding.expected.clone(),
+        observed: finding.observed.clone(),
+        note: finding.note.clone(),
+    }
+}
+
+/// Produces the stable snake-case entity-kind label used by fixture evidence.
+fn drift_entity_kind_name(kind: impl std::fmt::Debug) -> String {
+    let debug = format!("{kind:?}");
+    debug
+        .chars()
+        .enumerate()
+        .fold(String::new(), |mut name, (index, ch)| {
+            if ch.is_ascii_uppercase() {
+                if index > 0 {
+                    name.push('_');
+                }
+                name.push(ch.to_ascii_lowercase());
+            } else {
+                name.push(ch);
+            }
+            name
+        })
+}
+
+/// Compares reflected schemas without semantic drift normalization.
+pub fn assert_inspected_schema_exact(
+    case_name: &str,
+    actual: Schema,
+    expected: Schema,
+) -> Result<(), TestSupportError> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(TestSupportError::message(format!(
+            "{case_name}: inspected schema mismatch\nexpected: {}\nobserved: {}",
+            serde_yaml::to_string(&expected).unwrap_or_default(),
+            serde_yaml::to_string(&actual).unwrap_or_default()
+        )))
+    }
+}
+
+/// Inspects fixture-owned namespaces through the shared runner lifecycle.
+pub async fn inspect_runner(
+    runner: &mut TestRunner,
+    schemas: Vec<String>,
+) -> Result<Schema, TestSupportError> {
+    match runner
+        .run_command(&RunnerCommand::Inspect {
+            schemas,
+            table: None,
+        })
+        .await
+        .map_err(|error| TestSupportError::message(error.to_string()))?
+    {
+        RunnerResult::Inspect(schema) => Ok(schema),
+        _ => Err(TestSupportError::message(
+            "inspect runner returned an unexpected result",
+        )),
+    }
 }
 
 pub fn ordered_migrations(
     case_name: &str,
-    migrator: &Migrator,
+    planner: &FixturePlanner,
 ) -> Result<Vec<Migration>, TestSupportError> {
-    let mut ordered = Vec::new();
-    let ids = migrator.graph.topological_order().map_err(|error| {
+    planner.ordered_migrations().map_err(|error| {
         TestSupportError::message(format!("{case_name}: topological ordering failed: {error}"))
-    })?;
-
-    for id in ids {
-        let migration = migrator.graph.get(id).cloned().ok_or_else(|| {
-            TestSupportError::message(format!("{case_name}: graph is missing migration '{id}'"))
-        })?;
-        ordered.push(migration);
-    }
-
-    Ok(ordered)
+    })
 }
 
-pub fn replay_schema(case_name: &str, migrator: &Migrator) -> Result<Schema, TestSupportError> {
-    let mut replay = Schema::default();
-    let ids = migrator.graph.topological_order().map_err(|error| {
-        TestSupportError::message(format!("{case_name}: topological ordering failed: {error}"))
-    })?;
-
-    for id in ids {
-        let migration = migrator.graph.get(id).ok_or_else(|| {
-            TestSupportError::message(format!("{case_name}: graph is missing migration '{id}'"))
-        })?;
-        for (index, op) in migration.operations.iter().enumerate() {
-            replay.apply(op).map_err(|error| {
-                TestSupportError::message(format!(
-                    "{case_name}: replay failed for migration '{}' operation {} ({}): {}",
-                    migration.id,
-                    index + 1,
-                    op.type_name(),
-                    error,
-                ))
-            })?;
-        }
-    }
-
-    canonicalize_schema(&mut replay, migrator.dialect());
-    Ok(replay)
+pub fn replay_schema(
+    case_name: &str,
+    planner: &FixturePlanner,
+) -> Result<Schema, TestSupportError> {
+    planner
+        .replay()
+        .map_err(|error| TestSupportError::message(format!("{case_name}: replay failed: {error}")))
 }
 
 pub fn assert_schema_matches(
@@ -1544,6 +1874,7 @@ fn canonicalize_default_for_compare(default: &str, dialect: Dialect) -> String {
         #[cfg(feature = "sqlite")]
         Dialect::Sqlite => default.to_string(),
         Dialect::Mysql => default.to_string(),
+        Dialect::Mariadb => default.to_string(),
     }
 }
 
@@ -1631,34 +1962,6 @@ impl PgHarness {
             .await
             .map_err(|e| TestSupportError::message(format!("execute failed: {e}\n  SQL: {sql}")))?;
         Ok(())
-    }
-
-    pub async fn inspect_schema(&mut self) -> Result<Schema, TestSupportError> {
-        let opts = self
-            .url
-            .parse::<PgConnectOptions>()
-            .map_err(|e| {
-                TestSupportError::message(format!("failed to parse URL for inspect: {e}"))
-            })?
-            .ssl_mode(PgSslMode::Disable);
-        let conn = opts.connect().await.map_err(|e| {
-            TestSupportError::message(format!("failed to connect for inspect: {e}"))
-        })?;
-        let mut executor = PostgresExecutor::new(conn);
-        executor
-            .inspect_db(&[self.schema.as_str()])
-            .await
-            .map_err(|e| TestSupportError::message(format!("inspect_db failed: {e}")))
-    }
-
-    pub async fn verify(
-        &mut self,
-        migrator: &Migrator,
-    ) -> Result<Vec<Operation>, TestSupportError> {
-        migrator
-            .verify(self.schema.as_str())
-            .await
-            .map_err(|e| TestSupportError::message(format!("verify failed: {e}")))
     }
 
     pub async fn fetch_strings(&mut self, sql: &str) -> Result<Vec<String>, TestSupportError> {
@@ -1843,24 +2146,6 @@ impl SqliteHarness {
         .await
     }
 
-    pub async fn inspect_schema(&self) -> Result<Schema, TestSupportError> {
-        self.with_connection(|conn| async move {
-            let mut executor = gaman::core::SqliteExecutor::new(conn);
-            executor
-                .inspect_db(&[])
-                .await
-                .map_err(|e| TestSupportError::message(format!("inspect_db failed: {e}")))
-        })
-        .await
-    }
-
-    pub async fn verify(&self, migrator: &Migrator) -> Result<Vec<Operation>, TestSupportError> {
-        migrator
-            .verify("")
-            .await
-            .map_err(|e| TestSupportError::message(format!("verify failed: {e}")))
-    }
-
     pub async fn fetch_strings(&self, sql: &str) -> Result<Vec<String>, TestSupportError> {
         self.with_connection(|mut conn| async move {
             let rows = sqlx::query_scalar::<_, String>(sql)
@@ -1905,3 +2190,168 @@ fn sqlite_connect_options(url: &str) -> Result<SqliteConnectOptions, String> {
         .map_err(|e| e.to_string())
         .map(|opts| opts.create_if_missing(true).foreign_keys(true))
 }
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+struct MysqlFamilyHarnessEnvironment {
+    config: Arc<Config>,
+}
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+impl MysqlFamilyHarnessEnvironment {
+    fn new(url: &str, dialect: Dialect) -> Self {
+        Self {
+            config: Arc::new(Config::new(
+                url.to_string(),
+                "migrations".into(),
+                "schema.yaml".into(),
+                dialect,
+            )),
+        }
+    }
+}
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+impl Environment for MysqlFamilyHarnessEnvironment {
+    fn config(&self) -> &Arc<Config> {
+        &self.config
+    }
+    fn executor<'a>(
+        &'a self,
+    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor + Send>, EnvironmentError>> {
+        let url = self.config.database_url.clone();
+        let dialect = self.config.dialect;
+        Box::pin(async move {
+            gaman::core::MysqlFamilyExecutor::connect(&url, dialect)
+                .await
+                .map(|executor| Box::new(executor) as Box<dyn EnvironmentExecutor + Send>)
+                .map_err(|error| EnvironmentError::Connect(error.to_string()))
+        })
+    }
+    fn dialect(&self) -> Dialect {
+        self.config.dialect
+    }
+}
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+pub struct MysqlFamilyHarness {
+    base_url: String,
+    pub url: String,
+    pub dialect: Dialect,
+    database: String,
+}
+
+#[cfg(any(feature = "mysql", feature = "mariadb"))]
+impl MysqlFamilyHarness {
+    /// Creates an isolated temporary database for one online case.
+    pub async fn new(dialect: Dialect) -> Result<Self, TestSupportError> {
+        let env = if dialect == Dialect::Mysql {
+            MYSQL_DATABASE_URL_ENV
+        } else {
+            MARIADB_DATABASE_URL_ENV
+        };
+        let base_url = std::env::var(env).map_err(|_| {
+            TestSupportError::message(format!(
+                "{env} must be set to run {} online cases",
+                dialect.as_str()
+            ))
+        })?;
+        let options = base_url
+            .parse::<sqlx::mysql::MySqlConnectOptions>()
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
+        let database = format!(
+            "gaman_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| TestSupportError::message(error.to_string()))?
+                .as_nanos()
+        );
+        let mut conn = options
+            .clone()
+            .connect()
+            .await
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
+        sqlx::query(&format!("CREATE DATABASE `{database}`"))
+            .execute(&mut conn)
+            .await
+            .map_err(|error| {
+                TestSupportError::message(format!("failed to create temporary database: {error}"))
+            })?;
+        let url = options.database(&database).to_url_lossy().to_string();
+        Ok(Self {
+            base_url,
+            url,
+            dialect,
+            database,
+        })
+    }
+
+    pub async fn cleanup(&self) -> Result<(), TestSupportError> {
+        let options = self
+            .base_url
+            .parse::<sqlx::mysql::MySqlConnectOptions>()
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
+        let mut conn = options
+            .connect()
+            .await
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
+        sqlx::query(&format!("DROP DATABASE IF EXISTS `{}`", self.database))
+            .execute(&mut conn)
+            .await
+            .map(|_| ())
+            .map_err(|error| TestSupportError::message(error.to_string()))
+    }
+    pub async fn batch_execute(&self, sql: &str) -> Result<(), TestSupportError> {
+        let options = self
+            .url
+            .parse::<sqlx::mysql::MySqlConnectOptions>()
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
+        let mut conn = options
+            .connect()
+            .await
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
+        sqlx::raw_sql(sql)
+            .execute(&mut conn)
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                TestSupportError::message(format!("execute failed: {error}\n  SQL: {sql}"))
+            })
+    }
+    pub async fn fetch_strings(&self, sql: &str) -> Result<Vec<String>, TestSupportError> {
+        let options = self
+            .url
+            .parse::<sqlx::mysql::MySqlConnectOptions>()
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
+        let mut conn = options
+            .connect()
+            .await
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
+        sqlx::query_scalar(sql)
+            .fetch_all(&mut conn)
+            .await
+            .map_err(|error| TestSupportError::message(error.to_string()))
+    }
+    pub async fn migration_records(&self) -> Result<Vec<String>, TestSupportError> {
+        self.fetch_strings(&format!(
+            "SELECT id FROM {TRACKING_TABLE} ORDER BY applied_at, id"
+        ))
+        .await
+    }
+    pub async fn assert_lock_released(&self) -> Result<(), TestSupportError> {
+        let mut executor = gaman::core::MysqlFamilyExecutor::connect(&self.url, self.dialect)
+            .await
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
+        executor
+            .acquire_lock()
+            .await
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
+        executor
+            .release_lock()
+            .await
+            .map_err(|error| TestSupportError::message(error.to_string()))
+    }
+}
+mod evidence_io;
+
+pub use evidence_io::{generation_id, write_yaml_atomic};

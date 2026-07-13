@@ -1,0 +1,33 @@
+description: MySQL rollback reverses later migrations and removes their tracking records.
+features: [live_migration_application, rollback_migrations, migration_tracking, tables_columns, column_add_drop_rename, data_preservation]
+migrations: []
+dialects:
+  mysql:
+    checks: [rollback, migration_records, data]
+    target: 0001_mysql_profiles
+    migrations:
+    - id: 0001_mysql_profiles
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: profiles
+            columns:
+            - {name: id, type: INT, primary_key: true}
+            - {name: name, type: VARCHAR(64)}
+        - type: statement
+          up: "INSERT INTO profiles (id, name) VALUES (1, 'Ada')"
+          down: "DELETE FROM profiles WHERE id = 1"
+    - id: 0002_mysql_profile_email
+      dependencies: [0001_mysql_profiles]
+      atomic: false
+      operations:
+        - type: add_column
+          table_name: profiles
+          column: {name: email, type: VARCHAR(255), nullable: true}
+    expect_records: [0001_mysql_profiles]
+    data:
+    - sql: SELECT name FROM profiles WHERE id = 1
+      expect: [Ada]
+    - sql: SELECT email FROM profiles
+      expect_error: Unknown column

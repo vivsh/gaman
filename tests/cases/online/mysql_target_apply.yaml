@@ -1,0 +1,38 @@
+description: MySQL target application stops at the requested migration.
+features: [live_migration_application, target_migrations, migration_tracking, tables_columns, column_add_drop_rename]
+migrations: []
+dialects:
+  mysql:
+    checks: [migrate_to, migration_records, data]
+    target: 0002_mysql_email
+    migrations:
+    - id: 0001_mysql_accounts
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: accounts
+            columns:
+            - {name: id, type: INT, primary_key: true}
+    - id: 0002_mysql_email
+      dependencies: [0001_mysql_accounts]
+      atomic: false
+      operations:
+        - type: add_column
+          table_name: accounts
+          column: {name: email, type: VARCHAR(255), nullable: true}
+    - id: 0003_mysql_audit
+      dependencies: [0002_mysql_email]
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: audit_log
+            columns:
+            - {name: account_id, type: INT}
+    expect_records: [0001_mysql_accounts, 0002_mysql_email]
+    data:
+    - sql: SELECT CAST(COUNT(*) AS CHAR) FROM accounts
+      expect: ['0']
+    - sql: SELECT COUNT(*) FROM audit_log
+      expect_error: doesn't exist

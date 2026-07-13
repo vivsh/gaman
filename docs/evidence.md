@@ -28,31 +28,41 @@ Refresh all accepted evidence and generated support docs:
 scripts/refresh-evidence.sh
 ```
 
-## Recording evidence
+The script requires PostgreSQL and MySQL test URLs for currently claimed live
+support. MariaDB remains optional while its live matrix is planned. It stages
+parser, offline, online, README, and detailed-document outputs, assigns one
+generation identifier, validates all files, then publishes them together.
+Failure leaves the accepted bundle unchanged.
 
-Parser evidence:
+## Local result recording
+
+The harness flags below are for diagnostics and review. They do not publish an
+accepted bundle. Add `--failure-output <path>` to retain a failed run safely.
+
+Parser results:
 
 ```bash
-cargo test -p gaman --test parser -- --record results/parser-results.yaml
+cargo test -p gaman --test parser -- --record /tmp/parser-results.yaml
 ```
 
 Offline evidence:
 
 ```bash
-cargo test -p gaman --features sqlite --test offline -- --record results/offline-results.yaml
+cargo test -p gaman --features sqlite --test offline -- --record /tmp/offline-results.yaml
 ```
 
 Online evidence:
 
 ```bash
-set -a; source .env; set +a; cargo test -p gaman --features sqlite --test online -- --record results/online-results.yaml
+set -a; source .env; set +a; cargo test -p gaman --features sqlite --test online -- --record /tmp/online-results.yaml
 ```
 
 ## Support matrix generation
 
-`tests/cases/support-matrix.yaml` defines README support rows. It references
-accepted online evidence, offline evidence, and explicit design notes for
-unsupported or bounded rows.
+`tests/cases/support-matrix.yaml` defines README support rows. Every claim names
+an exact fixture and the checks or assertions that prove it for the same
+dialect. Feature labels organize evidence; they do not independently prove a
+support cell.
 
 The README support matrix is generated from those files and wrapped in checked
 markers.
@@ -96,6 +106,9 @@ cargo test -p gaman --test offline_coverage
 - a supported or partial evidence cell has no successful evidence;
 - a partial or unsupported cell has no design note;
 - accepted evidence points to a missing fixture;
+- accepted result files have different generation identifiers;
+- a case descriptor names a check or assertion the case did not execute;
+- offline evidence is reused across dialects;
 - a fixture references an unknown product feature.
 
 Support matrix policy:

@@ -50,4 +50,6 @@ migrations:
 dialects:
   postgres:
     checks: [verify]
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []

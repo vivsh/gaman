@@ -25,7 +25,7 @@ pub enum OfflineError {
     Diff(#[from] DiffError),
     #[error(transparent)]
     Clarifier(#[from] ClarifyError),
-    #[error("migration generation needs clarification input")]
+    #[error("clarification needed for migration generation")]
     NeedsInput(Vec<crate::clarifier::Clarification>),
     #[error(transparent)]
     Dialect(#[from] DialectError),
@@ -75,6 +75,16 @@ impl OfflinePlanner {
         desired_schema: Schema,
         decisions: &[Decision],
     ) -> Result<Option<Migration>, OfflineError> {
+        self.make_named_migration(desired_schema, None, decisions)
+    }
+
+    /// Generates one migration using an optional caller-selected descriptive suffix.
+    pub fn make_named_migration(
+        &self,
+        desired_schema: Schema,
+        name: Option<&str>,
+        decisions: &[Decision],
+    ) -> Result<Option<Migration>, OfflineError> {
         let replay = self.replay_with_sources()?;
         let previous = replay
             .schema
@@ -104,17 +114,17 @@ impl OfflinePlanner {
             ClarifyResult::Resolved(ops) => ops,
         };
         let ops = self.dialect.reorder(ops, &previous, &desired_schema);
-        let id = format!(
-            "{:04}_{}",
-            self.next_number(),
-            deterministic_name_from_ops(&ops)
-        );
+        let suffix = name
+            .filter(|name| !name.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| deterministic_name_from_ops(&ops));
+        let id = format!("{:04}_{suffix}", self.next_number());
         MigrationGraph::validate_id(&id)?;
         Ok(Some(Migration {
             id,
             dependencies: compute_deps(&ops, &replay.last_per_ns, &replay.entity_ns),
             operations: ops,
-            atomic: true,
+            atomic: self.dialect.supports_transactional_ddl(),
         }))
     }
 
@@ -183,6 +193,8 @@ mod tests {
             references: None,
             check: None,
             generated: None,
+            generated_storage: None,
+            dialect_options: Default::default(),
         }
     }
 
@@ -196,6 +208,8 @@ mod tests {
             references: None,
             check: None,
             generated: None,
+            generated_storage: None,
+            dialect_options: Default::default(),
         }
     }
 
@@ -209,6 +223,8 @@ mod tests {
             references: None,
             check: None,
             generated: None,
+            generated_storage: None,
+            dialect_options: Default::default(),
         }
     }
 

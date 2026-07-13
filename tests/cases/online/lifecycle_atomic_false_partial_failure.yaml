@@ -43,7 +43,7 @@ dialects:
           name: partial_rows
           columns:
             - name: id
-              type: integer
+              type: INTEGER
     data:
       - sql: "SELECT CAST(COUNT(*) AS TEXT) FROM partial_rows"
         expect: ["0"]

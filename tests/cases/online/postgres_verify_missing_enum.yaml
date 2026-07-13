@@ -18,8 +18,11 @@ mutate_sql: |
 dialects:
   postgres:
     checks: [verify]
-    expect_verify:
-      - type: create_enum
-        enum_def:
-          name: ticket_status
-          values: [open, closed]
+    expect_verification:
+      findings:
+      - {operation: create_enum, entity_kind: enum, entity_name: ticket_status, property: presence, expected: present, observed: "<missing>", note: null}
+      operations:
+        - type: create_enum
+          enum_def:
+            name: ticket_status
+            values: [open, closed]

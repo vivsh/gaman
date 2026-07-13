@@ -22,7 +22,9 @@ dialects:
           columns:
             - {name: ID, type: integer, primary_key: true}
             - {name: Line Item, type: text}
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []
     data:
       - sql: 'SELECT "Line Item" FROM "Order" WHERE "ID" = 1'
         expect: [rare value]
@@ -34,9 +36,11 @@ dialects:
           name: Order
           primary_key: {name: Order_pkey, columns: [ID]}
           columns:
-            - {name: ID, type: integer, primary_key: true}
-            - {name: Line Item, type: text}
-    expect_verify: []
+            - {name: ID, type: INTEGER, primary_key: true}
+            - {name: Line Item, type: TEXT}
+    expect_verification:
+      findings: []
+      operations: []
     data:
       - sql: 'SELECT "Line Item" FROM "Order" WHERE "ID" = 1'
         expect: [rare value]

@@ -10,6 +10,7 @@ features:
 
 migrations:
   - id: 0001_create_accounts
+    atomic: false
     operations:
       - type: create_table
         table:
@@ -38,7 +39,7 @@ migrations:
             - name: account_id
               type: integer
             - name: email
-              type: text
+              type: varchar(255)
             - name: email_len
               type: integer
               nullable: true
@@ -58,7 +59,21 @@ migrations:
 dialects:
   postgres:
     checks: [verify]
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []
   sqlite:
     checks: [verify]
-    expect_verify: []
+    expect_verification:
+      findings: []
+      operations: []
+  mysql:
+    checks: [verify]
+    expect_verification:
+      findings: []
+      operations: []
+  mariadb:
+    checks: [verify]
+    expect_verification:
+      findings: []
+      operations: []

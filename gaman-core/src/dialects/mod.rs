@@ -5,7 +5,7 @@ use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::parsers::tokens::SqlTokenizer;
 use crate::states::types::EntityKind;
-use crate::states::{Schema, SchemaValidationError};
+use crate::states::{Column, Schema, SchemaValidationError};
 
 #[derive(Debug, Error)]
 pub enum DialectError {
@@ -40,6 +40,7 @@ pub enum Dialect {
     Postgres,
     Sqlite,
     Mysql,
+    Mariadb,
 }
 
 /// Internal dialect behavior boundary.
@@ -106,6 +107,36 @@ pub(crate) trait DialectProcessor: Sync {
 
     fn normalize_inspected_schema(&self, schema: Schema) -> Result<Schema, SchemaValidationError>;
 
+    /// Preserves dialect metadata required by full-definition column repair SQL.
+    fn column_for_repair(&self, expected: &Column, _: &Column) -> Column {
+        expected.clone()
+    }
+
+    /// Returns product-owned tracking installation SQL when generic schema rendering is unsuitable.
+    fn tracking_install_sql(&self, _: &str) -> Option<Vec<String>> {
+        None
+    }
+
+    /// Returns product-owned SQL for listing applied migration identifiers.
+    fn tracking_list_sql(&self, _: &str) -> Option<String> {
+        None
+    }
+
+    /// Returns product-owned SQL for recording one applied migration identifier.
+    fn tracking_record_sql(&self, _: &str, _: &str) -> Option<String> {
+        None
+    }
+
+    /// Returns product-owned SQL for removing one applied migration identifier.
+    fn tracking_unrecord_sql(&self, _: &str, _: &str) -> Option<String> {
+        None
+    }
+
+    /// Whether schema DDL can participate in a transaction spanning multiple statements.
+    fn supports_transactional_ddl(&self) -> bool {
+        true
+    }
+
     fn default_expressions_equal(&self, left: &str, right: &str) -> bool {
         crate::parsers::tokens::expressions_equal(self.tokenizer(), left, right)
     }
@@ -118,6 +149,7 @@ impl Dialect {
             Self::Postgres => "postgres",
             Self::Sqlite => "sqlite",
             Self::Mysql => "mysql",
+            Self::Mariadb => "mariadb",
         }
     }
 
@@ -127,8 +159,10 @@ impl Dialect {
             Some(Self::Postgres)
         } else if value.eq_ignore_ascii_case("sqlite") || value.eq_ignore_ascii_case("sqlite3") {
             Some(Self::Sqlite)
-        } else if value.eq_ignore_ascii_case("mysql") || value.eq_ignore_ascii_case("mariadb") {
+        } else if value.eq_ignore_ascii_case("mysql") {
             Some(Self::Mysql)
+        } else if value.eq_ignore_ascii_case("mariadb") {
+            Some(Self::Mariadb)
         } else {
             None
         }
@@ -163,6 +197,7 @@ impl Dialect {
             Dialect::Postgres => &postgres::POSTGRES,
             Dialect::Sqlite => &sqlite::SQLITE,
             Dialect::Mysql => &mysql::MYSQL,
+            Dialect::Mariadb => &mariadb::MARIADB,
         }
     }
 
@@ -172,6 +207,10 @@ impl Dialect {
 
     pub(crate) fn default_expressions_equal(&self, left: &str, right: &str) -> bool {
         self.processor().default_expressions_equal(left, right)
+    }
+
+    pub(crate) fn column_for_repair(&self, expected: &Column, observed: &Column) -> Column {
+        self.processor().column_for_repair(expected, observed)
     }
 
     #[doc(hidden)]
@@ -259,6 +298,31 @@ impl Dialect {
         self.processor().validate_migration(m)
     }
 
+    /// Reports whether multi-statement schema migrations are transactionally atomic.
+    pub fn supports_transactional_ddl(&self) -> bool {
+        self.processor().supports_transactional_ddl()
+    }
+
+    /// Returns dialect-owned tracking installation SQL when required by the backend.
+    pub fn tracking_install_sql(&self, table: &str) -> Option<Vec<String>> {
+        self.processor().tracking_install_sql(table)
+    }
+
+    /// Returns dialect-owned SQL for listing applied migration identifiers.
+    pub fn tracking_list_sql(&self, table: &str) -> Option<String> {
+        self.processor().tracking_list_sql(table)
+    }
+
+    /// Returns dialect-owned SQL for recording one applied migration identifier.
+    pub fn tracking_record_sql(&self, table: &str, id: &str) -> Option<String> {
+        self.processor().tracking_record_sql(table, id)
+    }
+
+    /// Returns dialect-owned SQL for removing one applied migration identifier.
+    pub fn tracking_unrecord_sql(&self, table: &str, id: &str) -> Option<String> {
+        self.processor().tracking_unrecord_sql(table, id)
+    }
+
     #[doc(hidden)]
     pub fn validate_migration_with_state(
         &self,
@@ -269,7 +333,9 @@ impl Dialect {
     }
 }
 
+mod mariadb;
 mod mysql;
+mod mysql_family;
 mod postgres;
 mod sqlite;
 
@@ -303,7 +369,7 @@ mod tests {
         );
     }
 
-    /// Verifies MySQL and MariaDB URLs infer the MySQL dialect stub.
+    /// Verifies MySQL and MariaDB URLs resolve to separate dialect contracts.
     #[test]
     fn parse_from_url_accepts_mysql_urls() {
         assert_eq!(
@@ -312,7 +378,7 @@ mod tests {
         );
         assert_eq!(
             Dialect::parse_from_url("mariadb://localhost/app"),
-            Ok(Dialect::Mysql)
+            Ok(Dialect::Mariadb)
         );
     }
 

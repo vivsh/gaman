@@ -2,16 +2,16 @@
 
 use std::sync::Arc;
 
+use gaman::Migration;
 use gaman::core::{
-    BoxFuture, Dialect, DialectError, Environment, EnvironmentError, EnvironmentExecutor, Executor,
-    Migrator, SqliteExecutor, TRACKING_TABLE, VecAdapter,
+    BoxFuture, DatabaseTrackingStore, Dialect, DialectError, Executor, MigrationEngine,
+    MigrationStore, SqlPlanError, SqlPlanRenderer, SqliteExecutor, StoreError, TRACKING_TABLE,
 };
 use gaman::schema::{
     Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, Operation,
     PrimaryKey, Schema, Table, TriggerDef, TriggerEvent, TriggerScope, TriggerTiming, ViewDef,
     Volatility,
 };
-use gaman::{Config, Migration};
 use sqlx::ConnectOptions;
 
 fn operation_to_sql(operation: Operation) -> Result<Vec<String>, DialectError> {
@@ -532,54 +532,96 @@ fn migration_atomic(id: &str, atomic: bool, operations: Vec<Operation>) -> Migra
     }
 }
 
-struct SqliteEnvironment {
-    config: Arc<Config>,
+fn sql_for(migrations: Vec<Migration>) -> Vec<String> {
+    sql_for_result(migrations).unwrap()
 }
 
-impl SqliteEnvironment {
-    fn new() -> Self {
+#[derive(Clone)]
+struct StaticMigrationStore {
+    migrations: Arc<Vec<Migration>>,
+}
+
+impl StaticMigrationStore {
+    /// Creates immutable migration history for one direct engine test.
+    fn new(migrations: Vec<Migration>) -> Self {
         Self {
-            config: Arc::new(Config::new(
-                "sqlite::memory:".to_string(),
-                "migrations".into(),
-                "schema.yaml".into(),
-                Dialect::Sqlite,
-            )),
+            migrations: Arc::new(migrations),
         }
     }
 }
 
-impl Environment for SqliteEnvironment {
-    fn config(&self) -> &Arc<Config> {
-        &self.config
+impl MigrationStore for StaticMigrationStore {
+    fn load_all<'a>(&'a self) -> BoxFuture<'a, Result<Vec<Migration>, StoreError>> {
+        Box::pin(async move { Ok(self.migrations.as_ref().clone()) })
     }
 
-    fn executor<'a>(
-        &'a self,
-    ) -> BoxFuture<'a, Result<Box<dyn EnvironmentExecutor + Send>, EnvironmentError>> {
+    fn save<'a>(&'a self, _migration: &'a Migration) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async {
-            Err(EnvironmentError::Config(
-                "test environment does not create executors".into(),
+            Err(StoreError::unavailable(
+                "immutable test migration store".to_string(),
             ))
         })
     }
+}
 
-    fn dialect(&self) -> Dialect {
-        Dialect::Sqlite
+struct BorrowedExecutor<'a, E>(&'a mut E);
+
+impl<E: Executor> Executor for BorrowedExecutor<'_, E> {
+    fn prepare<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> BoxFuture<'a, Result<(), gaman::core::ExecutorError>> {
+        self.0.prepare(sql)
+    }
+
+    fn execute<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> BoxFuture<'a, Result<(), gaman::core::ExecutorError>> {
+        self.0.execute(sql)
+    }
+
+    fn fetch_strings<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<String>, gaman::core::ExecutorError>> {
+        self.0.fetch_strings(sql)
+    }
+
+    fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), gaman::core::ExecutorError>> {
+        self.0.begin()
+    }
+
+    fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), gaman::core::ExecutorError>> {
+        self.0.commit()
+    }
+
+    fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), gaman::core::ExecutorError>> {
+        self.0.rollback()
+    }
+
+    fn acquire_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), gaman::core::ExecutorError>> {
+        self.0.acquire_lock()
+    }
+
+    fn release_lock<'a>(&'a mut self) -> BoxFuture<'a, Result<(), gaman::core::ExecutorError>> {
+        self.0.release_lock()
     }
 }
 
-fn migrator(migrations: Vec<Migration>) -> Migrator {
-    Migrator::new(
-        Box::new(VecAdapter::new(migrations)),
-        Box::new(SqliteEnvironment::new()),
-    )
-    .unwrap()
-}
-
-fn sql_for(migrations: Vec<Migration>) -> Vec<String> {
-    let migrator = migrator(migrations.clone());
-    migrator.sql_migrate(&migrations).unwrap()
+/// Applies immutable history through the core engine while retaining access to the test executor.
+async fn apply_with<E: Executor>(
+    migrations: Vec<Migration>,
+    executor: &mut E,
+    target: Option<&str>,
+) -> Result<gaman::MigrationMovement, gaman::EngineError> {
+    let mut engine = MigrationEngine::new(
+        Dialect::Sqlite,
+        StaticMigrationStore::new(migrations),
+        DatabaseTrackingStore,
+        BorrowedExecutor(executor),
+    );
+    engine.apply(target, false).await
 }
 
 #[test]
@@ -768,7 +810,7 @@ fn sqlite_errors_for_schema_qualified_tables() {
 }
 
 #[test]
-fn sqlite_operation_renderer_points_rebuild_ops_to_migrator() {
+fn sqlite_operation_renderer_points_rebuild_ops_to_plan_renderer() {
     let err = operation_to_sql_without_start(Operation::DropColumn {
         table_name: "users".to_string(),
         column: col("email", "text", true),
@@ -1025,7 +1067,7 @@ fn sqlite_rebuild_rejects_unsafe_cases() {
 
     let mut new_id = pk_col("id");
     new_id.col_type = "text".to_string();
-    let err = migrator(vec![
+    let err = sql_for_result(vec![
         migration(
             "0001_create_users",
             vec![Operation::CreateTable {
@@ -1038,27 +1080,6 @@ fn sqlite_rebuild_rejects_unsafe_cases() {
                 table_name: "users".to_string(),
                 old: pk_col("id"),
                 new: new_id,
-                cast_expr: None,
-            }],
-        ),
-    ])
-    .sql_migrate(&[
-        migration(
-            "0001_create_users",
-            vec![Operation::CreateTable {
-                table: users.clone(),
-            }],
-        ),
-        migration(
-            "0002_alter_pk",
-            vec![Operation::AlterColumn {
-                table_name: "users".to_string(),
-                old: pk_col("id"),
-                new: {
-                    let mut column = pk_col("id");
-                    column.col_type = "text".to_string();
-                    column
-                },
                 cast_expr: None,
             }],
         ),
@@ -1333,9 +1354,8 @@ fn sqlite_dependent_view_detection_is_identifier_aware() {
     assert!(err.to_string().contains("dependent view"));
 }
 
-fn sql_for_result(migrations: Vec<Migration>) -> Result<Vec<String>, gaman::core::MigratorError> {
-    let migrator = migrator(migrations.clone());
-    migrator.sql_migrate(&migrations)
+fn sql_for_result(migrations: Vec<Migration>) -> Result<Vec<String>, SqlPlanError> {
+    SqlPlanRenderer::new(Dialect::Sqlite, migrations.clone())?.render_migrations(&migrations)
 }
 
 #[tokio::test]
@@ -1394,10 +1414,9 @@ async fn sqlite_rebuild_live_preserves_data_and_constraints() {
         ),
     ];
 
-    let migrator = migrator(migrations);
+    let history = migrations;
     let mut executor = sqlite_executor().await;
-    migrator
-        .apply_with(&mut executor, None, false)
+    apply_with(history.clone(), &mut executor, None)
         .await
         .unwrap();
 
@@ -1467,10 +1486,9 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
         ),
     ];
 
-    let migrator = migrator(migrations);
+    let history = migrations;
     let mut executor = sqlite_executor().await;
-    let forward = migrator
-        .apply_with(&mut executor, None, false)
+    let forward = apply_with(history.clone(), &mut executor, None)
         .await
         .unwrap();
     assert_eq!(forward.applied, 3);
@@ -1489,8 +1507,7 @@ async fn sqlite_rebuild_live_supports_fk_and_rollback() {
         .unwrap_err();
     assert!(err.to_string().contains("FOREIGN KEY"));
 
-    let backward = migrator
-        .apply_with(&mut executor, Some("0002_create_users"), false)
+    let backward = apply_with(history.clone(), &mut executor, Some("0002_create_users"))
         .await
         .unwrap();
     assert_eq!(backward.applied, 0);
@@ -1568,10 +1585,9 @@ async fn sqlite_rebuild_live_preserves_child_rows_when_parent_is_rebuilt() {
         ),
     ];
 
-    let migrator = migrator(migrations);
+    let history = migrations;
     let mut executor = sqlite_executor().await;
-    migrator
-        .apply_with(&mut executor, Some("0002_create_users"), false)
+    apply_with(history.clone(), &mut executor, Some("0002_create_users"))
         .await
         .unwrap();
     executor
@@ -1583,8 +1599,7 @@ async fn sqlite_rebuild_live_preserves_child_rows_when_parent_is_rebuilt() {
         .await
         .unwrap();
 
-    let err = migrator
-        .apply_with(&mut executor, None, false)
+    let err = apply_with(history.clone(), &mut executor, None)
         .await
         .unwrap_err();
 
@@ -1666,10 +1681,9 @@ async fn sqlite_rebuild_live_fails_foreign_key_check_for_existing_bad_data() {
         ),
     ];
 
-    let migrator = migrator(migrations);
+    let history = migrations;
     let mut executor = sqlite_executor().await;
-    let err = migrator
-        .apply_with(&mut executor, None, false)
+    let err = apply_with(history.clone(), &mut executor, None)
         .await
         .unwrap_err();
 
@@ -1761,7 +1775,7 @@ impl Executor for RecordingExecutor {
 }
 
 #[tokio::test]
-async fn sqlite_rebuild_uses_existing_migrator_transaction_and_record_flow() {
+async fn sqlite_rebuild_uses_engine_transaction_and_record_flow() {
     let users = Table {
         name: "users".to_string(),
         schema: None,
@@ -1788,11 +1802,10 @@ async fn sqlite_rebuild_uses_existing_migrator_transaction_and_record_flow() {
             }],
         ),
     ];
-    let migrator = migrator(migrations);
+    let history = migrations;
     let mut executor = RecordingExecutor::default();
 
-    migrator
-        .apply_with(&mut executor, None, false)
+    apply_with(history.clone(), &mut executor, None)
         .await
         .unwrap();
 
@@ -1809,7 +1822,7 @@ async fn sqlite_rebuild_uses_existing_migrator_transaction_and_record_flow() {
     let record_pos = executor
         .log
         .iter()
-        .rposition(|entry| entry.contains(&format!("INSERT INTO {TRACKING_TABLE}")))
+        .rposition(|entry| entry.contains("INSERT INTO") && entry.contains(TRACKING_TABLE))
         .unwrap();
     let commit_pos = executor
         .log
@@ -1855,11 +1868,10 @@ async fn sqlite_rebuild_failure_rolls_back_without_recording_and_releases_lock()
             }],
         ),
     ];
-    let migrator = migrator(migrations);
+    let history = migrations;
     let mut executor = RecordingExecutor::failing(r#"INSERT INTO "__gaman_rebuild_users""#);
 
-    let err = migrator
-        .apply_with(&mut executor, None, false)
+    let err = apply_with(history.clone(), &mut executor, None)
         .await
         .unwrap_err();
 
@@ -1905,11 +1917,10 @@ async fn sqlite_rebuild_render_failure_preflights_before_install_lock_or_begin()
             }],
         ),
     ];
-    let migrator = migrator(migrations);
+    let history = migrations;
     let mut executor = RecordingExecutor::default();
 
-    let err = migrator
-        .apply_with(&mut executor, None, false)
+    let err = apply_with(history.clone(), &mut executor, None)
         .await
         .unwrap_err();
 

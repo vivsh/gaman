@@ -247,6 +247,23 @@ pub fn clarification_message(clar: &Clarification) -> ClarificationMessage {
                 }],
             }
         }
+        ClarificationKind::ColumnMetadataChange {
+            table,
+            column,
+            properties,
+        } => ClarificationMessage {
+            description: format!(
+                "{} Column '{}.{}' changes risky database metadata: {}.",
+                tag,
+                table,
+                column,
+                properties.join(", ")
+            ),
+            options: vec![ClarificationOption {
+                label: "Accept the database-specific column metadata change".to_string(),
+                action: OptionAction::Fixed(Answer::AcceptRisk),
+            }],
+        },
     }
 }
 

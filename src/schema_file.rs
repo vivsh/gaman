@@ -5,7 +5,7 @@
 //! without adding filesystem access to the offline core.
 
 #[cfg(feature = "db")]
-use crate::{SchemaCheckFileReport, SqlSchemaInput};
+use gaman_core::SqlInput;
 use gaman_core::dialects::Dialect;
 use gaman_core::states::{Schema, SchemaLoadError};
 use std::fs;
@@ -16,9 +16,9 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SchemaCheckPathEntry {
     /// SQL source to prepare through the selected database executor.
-    Sql(SqlSchemaInput),
+    Sql(SqlInput),
     /// A non-SQL schema source intentionally skipped by `check_schema`.
-    Ignored(SchemaCheckFileReport),
+    Ignored { name: String, reason: String },
 }
 
 /// Load a schema from a native filesystem path.
@@ -150,19 +150,23 @@ fn schema_check_entry(path: PathBuf) -> Result<SchemaCheckPathEntry, SchemaLoadE
         Some("sql") => {
             let source = fs::read_to_string(&path)
                 .map_err(|error| SchemaLoadError::Io(label.clone(), error))?;
-            Ok(SchemaCheckPathEntry::Sql(SqlSchemaInput::new(
-                label, source,
-            )))
+            Ok(SchemaCheckPathEntry::Sql(SqlInput {
+                name: label,
+                sql: source,
+            }))
         }
-        Some("yaml" | "yml") => Ok(SchemaCheckPathEntry::Ignored(
-            SchemaCheckFileReport::ignored(label, "YAML schema input"),
-        )),
-        Some("json") => Ok(SchemaCheckPathEntry::Ignored(
-            SchemaCheckFileReport::ignored(label, "JSON schema input"),
-        )),
-        _ => Ok(SchemaCheckPathEntry::Ignored(
-            SchemaCheckFileReport::ignored(label, "not an SQL schema input"),
-        )),
+        Some("yaml" | "yml") => Ok(SchemaCheckPathEntry::Ignored {
+            name: label,
+            reason: "YAML schema input".to_string(),
+        }),
+        Some("json") => Ok(SchemaCheckPathEntry::Ignored {
+            name: label,
+            reason: "JSON schema input".to_string(),
+        }),
+        _ => Ok(SchemaCheckPathEntry::Ignored {
+            name: label,
+            reason: "not an SQL schema input".to_string(),
+        }),
     }
 }
 
@@ -308,21 +312,11 @@ mod tests {
         );
         assert!(entries.iter().any(|entry| matches!(
             entry,
-            SchemaCheckPathEntry::Ignored(report)
-                if matches!(
-                    report.status,
-                    crate::SchemaCheckFileStatus::Ignored { ref reason }
-                        if reason == "YAML schema input"
-                )
+            SchemaCheckPathEntry::Ignored { reason, .. } if reason == "YAML schema input"
         )));
         assert!(entries.iter().any(|entry| matches!(
             entry,
-            SchemaCheckPathEntry::Ignored(report)
-                if matches!(
-                    report.status,
-                    crate::SchemaCheckFileStatus::Ignored { ref reason }
-                        if reason == "JSON schema input"
-                )
+            SchemaCheckPathEntry::Ignored { reason, .. } if reason == "JSON schema input"
         )));
     }
 

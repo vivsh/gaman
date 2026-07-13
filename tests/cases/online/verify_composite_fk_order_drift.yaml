@@ -44,21 +44,24 @@ dialects:
       ALTER TABLE accounts DROP CONSTRAINT accounts_tenant_id_region_id_fkey;
       ALTER TABLE accounts ADD CONSTRAINT accounts_tenant_id_region_id_fkey
         FOREIGN KEY (tenant_id, region_id) REFERENCES tenants(region_id, tenant_id);
-    expect_verify:
-      - type: drop_foreign_key
-        table_name: accounts
-        foreign_key:
-          name: accounts_tenant_id_region_id_fkey
-          columns: [tenant_id, region_id]
-          to_table: tenants
-          to_columns: [region_id, tenant_id]
-      - type: add_foreign_key
-        table_name: accounts
-        foreign_key:
-          name: accounts_tenant_id_region_id_fkey
-          columns: [tenant_id, region_id]
-          to_table: tenants
-          to_columns: [tenant_id, region_id]
+    expect_verification:
+      findings:
+      - {operation: drop_add_foreign_key, entity_kind: foreign_key, entity_name: accounts.accounts_tenant_id_region_id_fkey, property: to_columns, expected: "[tenant_id, region_id]", observed: "[region_id, tenant_id]", note: null}
+      operations:
+        - type: drop_foreign_key
+          table_name: accounts
+          foreign_key:
+            name: accounts_tenant_id_region_id_fkey
+            columns: [tenant_id, region_id]
+            to_table: tenants
+            to_columns: [region_id, tenant_id]
+        - type: add_foreign_key
+          table_name: accounts
+          foreign_key:
+            name: accounts_tenant_id_region_id_fkey
+            columns: [tenant_id, region_id]
+            to_table: tenants
+            to_columns: [tenant_id, region_id]
   sqlite:
     checks: [verify]
     mutate_sql: |
@@ -74,18 +77,21 @@ dialects:
       DROP TABLE accounts;
       ALTER TABLE accounts_rebuild RENAME TO accounts;
       PRAGMA foreign_keys = ON;
-    expect_verify:
-      - type: drop_foreign_key
-        table_name: accounts
-        foreign_key:
-          name: accounts_tenant_id_region_id_fkey
-          columns: [tenant_id, region_id]
-          to_table: tenants
-          to_columns: [region_id, tenant_id]
-      - type: add_foreign_key
-        table_name: accounts
-        foreign_key:
-          name: accounts_tenant_id_region_id_fkey
-          columns: [tenant_id, region_id]
-          to_table: tenants
-          to_columns: [tenant_id, region_id]
+    expect_verification:
+      findings:
+      - {operation: drop_add_foreign_key, entity_kind: foreign_key, entity_name: accounts.accounts_tenant_id_region_id_fkey, property: to_columns, expected: "[tenant_id, region_id]", observed: "[region_id, tenant_id]", note: null}
+      operations:
+        - type: drop_foreign_key
+          table_name: accounts
+          foreign_key:
+            name: accounts_tenant_id_region_id_fkey
+            columns: [tenant_id, region_id]
+            to_table: tenants
+            to_columns: [region_id, tenant_id]
+        - type: add_foreign_key
+          table_name: accounts
+          foreign_key:
+            name: accounts_tenant_id_region_id_fkey
+            columns: [tenant_id, region_id]
+            to_table: tenants
+            to_columns: [tenant_id, region_id]

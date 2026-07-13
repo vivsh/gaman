@@ -1,0 +1,41 @@
+description: MySQL preserves single-column foreign keys and update-delete actions.
+features: [live_migration_application, live_inspect_verify, single_primary_keys, single_foreign_keys, foreign_key_actions, data_preservation]
+migrations: []
+dialects:
+  mysql:
+    checks: [verify, data]
+    migrations:
+    - id: 0001_mysql_fk_actions
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: parents
+            columns:
+            - {name: id, type: INT, primary_key: true}
+        - type: create_table
+          table:
+            name: children
+            columns:
+            - {name: id, type: INT, primary_key: true}
+            - {name: parent_id, type: INT, nullable: true}
+            foreign_keys:
+            - name: children_parent_id_fkey
+              columns: [parent_id]
+              to_table: parents
+              to_columns: [id]
+              on_delete: set_null
+              on_update: cascade
+        - type: statement
+          up: INSERT INTO parents (id) VALUES (1)
+        - type: statement
+          up: INSERT INTO children (id, parent_id) VALUES (10, 1)
+    mutate_sql: |
+      UPDATE parents SET id = 2 WHERE id = 1;
+      DELETE FROM parents WHERE id = 2;
+    expect_verification:
+      findings: []
+      operations: []
+    data:
+    - sql: SELECT IF(parent_id IS NULL, 'null', 'value') FROM children WHERE id = 10
+      expect: ['null']

@@ -1,0 +1,39 @@
+description: MySQL verify reports an observed column default that differs from migration history.
+features: [live_inspect_verify, ownership_scoped_verify, type_null_default_changes, tables_columns]
+migrations: []
+dialects:
+  mysql:
+    checks: [verify]
+    migrations:
+    - id: 0001_mysql_tasks
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: tasks
+            columns:
+            - {name: id, type: INT, primary_key: true}
+            - {name: status, type: VARCHAR(32), default: "'todo'"}
+    mutate_sql: ALTER TABLE tasks ALTER COLUMN status SET DEFAULT 'done';
+    expect_verification:
+      findings:
+      - operation: alter_column
+        entity_kind: column
+        entity_name: tasks.status
+        property: default
+        expected: "'todo'"
+        observed: "'done'"
+        note: null
+      operations:
+      - type: alter_column
+        table_name: tasks
+        old:
+          name: status
+          type: varchar(32)
+          default: "'done'"
+          mysql: {character_set: utf8mb4, collation: utf8mb4_0900_ai_ci}
+        new:
+          name: status
+          type: VARCHAR(32)
+          default: "'todo'"
+          mysql: {character_set: utf8mb4, collation: utf8mb4_0900_ai_ci}

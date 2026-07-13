@@ -1,449 +1,3364 @@
 rows:
-  - id: offline_planning
-    label: Offline replay, diff, and migration generation
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          offline: [kind.migration_to_replay, kind.schema_to_migration, group.diff]
-      sqlite:
-        status: supported
-        evidence:
-          offline: [kind.migration_to_replay, kind.schema_to_migration, group.diff]
-      mysql:
-        status: planned
-        note: MySQL dialect support is not implemented yet.
-  - id: offline_sql_rendering
-    label: Offline SQL rendering through `sql_migrate`
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          offline: [kind.migration_to_sql, renderer.postgres.summary]
-      sqlite:
-        status: supported
-        evidence:
-          offline: [kind.migration_to_sql, renderer.sqlite.summary]
-      mysql:
-        status: planned
-        note: MySQL SQL rendering is planned after the dialect exists.
-  - id: live_migration_application
-    label: Live migration application
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [live_migration_application]
-      sqlite:
-        status: supported
-        evidence:
-          online: [live_migration_application]
-      mysql:
-        status: planned
-        note: MySQL executor support is not implemented yet.
-  - id: live_introspection
-    label: Live database introspection
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [live_inspect_verify]
-      sqlite:
-        status: supported
-        evidence:
-          online: [live_inspect_verify]
-      mysql:
-        status: planned
-        note: MySQL introspection is not implemented yet.
-  - id: live_verify_db
-    label: Live `verify_db`
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [ownership_scoped_verify]
-      sqlite:
-        status: supported
-        evidence:
-          online: [ownership_scoped_verify]
-      mysql:
-        status: planned
-        note: MySQL verify is not implemented yet.
-  - id: migration_tracking
-    label: Migration tracking table
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [migration_tracking]
-      sqlite:
-        status: supported
-        evidence:
-          online: [migration_tracking]
-      mysql:
-        status: planned
-        note: MySQL tracking table support is not implemented yet.
-  - id: dedicated_migration_lock
-    label: Dedicated migration lock
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [lock_cleanup]
-      sqlite:
-        status: unsupported
-        note: SQLite has no dedicated advisory-lock primitive; migration atomicity relies on SQLite transactions and file locking.
-      mysql:
-        status: planned
-        note: MySQL locking is planned with the MySQL executor.
-  - id: table_create_drop_rename
-    label: "Tables: create, drop, rename"
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [table_create_drop_rename]
-          offline: [operation.create_table, operation.drop_table, operation.rename_table]
-      sqlite:
-        status: supported
-        evidence:
-          online: [table_create_drop_rename]
-          offline: [operation.create_table, operation.drop_table, operation.rename_table]
-      mysql:
-        status: planned
-        note: MySQL table operations are planned after the dialect exists.
-  - id: column_add_drop_rename
-    label: "Columns: add, drop, rename"
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [column_add_drop_rename]
-          offline: [operation.add_column, operation.drop_column, operation.rename_column]
-      sqlite:
-        status: supported
-        evidence:
-          online: [column_add_drop_rename]
-          offline: [operation.add_column, operation.drop_column, operation.rename_column]
-      mysql:
-        status: planned
-        note: MySQL column operations are planned after the dialect exists.
-  - id: column_type_null_default
-    label: "Columns: type, nullability, default changes"
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [type_null_default_changes]
-          offline: [operation.alter_column]
-      sqlite:
-        status: supported
-        evidence:
-          online: [type_null_default_changes, sqlite_rebuild_planner]
-          offline: [operation.alter_column, renderer.sqlite.alter_column]
-      mysql:
-        status: planned
-        note: MySQL column alteration support is planned after the dialect exists.
-  - id: generated_columns
-    label: Generated columns
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [generated_columns]
-      sqlite:
-        status: supported
-        evidence:
-          online: [generated_columns]
-      mysql:
-        status: planned
-        note: MySQL generated columns are planned after the dialect exists.
-  - id: single_primary_keys
-    label: Single-column primary keys
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [single_primary_keys]
-      sqlite:
-        status: supported
-        evidence:
-          online: [single_primary_keys]
-      mysql:
-        status: planned
-        note: MySQL primary keys are planned after the dialect exists.
-  - id: composite_primary_keys
-    label: Multi-column / composite primary keys
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [composite_primary_keys]
-      sqlite:
-        status: supported
-        evidence:
-          online: [composite_primary_keys]
-      mysql:
-        status: planned
-        note: MySQL composite primary keys are planned after the dialect exists.
-  - id: primary_key_mutation_generation
-    label: Automatic primary-key mutation generation
-    dialects:
-      postgres:
-        status: unsupported
-        evidence:
-          offline: [unsupported.primary_key_mutation]
-        note: Primary-key surgery is intentionally manual/raw SQL for every dialect.
-      sqlite:
-        status: unsupported
-        evidence:
-          offline: [unsupported.primary_key_mutation]
-        note: Primary-key surgery is intentionally manual/raw SQL for every dialect.
-      mysql:
-        status: unsupported
-        note: Primary-key surgery is intentionally manual/raw SQL for every dialect.
-  - id: single_foreign_keys
-    label: Single-column foreign keys
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [single_foreign_keys]
-      sqlite:
-        status: supported
-        evidence:
-          online: [single_foreign_keys]
-      mysql:
-        status: planned
-        note: MySQL foreign keys are planned after the dialect exists.
-  - id: composite_foreign_keys
-    label: Multi-column / composite foreign keys
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [composite_foreign_keys]
-      sqlite:
-        status: supported
-        evidence:
-          online: [composite_foreign_keys]
-      mysql:
-        status: planned
-        note: MySQL composite foreign keys are planned after the dialect exists.
-  - id: unique_constraints
-    label: Unique constraints
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [unique_constraints]
-      sqlite:
-        status: supported
-        evidence:
-          online: [unique_constraints]
-      mysql:
-        status: planned
-        note: MySQL unique constraints are planned after the dialect exists.
-  - id: check_constraints
-    label: Check constraints
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [check_constraints]
-      sqlite:
-        status: supported
-        evidence:
-          online: [check_constraints]
-      mysql:
-        status: planned
-        note: MySQL check constraints are planned after the dialect exists.
-  - id: indexes
-    label: Indexes
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [indexes]
-      sqlite:
-        status: supported
-        evidence:
-          online: [indexes]
-      mysql:
-        status: planned
-        note: MySQL indexes are planned after the dialect exists.
-  - id: partial_indexes
-    label: Partial indexes
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [partial_indexes]
-          offline: [parser.postgres.parser_postgres_create_partial_index]
-      sqlite:
-        status: partial
-        evidence:
-          offline: [parser.sqlite.parser_sqlite_create_partial_index, sql_rendering.sql_sqlite_partial_index]
-        note: SQLite partial-index SQL rendering is proven offline; live predicate introspection/verify is not yet accepted evidence.
-      mysql:
-        status: planned
-        note: MySQL partial-index behavior is not implemented.
-  - id: concurrent_indexes
-    label: Concurrent indexes
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          offline: [sql_rendering.sql_postgres_concurrent_index]
-      sqlite:
-        status: unsupported
-        note: SQLite has no CREATE INDEX CONCURRENTLY syntax.
-      mysql:
-        status: planned
-        note: MySQL online/concurrent index behavior is not implemented.
-  - id: schemas_namespaces
-    label: Schemas / namespaces
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [schemas_namespaces]
-      sqlite:
-        status: unsupported
-        evidence:
-          offline: [unsupported.sqlite_schema_qualified_table]
-        note: SQLite does not support PostgreSQL-style schemas/namespaces in Gaman.
-      mysql:
-        status: unsupported
-        note: MySQL does not use PostgreSQL-style schemas/namespaces in Gaman.
-  - id: extensions
-    label: Extensions as opaque schema objects
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [extensions]
-      sqlite:
-        status: unsupported
-        evidence:
-          offline: [unsupported.sqlite_extension]
-        note: SQLite extensions are not modeled as migratable schema objects.
-      mysql:
-        status: unsupported
-        note: MySQL extensions are not modeled as migratable schema objects.
-  - id: enums
-    label: Enums
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [enums]
-      sqlite:
-        status: unsupported
-        evidence:
-          offline: [unsupported.sqlite_enum]
-        note: SQLite has no native enum schema object in Gaman.
-      mysql:
-        status: planned
-        note: MySQL enum support is not implemented.
-  - id: functions
-    label: Functions as opaque schema objects
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [functions_opaque]
-      sqlite:
-        status: unsupported
-        evidence:
-          offline: [unsupported.sqlite_function]
-        note: SQLite stored functions are not supported by Gaman.
-      mysql:
-        status: planned
-        note: MySQL stored function support is not implemented.
-  - id: trigger_query_objects
-    label: Trigger query schema objects
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [trigger_query_objects]
-      sqlite:
-        status: supported
-        evidence:
-          online: [trigger_query_objects]
-      mysql:
-        status: planned
-        note: MySQL triggers are planned after the dialect exists.
-  - id: views
-    label: Views as opaque schema objects
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [views_opaque]
-      sqlite:
-        status: supported
-        evidence:
-          online: [views_opaque]
-      mysql:
-        status: planned
-        note: MySQL views are planned after the dialect exists.
-  - id: raw_sql_statements
-    label: Raw SQL statements
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [raw_sql_statements]
-          offline: [renderer.postgres.statement]
-      sqlite:
-        status: supported
-        evidence:
-          online: [raw_sql_statements]
-          offline: [renderer.sqlite.statement]
-      mysql:
-        status: planned
-        note: MySQL raw SQL execution is planned after the executor exists.
-  - id: sqlite_table_rebuilds
-    label: SQLite table-rebuild planner for ALTER TABLE
-    dialects:
-      postgres:
-        status: unsupported
-        note: PostgreSQL uses native ALTER TABLE paths; SQLite rebuild planning does not apply.
-      sqlite:
-        status: supported
-        evidence:
-          online: [sqlite_rebuild_planner]
-          offline: [renderer.sqlite.alter_column, sql_rendering.sql_sqlite_rebuild_recreates_indexes]
-      mysql:
-        status: unsupported
-        note: SQLite rebuild planning does not apply to MySQL.
-  - id: opaque_source_formatting_fallback
-    label: Opaque source formatting fallback in offline diff
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          offline: [diff.diff_function_formatting_noop, diff.diff_trigger_query_formatting_noop, diff.diff_view_formatting_noop]
-      sqlite:
-        status: supported
-        evidence:
-          offline: [diff.diff_trigger_query_formatting_noop, diff.diff_view_formatting_noop]
-      mysql:
-        status: planned
-        note: MySQL opaque-object diffing is not implemented yet.
-  - id: ownership_scoped_verify
-    label: Ownership-scoped `verify_db`
-    dialects:
-      postgres:
-        status: supported
-        evidence:
-          online: [ownership_scoped_verify]
-      sqlite:
-        status: supported
-        evidence:
-          online: [ownership_scoped_verify]
-      mysql:
-        status: planned
-        note: MySQL verify is not implemented yet.
+- id: offline_planning
+  label: Offline replay, diff, and migration generation
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        offline:
+        - case: fk_actions_normalize
+          assertions:
+          - migration_to_replay
+          - replayed_schema
+        - case: replay_branching_merge
+          assertions:
+          - migration_to_replay
+          - replayed_schema
+        - case: replay_chain
+          assertions:
+          - migration_to_replay
+          - replayed_schema
+        - case: replay_composite_keys
+          assertions:
+          - migration_to_replay
+          - replayed_schema
+        - case: replay_cycle
+          assertions:
+          - migration_to_replay
+          - replayed_schema
+        - case: replay_duplicate_migration_id
+          assertions:
+          - migration_to_replay
+          - replayed_schema
+        - case: replay_missing_dependency
+          assertions:
+          - migration_to_replay
+          - replayed_schema
+        - case: replay_statement_is_noop
+          assertions:
+          - migration_to_replay
+          - replayed_schema
+        - case: duplicate_decision_error
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: empty_cast_error
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: empty_default_error
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: invalid_candidate_error
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: not_null_add_default_action
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: not_null_add_nullable_action
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: not_null_add_prompt
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: not_null_change_default_action
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: not_null_change_manual_action
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: not_null_change_nullable_action
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: not_null_change_prompt
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: not_null_manual_action
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: partial_decision_pending
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: rename_column_prompt
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: rename_enum_value_action
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: rename_enum_value_no_action
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: rename_enum_value_prompt
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: rename_no_action
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: rename_table_no_action
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: rename_table_prompt
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: type_cast_implicit_action
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: type_cast_prompt
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: unknown_type_keep_type_action
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: unknown_type_prompt
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: unknown_type_use_type_action
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: add_non_null_column_with_default
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: add_non_null_column_without_default_error
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: add_nullable_email
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: alter_default_added
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: alter_type_with_cast_decision
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: check_constraint_added
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: composite_fk_change
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: create_table
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: drop_table
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: enum_append
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: fk_on_update_change
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: function_body_changed
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: function_formatting_noop
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: function_signature_changed
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: generated_column_added
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: index_added
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: index_dropped
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: nested_generated_and_check_expressions
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: no_changes
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: primary_key_mutation_error
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: rename_column_with_decision
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: rename_table_with_decision
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: trigger_query_changed
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: trigger_query_formatting_noop
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: unique_constraint_added
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: view_definition_changed
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: view_formatting_noop
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: replay_invalid_migration_id
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: duplicate_column_error
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: generated_name_collision_error
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: postgres_type_alias_noop
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: unknown_fk_target_error
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: unknown_index_column_error
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: unknown_type_keep_type_decision
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: unknown_type_needs_decision
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: unknown_type_use_type_decision
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: opaque_index_accept
+          assertions:
+          - sql_schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: opaque_index_change_prompt
+          assertions:
+          - sql_schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: opaque_index_drop_prompt
+          assertions:
+          - sql_schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: opaque_index_formatting_noop
+          assertions:
+          - sql_schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: opaque_index_introduction_prompt
+          assertions:
+          - sql_schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: postgres_unlogged_table_accept
+          assertions:
+          - sql_schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: postgres_unlogged_table_prompt
+          assertions:
+          - sql_schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: unmanaged_options_change_ack
+          assertions:
+          - sql_schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: unmanaged_options_formatting_noop
+          assertions:
+          - sql_schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        online: []
+    sqlite:
+      status: supported
+      evidence:
+        offline:
+        - case: sqlite_type_alias_noop
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: sqlite_strict_without_rowid_accept
+          assertions:
+          - sql_schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        online: []
+    mysql:
+      status: supported
+      evidence:
+        offline:
+        - case: mysql_create_table
+          assertions:
+          - end_to_end
+          - operations
+          - replayed_schema
+          - sql
+        online: []
+    mariadb:
+      status: planned
+      note: MariaDB dialect support is not implemented yet.
+      evidence:
+        online: []
+        offline: []
+- id: offline_sql_rendering
+  label: Offline SQL rendering through `sql_migrate`
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        offline:
+        - case: function_trigger_view_enum
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: non_reversible_statement_error
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: reversible_table_column_index_fk_constraint
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: unknown_selected_id_error
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: concurrent_index
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_add_foreign_key
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_composite_fk_actions
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_composite_pk_fk_create_table
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_drop_opaque_objects
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_enum_insert_before
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_fk_set_actions
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_migration_to_sql_basic
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_migration_to_sql_features
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_migration_to_sql_raw_statement
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_pgcrypto_uuid
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_query_trigger_row
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_quoted_enum_labels
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_quoted_identifiers
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_schema_qualified_create_table
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_schema_qualified_drop_index
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_schema_qualified_function_trigger
+          assertions:
+          - migration_to_sql
+          - sql
+        online: []
+    sqlite:
+      status: supported
+      evidence:
+        offline:
+        - case: partial_index
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_add_nullable_column
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_create_table_composite_pk_fk
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_fk_set_actions
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_function_trigger_unsupported
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_raw_statement
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_rebuild_alter_type_cast
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_rebuild_constraints_and_fk
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_rebuild_default_only
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_rebuild_drop_column
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_rebuild_drop_constraints_and_fk
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_rebuild_generated_column
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_rebuild_not_null_default
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_rebuild_recreates_indexes
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_schema_qualified_table_unsupported
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_unsupported_enum_unsupported
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_unsupported_extension
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_unsupported_function_unsupported
+          assertions:
+          - migration_to_sql
+          - sql
+        online: []
+    mysql:
+      status: supported
+      evidence:
+        offline:
+        - case: mysql_column_metadata
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: mysql_fk_actions
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: mysql_table_column_operations
+          assertions:
+          - migration_to_sql
+          - sql
+        online: []
+    mariadb:
+      status: planned
+      note: MariaDB SQL rendering is planned after the dialect exists.
+      evidence:
+        online: []
+        offline: []
+- id: live_migration_application
+  label: Live migration application
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: alter_type_with_cast
+          checks:
+          - migrate
+          - data
+        - case: basic_migrate_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: composite_keys
+          checks:
+          - migrate
+          - inspect
+        - case: default_change_and_nullable
+          checks:
+          - migrate
+          - data
+        - case: default_nullability_add_column
+          checks:
+          - migrate
+          - inspect
+        - case: drop_column_shared
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: drop_index_constraint_shared
+          checks:
+          - migrate
+          - data
+        - case: empty_migration
+          checks:
+          - migrate
+          - inspect
+        - case: fk_cycle_add_constraints
+          checks:
+          - migrate
+          - data
+        - case: fk_on_delete_set_default_shared
+          checks:
+          - migrate
+          - verify
+          - data
+        - case: fk_on_delete_set_null_shared
+          checks:
+          - migrate
+          - verify
+          - data
+        - case: fk_on_update_cascade_shared
+          checks:
+          - migrate
+          - inspect
+          - verify
+          - data
+        - case: generated_column_create_shared
+          checks:
+          - migrate
+          - data
+        - case: indexes_constraints_shared
+          checks:
+          - migrate
+          - data
+        - case: lifecycle_atomic_failure_rolls_back
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - inspect
+          - data
+        - case: lifecycle_atomic_false_partial_failure
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - inspect
+          - data
+        - case: lifecycle_idempotent_records
+          checks:
+          - migrate_twice
+          - migration_records
+          - data
+        - case: lifecycle_metadata_only_idempotent
+          checks:
+          - migrate_twice
+          - migration_records
+        - case: lifecycle_rollback_to_target
+          checks:
+          - rollback
+          - migration_records
+          - inspect
+          - data
+        - case: lifecycle_target_migrate
+          checks:
+          - migrate_to
+          - migration_records
+          - data
+        - case: linear_chain_order
+          checks:
+          - migrate
+          - data
+        - case: postgres_default_canonical_forms
+          checks:
+          - migrate
+          - verify
+        - case: postgres_enum_append_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: postgres_fk_on_delete_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: postgres_function_name_trigger
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: postgres_lock_cleanup_after_failure
+          checks:
+          - migrate
+          - error
+          - lock_behavior
+        - case: postgres_opaque_objects
+          checks:
+          - migrate
+          - inspect
+        - case: postgres_partial_index
+          checks:
+          - migrate
+          - inspect
+        - case: postgres_pgcrypto_uuid
+          checks:
+          - migrate
+          - inspect
+          - verify
+          - data
+        - case: postgres_view_replace
+          checks:
+          - migrate
+          - inspect
+        - case: quoted_identifiers_shared
+          checks:
+          - migrate
+          - inspect
+          - verify
+          - data
+        - case: raw_statement_data
+          checks:
+          - migrate
+          - data
+        - case: rename_table_column
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: self_referencing_fk
+          checks:
+          - migrate
+          - data
+        - case: single_fk_enforcement
+          checks:
+          - migrate
+          - data
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: alter_type_with_cast
+          checks:
+          - migrate
+          - data
+        - case: basic_migrate_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: composite_keys
+          checks:
+          - migrate
+          - inspect
+        - case: default_change_and_nullable
+          checks:
+          - migrate
+          - data
+        - case: default_nullability_add_column
+          checks:
+          - migrate
+          - inspect
+        - case: drop_column_shared
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: drop_index_constraint_shared
+          checks:
+          - migrate
+          - data
+        - case: empty_migration
+          checks:
+          - migrate
+          - inspect
+        - case: fk_on_delete_set_default_shared
+          checks:
+          - migrate
+          - verify
+          - data
+        - case: fk_on_delete_set_null_shared
+          checks:
+          - migrate
+          - verify
+          - data
+        - case: fk_on_update_cascade_shared
+          checks:
+          - migrate
+          - inspect
+          - verify
+          - data
+        - case: generated_column_create_shared
+          checks:
+          - migrate
+          - data
+        - case: indexes_constraints_shared
+          checks:
+          - migrate
+          - data
+        - case: lifecycle_atomic_failure_rolls_back
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - inspect
+          - data
+        - case: lifecycle_atomic_false_partial_failure
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - inspect
+          - data
+        - case: lifecycle_idempotent_records
+          checks:
+          - migrate_twice
+          - migration_records
+          - data
+        - case: lifecycle_metadata_only_idempotent
+          checks:
+          - migrate_twice
+          - migration_records
+        - case: lifecycle_rollback_to_target
+          checks:
+          - rollback
+          - migration_records
+          - inspect
+          - data
+        - case: lifecycle_target_migrate
+          checks:
+          - migrate_to
+          - migration_records
+          - data
+        - case: linear_chain_order
+          checks:
+          - migrate
+          - data
+        - case: quoted_identifiers_shared
+          checks:
+          - migrate
+          - inspect
+          - verify
+          - data
+        - case: raw_statement_data
+          checks:
+          - migrate
+          - data
+        - case: rename_table_column
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: self_referencing_fk
+          checks:
+          - migrate
+          - data
+        - case: single_fk_enforcement
+          checks:
+          - migrate
+          - data
+        - case: sqlite_fk_on_delete_inspect_verify
+          checks:
+          - migrate
+          - inspect
+          - verify
+        - case: sqlite_generated_column
+          checks:
+          - migrate
+          - data
+        - case: sqlite_index_view_trigger
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_alter_type_cast
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_combined_features
+          checks:
+          - migrate
+          - verify
+          - data
+        - case: sqlite_rebuild_constraints
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_default_nullability
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_drop_column
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: sqlite_rebuild_drop_fk_unique_check
+          checks:
+          - migrate
+          - data
+        offline: []
+    mysql:
+      status: partial
+      evidence:
+        online:
+        - case: mysql_advanced_indexes
+          checks:
+          - verify
+        - case: mysql_lifecycle_tracking
+          checks:
+          - migrate_twice
+          - migration_records
+          - data
+        - case: mysql_lock_cleanup
+          checks:
+          - migrate
+          - lock_behavior
+        - case: mysql_opaque_objects
+          checks:
+          - verify
+        - case: mysql_partial_failure
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - data
+        - case: mysql_rename_table_column
+          checks:
+          - migrate
+          - migration_records
+          - data
+        - case: mysql_rollback_tracking
+          checks:
+          - rollback
+          - migration_records
+          - data
+        - case: mysql_single_fk_actions
+          checks:
+          - verify
+          - data
+        - case: mysql_target_apply
+          checks:
+          - migrate_to
+          - migration_records
+          - data
+        offline: []
+      note: Apply, target application, rollback, idempotency, and partial-failure
+        behavior are live-tested. Fake application is not yet accepted evidence.
+    mariadb:
+      status: planned
+      note: MariaDB executor support is not implemented yet.
+      evidence:
+        online: []
+        offline: []
+- id: live_introspection
+  label: Live database introspection
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: basic_migrate_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: composite_keys
+          checks:
+          - migrate
+          - inspect
+        - case: drop_column_shared
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: empty_migration
+          checks:
+          - migrate
+          - inspect
+        - case: fk_on_update_cascade_shared
+          checks:
+          - migrate
+          - inspect
+          - verify
+          - data
+        - case: linear_chain_order
+          checks:
+          - migrate
+          - data
+        - case: postgres_advanced_index_metadata_inspect
+          checks:
+          - inspect
+        - case: postgres_default_canonical_forms
+          checks:
+          - migrate
+          - verify
+        - case: postgres_enum_append_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: postgres_expression_index_inspect
+          checks:
+          - inspect
+        - case: postgres_fk_on_delete_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: postgres_function_name_trigger
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: postgres_opaque_index_with_modeled_drift
+          checks:
+          - verify
+        - case: postgres_opaque_objects
+          checks:
+          - migrate
+          - inspect
+        - case: postgres_partial_index
+          checks:
+          - migrate
+          - inspect
+        - case: postgres_pgcrypto_uuid
+          checks:
+          - migrate
+          - inspect
+          - verify
+          - data
+        - case: postgres_verify_enum_drift
+          checks:
+          - verify
+        - case: postgres_verify_fk_on_delete_drift
+          checks:
+          - verify
+        - case: postgres_verify_function_body_ignored
+          checks:
+          - verify
+        - case: postgres_verify_function_signature_drift
+          checks:
+          - verify
+        - case: postgres_verify_ignores_opaque_index_metadata
+          checks:
+          - verify
+        - case: postgres_verify_ignores_untracked_trigger
+          checks:
+          - verify
+        - case: postgres_verify_live_only_enum_ignored
+          checks:
+          - verify
+        - case: postgres_verify_missing_enum
+          checks:
+          - verify
+        - case: postgres_verify_missing_owned_trigger
+          checks:
+          - verify
+        - case: postgres_verify_opaque_index_definition_ignored
+          checks:
+          - verify
+        - case: postgres_verify_opaque_index_presence
+          checks:
+          - verify
+        - case: postgres_verify_schema_qualified_no_drift
+          checks:
+          - verify
+        - case: postgres_verify_trigger_metadata_drift
+          checks:
+          - verify
+        - case: postgres_view_replace
+          checks:
+          - migrate
+          - inspect
+        - case: quoted_identifiers_shared
+          checks:
+          - migrate
+          - inspect
+          - verify
+          - data
+        - case: rename_table_column
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: verify_composite_fk_order_drift
+          checks:
+          - verify
+        - case: verify_composite_pk_missing
+          checks:
+          - verify
+        - case: verify_composite_pk_order_drift
+          checks:
+          - verify
+        - case: verify_detects_changed_column_metadata
+          checks:
+          - verify
+        - case: verify_detects_missing_index_constraint_fk
+          checks:
+          - verify
+        - case: verify_generated_column_expression_drift
+          checks:
+          - verify
+        - case: verify_ignores_untracked_column
+          checks:
+          - verify
+        - case: verify_ignores_untracked_index_constraint_fk
+          checks:
+          - verify
+        - case: verify_ignores_untracked_table
+          checks:
+          - verify
+        - case: verify_live_only_view_ignored
+          checks:
+          - verify
+        - case: verify_missing_owned_column
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        - case: verify_view_body_only_ignored
+          checks:
+          - verify
+        - case: verify_view_missing_owned
+          checks:
+          - verify
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: basic_migrate_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: composite_keys
+          checks:
+          - migrate
+          - inspect
+        - case: drop_column_shared
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: empty_migration
+          checks:
+          - migrate
+          - inspect
+        - case: fk_on_update_cascade_shared
+          checks:
+          - migrate
+          - inspect
+          - verify
+          - data
+        - case: linear_chain_order
+          checks:
+          - migrate
+          - data
+        - case: quoted_identifiers_shared
+          checks:
+          - migrate
+          - inspect
+          - verify
+          - data
+        - case: rename_table_column
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: sqlite_fk_on_delete_inspect_verify
+          checks:
+          - migrate
+          - inspect
+          - verify
+        - case: sqlite_rebuild_combined_features
+          checks:
+          - migrate
+          - verify
+          - data
+        - case: sqlite_rebuild_drop_column
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: sqlite_verify_trigger_metadata_drift
+          checks:
+          - verify
+        - case: verify_composite_fk_order_drift
+          checks:
+          - verify
+        - case: verify_composite_pk_missing
+          checks:
+          - verify
+        - case: verify_composite_pk_order_drift
+          checks:
+          - verify
+        - case: verify_generated_column_expression_drift
+          checks:
+          - verify
+        - case: verify_ignores_untracked_column
+          checks:
+          - verify
+        - case: verify_ignores_untracked_index_constraint_fk
+          checks:
+          - verify
+        - case: verify_ignores_untracked_table
+          checks:
+          - verify
+        - case: verify_live_only_view_ignored
+          checks:
+          - verify
+        - case: verify_missing_owned_column
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        - case: verify_sqlite_detects_missing_index_constraint_fk
+          checks:
+          - verify
+        - case: verify_view_body_only_ignored
+          checks:
+          - verify
+        - case: verify_view_missing_owned
+          checks:
+          - verify
+        offline: []
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: mysql_advanced_indexes
+          checks:
+          - verify
+        - case: mysql_column_default_drift
+          checks:
+          - verify
+        - case: mysql_mariadb_advanced_index_inspection
+          checks:
+          - verify
+        - case: mysql_mariadb_column_metadata_no_drift
+          checks:
+          - verify
+        - case: mysql_mariadb_row_format_inspection
+          checks:
+          - verify
+        - case: mysql_opaque_objects
+          checks:
+          - verify
+        - case: mysql_single_fk_actions
+          checks:
+          - verify
+          - data
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB introspection is not implemented yet.
+      evidence:
+        online: []
+        offline: []
+- id: live_verify_db
+  label: Live `verify_db`
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: postgres_opaque_index_with_modeled_drift
+          checks:
+          - verify
+        - case: postgres_verify_enum_drift
+          checks:
+          - verify
+        - case: postgres_verify_fk_on_delete_drift
+          checks:
+          - verify
+        - case: postgres_verify_function_body_ignored
+          checks:
+          - verify
+        - case: postgres_verify_function_signature_drift
+          checks:
+          - verify
+        - case: postgres_verify_ignores_opaque_index_metadata
+          checks:
+          - verify
+        - case: postgres_verify_ignores_untracked_trigger
+          checks:
+          - verify
+        - case: postgres_verify_live_only_enum_ignored
+          checks:
+          - verify
+        - case: postgres_verify_missing_enum
+          checks:
+          - verify
+        - case: postgres_verify_missing_owned_trigger
+          checks:
+          - verify
+        - case: postgres_verify_opaque_index_definition_ignored
+          checks:
+          - verify
+        - case: postgres_verify_opaque_index_presence
+          checks:
+          - verify
+        - case: postgres_verify_schema_qualified_no_drift
+          checks:
+          - verify
+        - case: postgres_verify_trigger_metadata_drift
+          checks:
+          - verify
+        - case: verify_composite_fk_order_drift
+          checks:
+          - verify
+        - case: verify_composite_pk_missing
+          checks:
+          - verify
+        - case: verify_composite_pk_order_drift
+          checks:
+          - verify
+        - case: verify_detects_changed_column_metadata
+          checks:
+          - verify
+        - case: verify_detects_missing_index_constraint_fk
+          checks:
+          - verify
+        - case: verify_generated_column_expression_drift
+          checks:
+          - verify
+        - case: verify_ignores_untracked_column
+          checks:
+          - verify
+        - case: verify_ignores_untracked_index_constraint_fk
+          checks:
+          - verify
+        - case: verify_ignores_untracked_table
+          checks:
+          - verify
+        - case: verify_live_only_view_ignored
+          checks:
+          - verify
+        - case: verify_missing_owned_column
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        - case: verify_view_body_only_ignored
+          checks:
+          - verify
+        - case: verify_view_missing_owned
+          checks:
+          - verify
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: sqlite_verify_trigger_metadata_drift
+          checks:
+          - verify
+        - case: verify_composite_fk_order_drift
+          checks:
+          - verify
+        - case: verify_composite_pk_missing
+          checks:
+          - verify
+        - case: verify_composite_pk_order_drift
+          checks:
+          - verify
+        - case: verify_generated_column_expression_drift
+          checks:
+          - verify
+        - case: verify_ignores_untracked_column
+          checks:
+          - verify
+        - case: verify_ignores_untracked_index_constraint_fk
+          checks:
+          - verify
+        - case: verify_ignores_untracked_table
+          checks:
+          - verify
+        - case: verify_live_only_view_ignored
+          checks:
+          - verify
+        - case: verify_missing_owned_column
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        - case: verify_sqlite_detects_missing_index_constraint_fk
+          checks:
+          - verify
+        - case: verify_view_body_only_ignored
+          checks:
+          - verify
+        - case: verify_view_missing_owned
+          checks:
+          - verify
+        offline: []
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: mysql_column_default_drift
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB verify is not implemented yet.
+      evidence:
+        online: []
+        offline: []
+- id: non_transactional_failure_reporting
+  label: Non-transactional partial-failure reporting
+  dialects:
+    postgres:
+      status: unsupported
+      note: PostgreSQL modeled migrations use transactional DDL; this failure mode
+        does not apply.
+      evidence:
+        online: []
+        offline: []
+    sqlite:
+      status: unsupported
+      note: SQLite modeled migrations use transactional DDL; this failure mode does
+        not apply.
+      evidence:
+        online: []
+        offline: []
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: mysql_partial_failure
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - data
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB partial-failure reporting has not been validated online.
+      evidence:
+        online: []
+        offline: []
+- id: migration_tracking
+  label: Migration tracking table
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: lifecycle_atomic_failure_rolls_back
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - inspect
+          - data
+        - case: lifecycle_atomic_false_partial_failure
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - inspect
+          - data
+        - case: lifecycle_idempotent_records
+          checks:
+          - migrate_twice
+          - migration_records
+          - data
+        - case: lifecycle_metadata_only_idempotent
+          checks:
+          - migrate_twice
+          - migration_records
+        - case: lifecycle_rollback_to_target
+          checks:
+          - rollback
+          - migration_records
+          - inspect
+          - data
+        - case: lifecycle_target_migrate
+          checks:
+          - migrate_to
+          - migration_records
+          - data
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: lifecycle_atomic_failure_rolls_back
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - inspect
+          - data
+        - case: lifecycle_atomic_false_partial_failure
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - inspect
+          - data
+        - case: lifecycle_idempotent_records
+          checks:
+          - migrate_twice
+          - migration_records
+          - data
+        - case: lifecycle_metadata_only_idempotent
+          checks:
+          - migrate_twice
+          - migration_records
+        - case: lifecycle_rollback_to_target
+          checks:
+          - rollback
+          - migration_records
+          - inspect
+          - data
+        - case: lifecycle_target_migrate
+          checks:
+          - migrate_to
+          - migration_records
+          - data
+        offline: []
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: mysql_lifecycle_tracking
+          checks:
+          - migrate_twice
+          - migration_records
+          - data
+        - case: mysql_lock_cleanup
+          checks:
+          - migrate
+          - lock_behavior
+        - case: mysql_partial_failure
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - data
+        - case: mysql_rollback_tracking
+          checks:
+          - rollback
+          - migration_records
+          - data
+        - case: mysql_target_apply
+          checks:
+          - migrate_to
+          - migration_records
+          - data
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB tracking table support is not implemented yet.
+      evidence:
+        online: []
+        offline: []
+- id: dedicated_migration_lock
+  label: Dedicated migration lock
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: postgres_lock_cleanup_after_failure
+          checks:
+          - migrate
+          - error
+          - lock_behavior
+        offline: []
+    sqlite:
+      status: unsupported
+      note: SQLite has no dedicated advisory-lock primitive; migration atomicity relies
+        on SQLite transactions and file locking.
+      evidence:
+        online: []
+        offline: []
+    mysql:
+      status: partial
+      evidence:
+        online:
+        - case: mysql_lock_cleanup
+          checks:
+          - migrate
+          - lock_behavior
+        offline: []
+      note: Named-lock release after application is live-tested; contention and timeout
+        behavior are not yet accepted evidence.
+    mariadb:
+      status: planned
+      note: MariaDB locking is planned with the MariaDB executor.
+      evidence:
+        online: []
+        offline: []
+- id: table_create_drop_rename
+  label: 'Tables: create, drop, rename'
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: basic_migrate_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: composite_keys
+          checks:
+          - migrate
+          - inspect
+        - case: rename_table_column
+          checks:
+          - migrate
+          - inspect
+          - data
+        offline:
+        - case: create_table
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: postgres_pgcrypto_uuid
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: drop_table
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: rename_table_with_decision
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: basic_migrate_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: composite_keys
+          checks:
+          - migrate
+          - inspect
+        - case: rename_table_column
+          checks:
+          - migrate
+          - inspect
+          - data
+        offline: []
+    mysql:
+      status: partial
+      evidence:
+        online:
+        - case: mysql_column_default_drift
+          checks:
+          - verify
+        - case: mysql_lifecycle_tracking
+          checks:
+          - migrate_twice
+          - migration_records
+          - data
+        - case: mysql_lock_cleanup
+          checks:
+          - migrate
+          - lock_behavior
+        - case: mysql_mariadb_advanced_index_inspection
+          checks:
+          - verify
+        - case: mysql_mariadb_column_metadata_no_drift
+          checks:
+          - verify
+        - case: mysql_mariadb_row_format_inspection
+          checks:
+          - verify
+        - case: mysql_partial_failure
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - data
+        - case: mysql_rollback_tracking
+          checks:
+          - rollback
+          - migration_records
+          - data
+        - case: mysql_target_apply
+          checks:
+          - migrate_to
+          - migration_records
+          - data
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        - case: mysql_rename_table_column
+          checks:
+          - migrate
+          - migration_records
+          - data
+        offline: []
+      note: MySQL table creation and rename are live-tested; direct live table-drop
+        coverage is not yet accepted evidence.
+    mariadb:
+      status: planned
+      note: MariaDB table operations are planned after the dialect exists.
+      evidence:
+        online: []
+        offline: []
+- id: column_add_drop_rename
+  label: 'Columns: add, drop, rename'
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: basic_migrate_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: default_nullability_add_column
+          checks:
+          - migrate
+          - inspect
+        - case: drop_column_shared
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: rename_table_column
+          checks:
+          - migrate
+          - inspect
+          - data
+        offline:
+        - case: add_nullable_email
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: rename_column_with_decision
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: basic_migrate_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: default_nullability_add_column
+          checks:
+          - migrate
+          - inspect
+        - case: drop_column_shared
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: rename_table_column
+          checks:
+          - migrate
+          - inspect
+          - data
+        offline:
+        - case: sqlite_rebuild_drop_column
+          assertions:
+          - migration_to_sql
+          - sql
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: mysql_rename_table_column
+          checks:
+          - migrate
+          - migration_records
+          - data
+        - case: mysql_rollback_tracking
+          checks:
+          - rollback
+          - migration_records
+          - data
+        - case: mysql_target_apply
+          checks:
+          - migrate_to
+          - migration_records
+          - data
+        offline:
+        - case: mysql_column_metadata
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: mysql_fk_actions
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: mysql_table_column_operations
+          assertions:
+          - migration_to_sql
+          - sql
+    mariadb:
+      status: planned
+      note: MariaDB column operations are planned after the dialect exists.
+      evidence:
+        online: []
+        offline: []
+- id: column_type_null_default
+  label: 'Columns: type, nullability, default changes'
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: alter_type_with_cast
+          checks:
+          - migrate
+          - data
+        - case: default_change_and_nullable
+          checks:
+          - migrate
+          - data
+        - case: default_nullability_add_column
+          checks:
+          - migrate
+          - inspect
+        - case: drop_column_shared
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: postgres_default_canonical_forms
+          checks:
+          - migrate
+          - verify
+        - case: postgres_opaque_index_with_modeled_drift
+          checks:
+          - verify
+        - case: verify_detects_changed_column_metadata
+          checks:
+          - verify
+        offline:
+        - case: alter_type_with_cast_decision
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: alter_type_with_cast
+          checks:
+          - migrate
+          - data
+        - case: default_change_and_nullable
+          checks:
+          - migrate
+          - data
+        - case: default_nullability_add_column
+          checks:
+          - migrate
+          - inspect
+        - case: drop_column_shared
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: sqlite_rebuild_alter_type_cast
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_default_nullability
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_drop_column
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: sqlite_generated_column
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_atomic_false_error
+          checks:
+          - migrate
+          - error
+        - case: sqlite_rebuild_combined_features
+          checks:
+          - migrate
+          - verify
+          - data
+        - case: sqlite_rebuild_constraints
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_drop_fk_unique_check
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_parent_with_child_fk
+          checks:
+          - migrate
+          - error
+        - case: verify_sqlite_detects_missing_index_constraint_fk
+          checks:
+          - verify
+        offline:
+        - case: sqlite_rebuild_alter_type_cast
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_rebuild_default_only
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_rebuild_not_null_default
+          assertions:
+          - migration_to_sql
+          - sql
+    mysql:
+      status: partial
+      evidence:
+        online:
+        - case: mysql_advanced_indexes
+          checks:
+          - verify
+        - case: mysql_column_default_drift
+          checks:
+          - verify
+        - case: mysql_mariadb_advanced_index_inspection
+          checks:
+          - verify
+        - case: mysql_mariadb_column_metadata_no_drift
+          checks:
+          - verify
+        - case: mysql_mariadb_row_format_inspection
+          checks:
+          - verify
+        - case: mysql_opaque_objects
+          checks:
+          - verify
+        - case: mysql_single_fk_actions
+          checks:
+          - verify
+          - data
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+      note: MySQL column type, nullability, default, and product metadata round trips
+        are live-tested; mutation cases are not yet accepted evidence.
+    mariadb:
+      status: planned
+      note: MariaDB column alteration support is planned after the dialect exists.
+      evidence:
+        online: []
+        offline: []
+- id: generated_columns
+  label: Generated columns
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: generated_column_create_shared
+          checks:
+          - migrate
+          - data
+        - case: verify_generated_column_expression_drift
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: generated_column_create_shared
+          checks:
+          - migrate
+          - data
+        - case: sqlite_generated_column
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_combined_features
+          checks:
+          - migrate
+          - verify
+          - data
+        - case: verify_generated_column_expression_drift
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: mysql_mariadb_column_metadata_no_drift
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB generated columns are planned after the dialect exists.
+      evidence:
+        online: []
+        offline: []
+- id: single_primary_keys
+  label: Single-column primary keys
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: basic_migrate_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: default_nullability_add_column
+          checks:
+          - migrate
+          - inspect
+        - case: drop_column_shared
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: postgres_default_canonical_forms
+          checks:
+          - migrate
+          - verify
+        - case: rename_table_column
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: single_fk_enforcement
+          checks:
+          - migrate
+          - data
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: basic_migrate_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: default_nullability_add_column
+          checks:
+          - migrate
+          - inspect
+        - case: drop_column_shared
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: rename_table_column
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: single_fk_enforcement
+          checks:
+          - migrate
+          - data
+        offline: []
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: mysql_rename_table_column
+          checks:
+          - migrate
+          - migration_records
+          - data
+        - case: mysql_single_fk_actions
+          checks:
+          - verify
+          - data
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB primary keys are planned after the dialect exists.
+      evidence:
+        online: []
+        offline: []
+- id: composite_primary_keys
+  label: Multi-column / composite primary keys
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: composite_keys
+          checks:
+          - migrate
+          - inspect
+        - case: verify_composite_pk_missing
+          checks:
+          - verify
+        - case: verify_composite_pk_order_drift
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: composite_keys
+          checks:
+          - migrate
+          - inspect
+        - case: sqlite_rebuild_combined_features
+          checks:
+          - migrate
+          - verify
+          - data
+        - case: verify_composite_pk_missing
+          checks:
+          - verify
+        - case: verify_composite_pk_order_drift
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB composite primary keys are planned after the dialect exists.
+      evidence:
+        online: []
+        offline: []
+- id: primary_key_mutation_generation
+  label: Automatic primary-key mutation generation
+  dialects:
+    postgres:
+      status: unsupported
+      evidence:
+        offline:
+        - case: primary_key_mutation_error
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        online: []
+      note: Primary-key surgery is intentionally manual/raw SQL for every dialect.
+    sqlite:
+      status: unsupported
+      evidence:
+        offline: []
+        online: []
+      note: Primary-key surgery is intentionally manual/raw SQL for every dialect.
+    mysql:
+      status: unsupported
+      note: Primary-key surgery is intentionally manual/raw SQL for every dialect.
+      evidence:
+        online: []
+        offline: []
+    mariadb:
+      status: unsupported
+      note: Primary-key surgery is intentionally manual/raw SQL for every dialect.
+      evidence:
+        online: []
+        offline: []
+- id: single_foreign_keys
+  label: Single-column foreign keys
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: fk_on_delete_set_default_shared
+          checks:
+          - migrate
+          - verify
+          - data
+        - case: fk_on_delete_set_null_shared
+          checks:
+          - migrate
+          - verify
+          - data
+        - case: fk_on_update_cascade_shared
+          checks:
+          - migrate
+          - inspect
+          - verify
+          - data
+        - case: postgres_fk_on_delete_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: postgres_verify_fk_on_delete_drift
+          checks:
+          - verify
+        - case: single_fk_enforcement
+          checks:
+          - migrate
+          - data
+        - case: verify_detects_missing_index_constraint_fk
+          checks:
+          - verify
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: fk_on_delete_set_default_shared
+          checks:
+          - migrate
+          - verify
+          - data
+        - case: fk_on_delete_set_null_shared
+          checks:
+          - migrate
+          - verify
+          - data
+        - case: fk_on_update_cascade_shared
+          checks:
+          - migrate
+          - inspect
+          - verify
+          - data
+        - case: single_fk_enforcement
+          checks:
+          - migrate
+          - data
+        - case: sqlite_fk_on_delete_inspect_verify
+          checks:
+          - migrate
+          - inspect
+          - verify
+        offline: []
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: mysql_single_fk_actions
+          checks:
+          - verify
+          - data
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB foreign keys are planned after the dialect exists.
+      evidence:
+        online: []
+        offline: []
+- id: composite_foreign_keys
+  label: Multi-column / composite foreign keys
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: composite_keys
+          checks:
+          - migrate
+          - inspect
+        - case: fk_cycle_add_constraints
+          checks:
+          - migrate
+          - data
+        - case: linear_chain_order
+          checks:
+          - migrate
+          - data
+        - case: postgres_verify_schema_qualified_no_drift
+          checks:
+          - verify
+        - case: self_referencing_fk
+          checks:
+          - migrate
+          - data
+        - case: verify_composite_fk_order_drift
+          checks:
+          - verify
+        - case: verify_ignores_untracked_index_constraint_fk
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: composite_keys
+          checks:
+          - migrate
+          - inspect
+        - case: linear_chain_order
+          checks:
+          - migrate
+          - data
+        - case: self_referencing_fk
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_drop_fk_unique_check
+          checks:
+          - migrate
+          - data
+        - case: verify_composite_fk_order_drift
+          checks:
+          - verify
+        - case: verify_ignores_untracked_index_constraint_fk
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        - case: verify_sqlite_detects_missing_index_constraint_fk
+          checks:
+          - verify
+        offline: []
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB composite foreign keys are planned after the dialect exists.
+      evidence:
+        online: []
+        offline: []
+- id: unique_constraints
+  label: Unique constraints
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: drop_index_constraint_shared
+          checks:
+          - migrate
+          - data
+        - case: indexes_constraints_shared
+          checks:
+          - migrate
+          - data
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: drop_index_constraint_shared
+          checks:
+          - migrate
+          - data
+        - case: indexes_constraints_shared
+          checks:
+          - migrate
+          - data
+        offline: []
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: mysql_mariadb_advanced_index_inspection
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB unique constraints are planned after the dialect exists.
+      evidence:
+        online: []
+        offline: []
+- id: check_constraints
+  label: Check constraints
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: drop_index_constraint_shared
+          checks:
+          - migrate
+          - data
+        - case: indexes_constraints_shared
+          checks:
+          - migrate
+          - data
+        - case: verify_detects_missing_index_constraint_fk
+          checks:
+          - verify
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: drop_index_constraint_shared
+          checks:
+          - migrate
+          - data
+        - case: indexes_constraints_shared
+          checks:
+          - migrate
+          - data
+        - case: verify_sqlite_detects_missing_index_constraint_fk
+          checks:
+          - verify
+        offline: []
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: mysql_mariadb_advanced_index_inspection
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB check constraints are planned after the dialect exists.
+      evidence:
+        online: []
+        offline: []
+- id: indexes
+  label: Indexes
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: drop_index_constraint_shared
+          checks:
+          - migrate
+          - data
+        - case: indexes_constraints_shared
+          checks:
+          - migrate
+          - data
+        - case: postgres_advanced_index_metadata_inspect
+          checks:
+          - inspect
+        - case: postgres_expression_index_inspect
+          checks:
+          - inspect
+        - case: postgres_partial_index
+          checks:
+          - migrate
+          - inspect
+        - case: verify_detects_missing_index_constraint_fk
+          checks:
+          - verify
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: drop_index_constraint_shared
+          checks:
+          - migrate
+          - data
+        - case: indexes_constraints_shared
+          checks:
+          - migrate
+          - data
+        - case: sqlite_index_view_trigger
+          checks:
+          - migrate
+          - data
+        - case: verify_sqlite_detects_missing_index_constraint_fk
+          checks:
+          - verify
+        offline: []
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: mysql_mariadb_advanced_index_inspection
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB indexes are planned after the dialect exists.
+      evidence:
+        online: []
+        offline: []
+- id: partial_indexes
+  label: Partial indexes
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: postgres_partial_index
+          checks:
+          - migrate
+          - inspect
+        offline:
+        - case: postgres_create_partial_index
+          assertions:
+          - parser
+          - schema_or_error
+    sqlite:
+      status: partial
+      evidence:
+        offline:
+        - case: sqlite_create_partial_index
+          assertions:
+          - parser
+          - schema_or_error
+        - case: partial_index
+          assertions:
+          - migration_to_sql
+          - sql
+        online: []
+      note: SQLite partial-index SQL rendering is proven offline; live predicate introspection/verify
+        is not yet accepted evidence.
+    mysql:
+      status: unsupported
+      note: MySQL does not support predicate-based partial indexes; prefix and advanced
+        indexes use Gaman's opaque index lifecycle.
+      evidence:
+        online: []
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB partial-index behavior is not implemented.
+      evidence:
+        online: []
+        offline: []
+- id: concurrent_indexes
+  label: Concurrent indexes
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        offline:
+        - case: concurrent_index
+          assertions:
+          - migration_to_sql
+          - sql
+        online: []
+    sqlite:
+      status: unsupported
+      note: SQLite has no CREATE INDEX CONCURRENTLY syntax.
+      evidence:
+        online: []
+        offline: []
+    mysql:
+      status: planned
+      note: MySQL online/concurrent index behavior is not implemented.
+      evidence:
+        online: []
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB online/concurrent index behavior is not implemented.
+      evidence:
+        online: []
+        offline: []
+- id: schemas_namespaces
+  label: Schemas / namespaces
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: postgres_verify_schema_qualified_no_drift
+          checks:
+          - verify
+        offline: []
+    sqlite:
+      status: unsupported
+      evidence:
+        offline:
+        - case: sqlite_schema_qualified_table_unsupported
+          assertions:
+          - migration_to_sql
+          - sql
+        online: []
+      note: SQLite does not support PostgreSQL-style schemas/namespaces in Gaman.
+    mysql:
+      status: unsupported
+      note: MySQL does not use PostgreSQL-style schemas/namespaces in Gaman.
+      evidence:
+        online: []
+        offline: []
+    mariadb:
+      status: unsupported
+      note: MariaDB does not use PostgreSQL-style schemas/namespaces in Gaman.
+      evidence:
+        online: []
+        offline: []
+- id: extensions
+  label: Extensions as opaque schema objects
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: postgres_pgcrypto_uuid
+          checks:
+          - migrate
+          - inspect
+          - verify
+          - data
+        offline: []
+    sqlite:
+      status: unsupported
+      evidence:
+        offline:
+        - case: sqlite_unsupported_extension
+          assertions:
+          - migration_to_sql
+          - sql
+        online: []
+      note: SQLite extensions are not modeled as migratable schema objects.
+    mysql:
+      status: unsupported
+      note: MySQL extensions are not modeled as migratable schema objects.
+      evidence:
+        online: []
+        offline: []
+    mariadb:
+      status: unsupported
+      note: MariaDB extensions are not modeled as migratable schema objects.
+      evidence:
+        online: []
+        offline: []
+- id: enums
+  label: Enums
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: postgres_enum_append_inspect
+          checks:
+          - migrate
+          - inspect
+        - case: postgres_opaque_objects
+          checks:
+          - migrate
+          - inspect
+        - case: postgres_verify_enum_drift
+          checks:
+          - verify
+        - case: postgres_verify_live_only_enum_ignored
+          checks:
+          - verify
+        - case: postgres_verify_missing_enum
+          checks:
+          - verify
+        offline: []
+    sqlite:
+      status: unsupported
+      evidence:
+        offline:
+        - case: sqlite_unsupported_enum_unsupported
+          assertions:
+          - migration_to_sql
+          - sql
+        online: []
+      note: SQLite has no native enum schema object in Gaman.
+    mysql:
+      status: planned
+      note: MySQL enum support is not implemented.
+      evidence:
+        online: []
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB enum support is not implemented.
+      evidence:
+        online: []
+        offline: []
+- id: functions
+  label: Functions as opaque schema objects
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: postgres_function_name_trigger
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: postgres_opaque_objects
+          checks:
+          - migrate
+          - inspect
+        - case: postgres_verify_function_body_ignored
+          checks:
+          - verify
+        - case: postgres_verify_function_signature_drift
+          checks:
+          - verify
+        - case: postgres_verify_ignores_untracked_trigger
+          checks:
+          - verify
+        - case: postgres_verify_missing_owned_trigger
+          checks:
+          - verify
+        - case: postgres_verify_trigger_metadata_drift
+          checks:
+          - verify
+        offline: []
+    sqlite:
+      status: unsupported
+      evidence:
+        offline:
+        - case: sqlite_unsupported_function_unsupported
+          assertions:
+          - migration_to_sql
+          - sql
+        online: []
+      note: SQLite stored functions are not supported by Gaman.
+    mysql:
+      status: partial
+      evidence:
+        offline:
+        - case: mysql_create_function_parse_error
+          assertions:
+          - parser
+          - schema_or_error
+        online: []
+      note: MySQL stored functions are accepted as opaque SQL offline; live function
+        inspection and verification are not yet accepted evidence.
+    mariadb:
+      status: planned
+      note: MariaDB stored function support is not implemented.
+      evidence:
+        online: []
+        offline: []
+- id: trigger_query_objects
+  label: Trigger query schema objects
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: postgres_function_name_trigger
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: postgres_opaque_objects
+          checks:
+          - migrate
+          - inspect
+        - case: postgres_verify_ignores_untracked_trigger
+          checks:
+          - verify
+        - case: postgres_verify_missing_owned_trigger
+          checks:
+          - verify
+        - case: postgres_verify_trigger_metadata_drift
+          checks:
+          - verify
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: sqlite_index_view_trigger
+          checks:
+          - migrate
+          - data
+        - case: sqlite_verify_trigger_metadata_drift
+          checks:
+          - verify
+        offline: []
+    mysql:
+      status: partial
+      evidence:
+        offline:
+        - case: mysql_create_trigger
+          assertions:
+          - parser
+          - schema_or_error
+        online: []
+      note: MySQL triggers are accepted as opaque SQL offline; live trigger inspection
+        and verification are not yet accepted evidence.
+    mariadb:
+      status: planned
+      note: MariaDB triggers are planned after the dialect exists.
+      evidence:
+        online: []
+        offline: []
+- id: views
+  label: Views as opaque schema objects
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: postgres_opaque_objects
+          checks:
+          - migrate
+          - inspect
+        - case: postgres_view_replace
+          checks:
+          - migrate
+          - inspect
+        - case: verify_live_only_view_ignored
+          checks:
+          - verify
+        - case: verify_view_body_only_ignored
+          checks:
+          - verify
+        - case: verify_view_missing_owned
+          checks:
+          - verify
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: sqlite_index_view_trigger
+          checks:
+          - migrate
+          - data
+        - case: verify_live_only_view_ignored
+          checks:
+          - verify
+        - case: verify_view_body_only_ignored
+          checks:
+          - verify
+        - case: verify_view_missing_owned
+          checks:
+          - verify
+        offline: []
+    mysql:
+      status: partial
+      evidence:
+        online:
+        - case: mysql_opaque_objects
+          checks:
+          - verify
+        offline: []
+      note: Opaque view creation and inspection coexistence are live-tested; missing-view
+        presence drift and repair are not yet accepted evidence.
+    mariadb:
+      status: planned
+      note: MariaDB views are planned after the dialect exists.
+      evidence:
+        online: []
+        offline: []
+- id: raw_sql_statements
+  label: Raw SQL statements
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: raw_statement_data
+          checks:
+          - migrate
+          - data
+        offline:
+        - case: non_reversible_statement_error
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_migration_to_sql_features
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: postgres_migration_to_sql_raw_statement
+          assertions:
+          - migration_to_sql
+          - sql
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: raw_statement_data
+          checks:
+          - migrate
+          - data
+        offline:
+        - case: sqlite_raw_statement
+          assertions:
+          - migration_to_sql
+          - sql
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: mysql_lifecycle_tracking
+          checks:
+          - migrate_twice
+          - migration_records
+          - data
+        - case: mysql_opaque_objects
+          checks:
+          - verify
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB raw SQL execution is planned after the executor exists.
+      evidence:
+        online: []
+        offline: []
+- id: sqlite_table_rebuilds
+  label: SQLite table-rebuild planner for ALTER TABLE
+  dialects:
+    postgres:
+      status: unsupported
+      note: PostgreSQL uses native ALTER TABLE paths; SQLite rebuild planning does
+        not apply.
+      evidence:
+        online: []
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: sqlite_generated_column
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_alter_type_cast
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_atomic_false_error
+          checks:
+          - migrate
+          - error
+        - case: sqlite_rebuild_combined_features
+          checks:
+          - migrate
+          - verify
+          - data
+        - case: sqlite_rebuild_constraints
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_default_nullability
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_drop_column
+          checks:
+          - migrate
+          - inspect
+          - data
+        - case: sqlite_rebuild_drop_fk_unique_check
+          checks:
+          - migrate
+          - data
+        - case: sqlite_rebuild_parent_with_child_fk
+          checks:
+          - migrate
+          - error
+        - case: verify_sqlite_detects_missing_index_constraint_fk
+          checks:
+          - verify
+        offline:
+        - case: sqlite_rebuild_alter_type_cast
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_rebuild_default_only
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_rebuild_not_null_default
+          assertions:
+          - migration_to_sql
+          - sql
+        - case: sqlite_rebuild_recreates_indexes
+          assertions:
+          - migration_to_sql
+          - sql
+    mysql:
+      status: unsupported
+      note: SQLite rebuild planning does not apply to MySQL.
+      evidence:
+        online: []
+        offline: []
+    mariadb:
+      status: unsupported
+      note: SQLite rebuild planning does not apply to MariaDB.
+      evidence:
+        online: []
+        offline: []
+- id: opaque_source_formatting_fallback
+  label: Opaque source formatting fallback in offline diff
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        offline:
+        - case: function_formatting_noop
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: trigger_query_formatting_noop
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        - case: view_formatting_noop
+          assertions:
+          - schema_to_migration
+          - operations
+          - replayed_schema
+          - sql
+        online: []
+    sqlite:
+      status: planned
+      evidence:
+        offline: []
+        online: []
+      note: SQLite opaque-source formatting equivalence lacks accepted case-level
+        evidence.
+    mysql:
+      status: planned
+      note: MySQL opaque-object diffing is not implemented yet.
+      evidence:
+        online: []
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB opaque-object diffing is not implemented yet.
+      evidence:
+        online: []
+        offline: []
+- id: ownership_scoped_verify
+  label: Ownership-scoped `verify_db`
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: postgres_opaque_index_with_modeled_drift
+          checks:
+          - verify
+        - case: postgres_verify_enum_drift
+          checks:
+          - verify
+        - case: postgres_verify_fk_on_delete_drift
+          checks:
+          - verify
+        - case: postgres_verify_function_body_ignored
+          checks:
+          - verify
+        - case: postgres_verify_function_signature_drift
+          checks:
+          - verify
+        - case: postgres_verify_ignores_opaque_index_metadata
+          checks:
+          - verify
+        - case: postgres_verify_ignores_untracked_trigger
+          checks:
+          - verify
+        - case: postgres_verify_live_only_enum_ignored
+          checks:
+          - verify
+        - case: postgres_verify_missing_enum
+          checks:
+          - verify
+        - case: postgres_verify_missing_owned_trigger
+          checks:
+          - verify
+        - case: postgres_verify_opaque_index_definition_ignored
+          checks:
+          - verify
+        - case: postgres_verify_opaque_index_presence
+          checks:
+          - verify
+        - case: postgres_verify_schema_qualified_no_drift
+          checks:
+          - verify
+        - case: postgres_verify_trigger_metadata_drift
+          checks:
+          - verify
+        - case: verify_composite_fk_order_drift
+          checks:
+          - verify
+        - case: verify_composite_pk_missing
+          checks:
+          - verify
+        - case: verify_composite_pk_order_drift
+          checks:
+          - verify
+        - case: verify_detects_changed_column_metadata
+          checks:
+          - verify
+        - case: verify_detects_missing_index_constraint_fk
+          checks:
+          - verify
+        - case: verify_generated_column_expression_drift
+          checks:
+          - verify
+        - case: verify_ignores_untracked_column
+          checks:
+          - verify
+        - case: verify_ignores_untracked_index_constraint_fk
+          checks:
+          - verify
+        - case: verify_ignores_untracked_table
+          checks:
+          - verify
+        - case: verify_live_only_view_ignored
+          checks:
+          - verify
+        - case: verify_missing_owned_column
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        - case: verify_view_body_only_ignored
+          checks:
+          - verify
+        - case: verify_view_missing_owned
+          checks:
+          - verify
+        offline: []
+    sqlite:
+      status: supported
+      evidence:
+        online:
+        - case: sqlite_verify_trigger_metadata_drift
+          checks:
+          - verify
+        - case: verify_composite_fk_order_drift
+          checks:
+          - verify
+        - case: verify_composite_pk_missing
+          checks:
+          - verify
+        - case: verify_composite_pk_order_drift
+          checks:
+          - verify
+        - case: verify_generated_column_expression_drift
+          checks:
+          - verify
+        - case: verify_ignores_untracked_column
+          checks:
+          - verify
+        - case: verify_ignores_untracked_index_constraint_fk
+          checks:
+          - verify
+        - case: verify_ignores_untracked_table
+          checks:
+          - verify
+        - case: verify_live_only_view_ignored
+          checks:
+          - verify
+        - case: verify_missing_owned_column
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        - case: verify_sqlite_detects_missing_index_constraint_fk
+          checks:
+          - verify
+        - case: verify_view_body_only_ignored
+          checks:
+          - verify
+        - case: verify_view_missing_owned
+          checks:
+          - verify
+        offline: []
+    mysql:
+      status: supported
+      evidence:
+        online:
+        - case: mysql_column_default_drift
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        offline: []
+    mariadb:
+      status: planned
+      note: MariaDB verify is not implemented yet.
+      evidence:
+        online: []
+        offline: []

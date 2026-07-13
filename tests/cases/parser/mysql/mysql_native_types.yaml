@@ -1,0 +1,23 @@
+description: MySQL native type modifiers and enum labels remain lexically intact
+dialect: mysql
+sql: |
+  CREATE TABLE native_types (
+    flags INT UNSIGNED ZEROFILL,
+    amount DECIMAL(18, 4),
+    payload JSON,
+    mood ENUM('Ready', 'needs, review', 'can''t'),
+    tags SET('A', 'B')
+  );
+expect_entities:
+- kind: table
+  name: native_types
+expect_schema:
+  tables:
+    native_types:
+      name: native_types
+      columns:
+      - { name: flags, type: "INT UNSIGNED ZEROFILL", nullable: true, primary_key: false }
+      - { name: amount, type: "DECIMAL(18, 4)", nullable: true, primary_key: false }
+      - { name: payload, type: JSON, nullable: true, primary_key: false }
+      - { name: mood, type: "ENUM('Ready', 'needs, review', 'can''t')", nullable: true, primary_key: false }
+      - { name: tags, type: "SET('A', 'B')", nullable: true, primary_key: false }
