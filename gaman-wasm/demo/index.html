@@ -17,7 +17,6 @@
         <div class="panel-head">
           <div>
             <p class="eyebrow">Schema source</p>
-            <h1>Shape the next change.</h1>
           </div>
           <span class="file-chip">schema.sql</span>
         </div>
@@ -33,9 +32,19 @@
         <form id="prompt">
           <span>gaman&gt;</span>
           <input id="command" value="make" autocomplete="off" />
+          <button type="submit">Run</button>
         </form>
       </section>
       </div>
     </main>
+    <aside class="demo-notes" aria-label="Demo instructions">
+      <ol>
+        <li>Only <code>CREATE</code> DDL is accepted, such as tables, indexes, extensions, views, and functions.</li>
+        <li>Use the editor to describe the desired schema, then run <code>make</code>.</li>
+        <li>Ambiguous changes require clarification before Gaman can generate a migration.</li>
+        <li>Diffing is offline and continues to work without an internet connection.</li>
+        <li>Supported commands: <code>help</code>, <code>config</code>, <code>make</code>, <code>apply</code>, <code>status</code>, <code>show</code>, and <code>sql</code>.</li>
+      </ol>
+    </aside>
   </body>
 </html>
