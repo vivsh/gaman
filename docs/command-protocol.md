@@ -1,7 +1,7 @@
 # Command Protocol
 
 Gaman exposes one portable command contract for CLI resolution, WASM, and
-future FFI bindings. The protocol carries resolved lifecycle intent; it does
+other host integrations. The protocol carries resolved lifecycle intent; it does
 not carry paths, environment variables, database connections, terminal state,
 or prompt callbacks.
 

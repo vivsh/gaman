@@ -4,6 +4,25 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+const README_FEATURE_ROWS: &[&str] = &[
+    "offline_planning",
+    "live_migration_application",
+    "live_introspection",
+    "live_verify_db",
+    "table_create_drop_rename",
+    "column_add_drop_rename",
+    "column_type_null_default",
+    "composite_primary_keys",
+    "single_foreign_keys",
+    "composite_foreign_keys",
+    "unique_constraints",
+    "indexes",
+    "extensions",
+    "enums",
+    "functions",
+    "trigger_query_objects",
+];
+
 #[derive(Debug, Deserialize)]
 struct OfflineFeatureCatalog {
     features: Vec<OfflineFeatureEntry>,
@@ -808,18 +827,29 @@ fn render_support_table(
         "| Feature | PostgreSQL | SQLite | MySQL | MariaDB |".to_string(),
         "| --- | --- | --- | --- | --- |".to_string(),
     ];
-    for row in &support.rows {
-        let postgres = support_symbol(row, "postgres");
-        let sqlite = support_symbol(row, "sqlite");
-        let mysql = support_symbol(row, "mysql");
-        let mariadb = support_symbol(row, "mariadb");
+    for row_id in README_FEATURE_ROWS {
+        let row = support
+            .rows
+            .iter()
+            .find(|row| row.id == *row_id)
+            .expect("README feature row is missing from the support matrix");
         lines.push(format!(
-            "| {} | {postgres} | {sqlite} | {mysql} | {mariadb} |",
-            row.label
+            "| {} | {} | {} | {} | {} |",
+            row.label,
+            linked_support_symbol(row, "postgres"),
+            linked_support_symbol(row, "sqlite"),
+            linked_support_symbol(row, "mysql"),
+            linked_support_symbol(row, "mariadb")
         ));
     }
-    append_support_notes(&mut lines, support);
     lines.join("\n")
+}
+
+fn linked_support_symbol(row: &SupportRow, dialect: &str) -> String {
+    format!(
+        "[{}](docs/support-evidence.md#lifecycle-compatibility)",
+        support_symbol(row, dialect)
+    )
 }
 
 fn support_symbol(row: &SupportRow, dialect: &str) -> &'static str {
@@ -829,39 +859,6 @@ fn support_symbol(row: &SupportRow, dialect: &str) -> &'static str {
         SupportStatus::Planned => "🚧",
         SupportStatus::Unsupported => "❌",
     }
-}
-
-fn append_support_notes(lines: &mut Vec<String>, support: &SupportMatrix) {
-    let notes = support_notes(support);
-    if notes.is_empty() {
-        return;
-    }
-    lines.push(String::new());
-    lines.push("Notes:".to_string());
-    for note in notes {
-        lines.push(format!("- {note}"));
-    }
-}
-
-fn support_notes(support: &SupportMatrix) -> Vec<String> {
-    let mut notes = Vec::new();
-    for row in &support.rows {
-        let mut grouped = BTreeMap::<&str, Vec<&str>>::new();
-        for dialect in SUPPORT_DIALECTS {
-            let cell = &row.dialects[*dialect];
-            if matches!(
-                cell.status,
-                SupportStatus::Partial | SupportStatus::Unsupported
-            ) && let Some(note) = &cell.note
-            {
-                grouped.entry(note.as_str()).or_default().push(*dialect);
-            }
-        }
-        for (note, dialects) in grouped {
-            notes.push(format!("{} ({}): {note}", row.label, dialects.join("/")));
-        }
-    }
-    notes
 }
 
 const EXPECTED_OPERATIONS: &[&str] = &[

@@ -74,7 +74,7 @@ impl Command {
     }
 }
 
-/// Portable command vocabulary used by textual, WASM, and future FFI hosts.
+/// Portable command vocabulary used by textual, WASM, and other hosts.
 pub type CommandRequest = Command;
 
 /// Current version of the portable command request and response protocol.

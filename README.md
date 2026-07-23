@@ -5,49 +5,80 @@ _Pronounced guh-MUN (गमन, /ɡəˈmən/) — Sanskrit for "movement" or "go
 [![Crates.io](https://img.shields.io/crates/v/gaman)](https://crates.io/crates/gaman)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Gaman is an offline-first schema migration CLI that generates deterministic
-migrations without connecting to a live database.
+Gaman is a standalone, schema-first migration CLI for teams that want a
+Django-like migration workflow without coupling database evolution to a web
+framework.
 
-The crate also exposes the same engine as a Rust library for applications that
-need embedded migrations or custom storage.
+Describe the schema you want. Gaman replays committed migration history,
+calculates the change offline, writes a reviewable migration, renders dialect
+SQL, and can verify the deployed database for drift.
 
-It starts from a simple idea: your committed migration history is enough to know
-where the schema is, and your desired schema is enough to plan where it should
-go next.
+Schema tracking is deliberately **DDL `CREATE`-only**. Gaman tracks desired
+definitions for tables, columns, keys, constraints, indexes, enums, extensions,
+functions, triggers, and views. It does not treat `ALTER`, `DROP`, DML, or
+arbitrary SQL files as desired schema state.
 
-```text
-desired schema ─┐
-                ├─► Schema IR ─► deterministic replay + diff ─► migration YAML
-migration log ──┘                                              │
-                                                               ▼
-                                                        dialect SQL
-```
-
-> **Project status:** Early-stage. Core behavior is tested and usable, but
-> public API and file format may still change before 1.0.
+> **Project status:** Early-stage and usable, but public APIs and file formats
+> may still change before 1.0.
 
 ## Demo
 
-The 40-second demo shows Gaman starting from a blank PostgreSQL database,
-generating and applying an initial migration, then clarifying a schema change
-before applying and verifying the result.
+This 40-second PostgreSQL demo creates an initial migration, applies it,
+clarifies a risky schema change, and verifies the result.
 
 ![Gaman schema migration demo](docs/assets/gaman-demo.gif)
 
-PostgreSQL is the default and broadest supported engine. SQLite is supported
-behind the `sqlite` Cargo feature as its own engine, not as a PostgreSQL
-compatibility mode.
+## Safe Changes Are Automatic. Risky Changes Ask.
 
-## Why Use It
+Like Django's migration workflow, Gaman does not force every schema change into
+a flag-heavy command. When intent is ambiguous, it pauses and asks a focused
+question before writing the migration:
 
-- Migration generation is deterministic and offline.
-- `sql` renders the SQL plan without opening a database connection.
-- `schema.sql` uses supported database `CREATE` DDL and direct database types.
-- YAML, JSON, SQL DDL, and live inspection all feed one schema model.
-- Ambiguous or risky changes are surfaced before files are written.
-- Rust applications can embed the same engine when they need custom migration storage.
+```text
+[suggest] Column 'email' was removed from 'users'. Was it renamed?
+  1 - email_address
+  2 - No, it was dropped
+```
+
+Clarification covers possible table, column, and enum-value renames, new
+non-null data requirements, type casts, unfamiliar database types, and coarse
+opaque-object changes. The answer becomes part of committed migration history,
+so replay remains deterministic and the question is not asked again.
+
+Interactive prompts are for local development. In CI, `--non-interactive`
+turns an unresolved clarification into a clear failure instead of guessing or
+waiting for input.
+
+## Why Gaman
+
+- **Plan offline.** `make`, `show`, and `sql` use desired schema plus committed
+  migrations; they do not inspect or modify a database.
+- **Review the result.** Migrations are deterministic YAML artifacts, and the
+  exact dialect SQL can be printed before application.
+- **Clarify risk.** Renames, casts, new non-null columns, and unfamiliar types
+  are surfaced instead of guessed through.
+- **Keep production honest.** `inspect` reflects a live database, `verify`
+  reports expected and observed properties, and `repair` plans bounded fixes.
+- **Track more than tables.** Keys, constraints, indexes, enums, extensions,
+  functions, triggers, and views participate in migration ownership.
+- **Choose the input that fits.** SQL DDL, YAML, JSON, and live inspection
+  converge on the same schema lifecycle.
+- **Keep an escape hatch.** Advanced objects can use preserved raw SQL when a
+  granular model would be misleading.
+
+## Typical Use Cases
+
+- Add schema-to-migration generation to a Rust service or any non-Django stack.
+- Keep a database-native `schema.sql` as the desired state of a project.
+- Generate and review migration operations and SQL in CI.
+- Onboard an existing project by exporting its database with `inspect`.
+- Detect deployment drift with property-level expected/observed diagnostics.
+- Use the same migration model through integrations such as
+  [Mool](https://github.com/vivsh/mool).
 
 ## Quick Start
+
+Install the CLI and point it at a PostgreSQL project:
 
 ```bash
 cargo install --locked gaman
@@ -63,191 +94,113 @@ gaman apply
 gaman verify
 ```
 
-The default CLI includes PostgreSQL and SQLite. MySQL and MariaDB remain
-separate opt-in feature builds while their full live-server matrices are being
-qualified. MySQL now has accepted live fixtures for product-owned column
-metadata, row-format inspection, opaque invisible indexes, and representative
-no-drift verification. MariaDB currently has parser and offline evidence but
-still requires accepted live-server evidence.
+`make` and `sql` are offline. `check_schema` asks the database to prepare SQL
+without executing it. `apply`, `status`, `inspect`, `verify`, and `repair` are
+live commands.
 
-The loop is intentionally small:
-
-```text
-schema.sql -> make -> migration.yaml -> sql -> SQL -> apply
-```
-
-`DATABASE_URL` is required for every CLI invocation only to select the dialect.
-Offline commands such as `make`, `show`, and `sql` never open or otherwise use
-the connection. `check_schema` is the deliberate validation exception: it
-prepares schema SQL through the selected database without executing it. Other
-live commands include `status`, `apply`, `inspect`, `verify`, and `repair`.
-
-For smaller custom builds, select dialect features explicitly:
+The default build includes PostgreSQL and SQLite. Smaller builds can select one
+dialect explicitly:
 
 ```bash
 cargo install gaman --no-default-features --features cli,postgres
 cargo install gaman --no-default-features --features cli,sqlite
 ```
 
-Use `--non-interactive` in CI when prompts should fail the run instead of
-waiting for input.
+Gaman does not load `.env` automatically. Use `gaman --env .env <command>` when
+you want dotenv-style configuration.
 
-Gaman does not load `.env` automatically. Use `--env .env` when you want local
-dotenv-style configuration.
+## How It Works
 
-## CLI Reference
-
-Global flags come before the subcommand:
-
-- `-m <dir>` overrides `MIGRATIONS_DIR`.
-- `-s <file-or-dir>` / `--schema <file-or-dir>` overrides `SCHEMA`.
-- `-d <url>` overrides `DATABASE_URL`.
-- `--env <file>` loads environment variables from a dotenv file before config resolution.
-
-Everyday commands:
-
-```bash
-gaman make [name]       # diff schema and write the next migration
-gaman make --check      # CI check; never prompts or writes
-gaman make --dry-run    # print the migration that would be written
-gaman make --empty name # write an empty migration shell
-gaman make --merge name # merge multiple graph heads
-gaman check_schema       # prepare each SQL schema statement without executing it
-
-gaman sql [id]            # print offline operation SQL; id may be a unique prefix
-gaman sql --backwards id  # print rollback SQL; id may be a unique prefix
-
-gaman apply                     # apply pending migrations
-gaman apply id                  # converge forward or backward to a unique id prefix
-gaman apply --fake              # update tracking without running migration SQL
-gaman apply --plan              # print the live migration plan
-gaman apply --check             # fail if anything is pending
-
-gaman inspect                              # export live schema
-gaman inspect --schema billing --table users # export one unambiguous table
-gaman verify --schema public --schema billing # verify multiple owned schemas
-gaman repair --schema billing              # plan one-off drift repair SQL
-gaman repair --apply           # apply one-off drift repair SQL
-gaman status                   # list applied/pending migrations
-gaman show [id]                # show canonical migration YAML; id may be a unique prefix
-gaman config                    # print resolved config with a redacted URL
-gaman config --show-database-url # print the full database URL explicitly
+```text
+desired schema ─┐
+                ├─► normalize ─► replay + diff ─► migration YAML ─► SQL
+migration log ──┘                                      │
+                                                       ▼
+                                              apply / verify / repair
 ```
 
-`gaman apply [id]` follows Django-style target semantics: it converges the
-database on the selected migration, applying or reverting migrations as needed.
-The target itself remains applied. Use `gaman sql --backwards id` to inspect the
-inverse SQL before moving backward.
+The desired schema is compared with the schema reconstructed from committed
+migrations. That produces a deterministic migration without treating the live
+database as planning state. Live inspection is a separate lifecycle used for
+onboarding, drift verification, and repair.
 
-Environment variables:
+When a change has more than one plausible interpretation or carries material
+risk, Gaman returns a clarification request before writing the migration. In
+CI, `--non-interactive` turns unresolved clarification into a failure.
 
-- `DATABASE_URL`: required for all CLI commands; offline commands use it only
-  to select the dialect. `check_schema` connects only to prepare SQL and never
-  executes it.
-- `MIGRATIONS_DIR`: defaults to `migrations`.
-- `SCHEMA`: defaults to `schema.yaml`; may be YAML, JSON, SQL, or a directory.
+## CLI
 
-Only commands that write migration files require a writable migrations
-directory. Artifact inspection, SQL rendering, live application, inspection,
-verification, and repair can read migrations from read-only deployments.
+| Command | Purpose |
+| --- | --- |
+| `check_schema` | Prepare schema SQL without executing it |
+| `make [name]` | Generate the next migration from desired state |
+| `show [id]` | Show migration YAML |
+| `sql [id]` | Render forward or backward SQL offline |
+| `apply [id]` | Apply pending migrations or converge on a target |
+| `status` | Show applied and pending migrations |
+| `inspect` | Export reflected live database state |
+| `verify` | Compare replayed history with the live database |
+| `repair` | Plan or apply one-off verified drift repair |
+| `config` | Show resolved, redacted configuration |
 
-## Support
+Global options come before the command:
 
-Migration files are engine-specific. Gaman does not try to make one migration
-portable across PostgreSQL, SQLite, and future engines.
+```bash
+gaman --env .env -s schema.sql -m migrations -d postgres://localhost/myapp make
+```
 
-The table is generated from checked-in evidence snapshots plus explicit design
-metadata for unsupported-by-design rows. Offline rows come from deterministic
-fixture results; live rows require database-backed evidence.
+Configuration can also come from environment variables:
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `DATABASE_URL` | Database target and dialect selection | required |
+| `MIGRATIONS_DIR` | Migration artifact directory | `migrations` |
+| `SCHEMA` | SQL, YAML, JSON, or schema directory | `schema.yaml` |
+
+Run `gaman --help` or `gaman <command> --help` for the complete option set.
+
+## Database Support
+
+Migration files are dialect-specific. Gaman does not pretend that one migration
+is portable across engines.
 
 Legend: ✅ accepted evidence, ◐ bounded support, 🚧 planned or not evidenced
 yet, ❌ unsupported by design or by the database engine.
-
-`inspect` is the high-fidelity reflection path for onboarding existing
-projects into Gaman. `verify` is narrower by design: each dialect owns a
-static registry of entity properties that live inspection can recover accurately
-and deterministically. Opaque objects are still tracked by presence and stable
-metadata, but their bodies are not drift inputs unless a dialect-specific
-verifier can inspect them deterministically.
 
 <!-- gaman:support-matrix:start -->
 <!-- evidence-generation: 20260713T170126Z-51770 -->
 | Feature | PostgreSQL | SQLite | MySQL | MariaDB |
 | --- | --- | --- | --- | --- |
-| Offline replay, diff, and migration generation | ✅ | ✅ | ✅ | 🚧 |
-| Offline SQL rendering through `sql_migrate` | ✅ | ✅ | ✅ | 🚧 |
-| Live migration application | ✅ | ✅ | ◐ | 🚧 |
-| Live database introspection | ✅ | ✅ | ✅ | 🚧 |
-| Live `verify_db` | ✅ | ✅ | ✅ | 🚧 |
-| Non-transactional partial-failure reporting | ❌ | ❌ | ✅ | 🚧 |
-| Migration tracking table | ✅ | ✅ | ✅ | 🚧 |
-| Dedicated migration lock | ✅ | ❌ | ◐ | 🚧 |
-| Tables: create, drop, rename | ✅ | ✅ | ◐ | 🚧 |
-| Columns: add, drop, rename | ✅ | ✅ | ✅ | 🚧 |
-| Columns: type, nullability, default changes | ✅ | ✅ | ◐ | 🚧 |
-| Generated columns | ✅ | ✅ | ✅ | 🚧 |
-| Single-column primary keys | ✅ | ✅ | ✅ | 🚧 |
-| Multi-column / composite primary keys | ✅ | ✅ | ✅ | 🚧 |
-| Automatic primary-key mutation generation | ❌ | ❌ | ❌ | ❌ |
-| Single-column foreign keys | ✅ | ✅ | ✅ | 🚧 |
-| Multi-column / composite foreign keys | ✅ | ✅ | ✅ | 🚧 |
-| Unique constraints | ✅ | ✅ | ✅ | 🚧 |
-| Check constraints | ✅ | ✅ | ✅ | 🚧 |
-| Indexes | ✅ | ✅ | ✅ | 🚧 |
-| Partial indexes | ✅ | ◐ | ❌ | 🚧 |
-| Concurrent indexes | ✅ | ❌ | 🚧 | 🚧 |
-| Schemas / namespaces | ✅ | ❌ | ❌ | ❌ |
-| Extensions as opaque schema objects | ✅ | ❌ | ❌ | ❌ |
-| Enums | ✅ | ❌ | 🚧 | 🚧 |
-| Functions as opaque schema objects | ✅ | ❌ | ◐ | 🚧 |
-| Trigger query schema objects | ✅ | ✅ | ◐ | 🚧 |
-| Views as opaque schema objects | ✅ | ✅ | ◐ | 🚧 |
-| Raw SQL statements | ✅ | ✅ | ✅ | 🚧 |
-| SQLite table-rebuild planner for ALTER TABLE | ❌ | ✅ | ❌ | ❌ |
-| Opaque source formatting fallback in offline diff | ✅ | 🚧 | 🚧 | 🚧 |
-| Ownership-scoped `verify_db` | ✅ | ✅ | ✅ | 🚧 |
-
-Notes:
-- Live migration application (mysql): Apply, target application, rollback, idempotency, and partial-failure behavior are live-tested. Fake application is not yet accepted evidence.
-- Non-transactional partial-failure reporting (postgres): PostgreSQL modeled migrations use transactional DDL; this failure mode does not apply.
-- Non-transactional partial-failure reporting (sqlite): SQLite modeled migrations use transactional DDL; this failure mode does not apply.
-- Dedicated migration lock (mysql): Named-lock release after application is live-tested; contention and timeout behavior are not yet accepted evidence.
-- Dedicated migration lock (sqlite): SQLite has no dedicated advisory-lock primitive; migration atomicity relies on SQLite transactions and file locking.
-- Tables: create, drop, rename (mysql): MySQL table creation and rename are live-tested; direct live table-drop coverage is not yet accepted evidence.
-- Columns: type, nullability, default changes (mysql): MySQL column type, nullability, default, and product metadata round trips are live-tested; mutation cases are not yet accepted evidence.
-- Automatic primary-key mutation generation (postgres/sqlite/mysql/mariadb): Primary-key surgery is intentionally manual/raw SQL for every dialect.
-- Partial indexes (mysql): MySQL does not support predicate-based partial indexes; prefix and advanced indexes use Gaman's opaque index lifecycle.
-- Partial indexes (sqlite): SQLite partial-index SQL rendering is proven offline; live predicate introspection/verify is not yet accepted evidence.
-- Concurrent indexes (sqlite): SQLite has no CREATE INDEX CONCURRENTLY syntax.
-- Schemas / namespaces (mariadb): MariaDB does not use PostgreSQL-style schemas/namespaces in Gaman.
-- Schemas / namespaces (mysql): MySQL does not use PostgreSQL-style schemas/namespaces in Gaman.
-- Schemas / namespaces (sqlite): SQLite does not support PostgreSQL-style schemas/namespaces in Gaman.
-- Extensions as opaque schema objects (mariadb): MariaDB extensions are not modeled as migratable schema objects.
-- Extensions as opaque schema objects (mysql): MySQL extensions are not modeled as migratable schema objects.
-- Extensions as opaque schema objects (sqlite): SQLite extensions are not modeled as migratable schema objects.
-- Enums (sqlite): SQLite has no native enum schema object in Gaman.
-- Functions as opaque schema objects (mysql): MySQL stored functions are accepted as opaque SQL offline; live function inspection and verification are not yet accepted evidence.
-- Functions as opaque schema objects (sqlite): SQLite stored functions are not supported by Gaman.
-- Trigger query schema objects (mysql): MySQL triggers are accepted as opaque SQL offline; live trigger inspection and verification are not yet accepted evidence.
-- Views as opaque schema objects (mysql): Opaque view creation and inspection coexistence are live-tested; missing-view presence drift and repair are not yet accepted evidence.
-- SQLite table-rebuild planner for ALTER TABLE (postgres): PostgreSQL uses native ALTER TABLE paths; SQLite rebuild planning does not apply.
-- SQLite table-rebuild planner for ALTER TABLE (mariadb): SQLite rebuild planning does not apply to MariaDB.
-- SQLite table-rebuild planner for ALTER TABLE (mysql): SQLite rebuild planning does not apply to MySQL.
+| Offline replay, diff, and migration generation | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Live migration application | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Live database introspection | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Live `verify_db` | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Tables: create, drop, rename | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Columns: add, drop, rename | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Columns: type, nullability, default changes | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Multi-column / composite primary keys | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Single-column foreign keys | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Multi-column / composite foreign keys | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Unique constraints | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Indexes | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Extensions as opaque schema objects | [✅](docs/support-evidence.md#lifecycle-compatibility) | [❌](docs/support-evidence.md#lifecycle-compatibility) | [❌](docs/support-evidence.md#lifecycle-compatibility) | [❌](docs/support-evidence.md#lifecycle-compatibility) |
+| Enums | [✅](docs/support-evidence.md#lifecycle-compatibility) | [❌](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Functions as opaque schema objects | [✅](docs/support-evidence.md#lifecycle-compatibility) | [❌](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Trigger query schema objects | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
 <!-- gaman:support-matrix:end -->
 
-Offline parser, replay, diff, clarification, rollback, and SQL-rendering
-evidence is tracked separately from live product support. See `TESTING.md` for
-the checked offline evidence matrix and result-recording commands.
+PostgreSQL has the broadest coverage. SQLite uses engine-specific table rebuilds
+for changes its native `ALTER TABLE` cannot express. MySQL support is useful but
+still bounded in parts of the live lifecycle. MariaDB has parser and offline
+coverage but does not yet have accepted live-server evidence.
+
+The [detailed support evidence](docs/support-evidence.md) is authoritative. It
+contains the complete feature matrix, limitations, parser boundaries, live
+fixtures, and the exact properties used by drift verification.
 
 ## Schema Input
 
-All frontends normalize into the same internal `Schema` before replay, diffing,
-clarification, and SQL rendering.
-
-### Schema SQL First
-
-`schema.sql` is the primary schema-authoring format. It contains supported
-`CREATE` DDL declarations for the selected database dialect:
+SQL DDL is the primary authoring format and uses the database's own type names:
 
 ```sql
 CREATE TABLE users (
@@ -259,112 +212,58 @@ CREATE TABLE users (
 CREATE UNIQUE INDEX users_email_idx ON users (email);
 ```
 
-Use the database's own type names: `bigserial`, `text`, `timestamptz`, `jsonb`,
-`integer`, and so on. Gaman has no separate type language and does not convert
-application types into database types. It recognizes common aliases to validate
-and canonicalize them, but the schema remains database DDL. See [Clarification](#clarification) for how unrecognized types are approved.
-
-PostgreSQL recognition covers its stable user-declarable built-in types and
-aliases from PostgreSQL 14 onward, including ranges, multiranges, `jsonpath`,
-and native `uuid`. `pgcrypto` is an optional known extension for functions such
-as `gen_random_uuid()`; it does not provide the `uuid` type. SQLite preserves
-the declared type text and uses SQLite's documented affinity rules for semantic
-comparison. These catalogs improve diagnostics only: custom, domain, composite,
-and unlisted extension types still use trust on first use (TOFU).
-
-`schema.sql` describes desired state; it is not a hand-written migration file.
-When it changes, Gaman compares its prepared schema with replayed migration
-history, generates a migration, and then applies that migration to update the
-database. Schema SQL accepts supported `CREATE` definitions only; use generated
-migrations or explicit raw migration SQL for structural `ALTER` and `DROP`
-work. Data changes are outside schema input and remain application-owned SQL.
-
-### YAML And Other Structured Input
-
-YAML is available when a structured schema is a better fit:
+Structured YAML is available when it is a better fit:
 
 ```yaml
 tables:
-  order_lines:
-    primary_key:
-      columns: [tenant_id, order_id]
+  users:
     columns:
-      - { name: tenant_id, type: bigint }
-      - { name: order_id, type: bigint }
-      - { name: product_id, type: bigint, nullable: false }
-    foreign_keys:
-      - columns: [tenant_id, product_id]
-        to_table: products
-        to_columns: [tenant_id, id]
+      - { name: id, type: bigserial, primary_key: true }
+      - { name: email, type: text, nullable: false }
     indexes:
-      - columns: [product_id]
+      - { name: users_email_idx, columns: [email], unique: true }
 ```
 
-YAML and JSON use the same direct database type strings as `schema.sql`; they
-do not introduce an alternate type vocabulary. Rust builders and live inspection
-also feed this same schema model.
+YAML and JSON use the same database-native type strings and prepare into the
+same schema model. SQL schema input describes desired `CREATE` state only;
+`ALTER`, `DROP`, DML, data migrations, and unsupported structural surgery remain
+explicit migration SQL rather than tracked desired state.
 
-Rust applications can also use builders, `EmbeddedMigrations`, `MigrationStore`,
-`MigrationEngine`, and `MigrationRunner` directly. See
-[Embedding Gaman In Rust](docs/rust-embedding.md).
+## Where Gaman Fits
 
-## Clarification
+| Approach | Primary model | Gaman's distinction |
+| --- | --- | --- |
+| Django migrations | Framework-owned models and migration state | Standalone and database-oriented |
+| Flyway/Liquibase-style tools | Apply authored migration files | Generates reviewable migrations from desired schema |
+| Atlas-style tools | Inspection-led schema planning | Plans from committed history; inspection verifies separately |
+| Handwritten SQL | Complete manual control | Generates common changes while retaining raw SQL escape hatches |
 
-Gaman does not guess through risky changes. Renames, new `NOT NULL` columns,
-type casts, and newly introduced unknown data types can require decisions before
-a migration is written.
+These are different workflow choices, not claims that one tool replaces every
+other. Gaman is most useful when desired schema, committed migration history,
+reviewable SQL, and deployment verification should remain distinct.
 
-Unknown data types use trust on first use. Catalogs know common aliases and
-popular extension types, but committed migrations are the project-local approval
-log for custom domains, composites, extension types, and user-defined types.
+## Honest Boundaries
 
-## Why Not...
+- Tables and columns are modeled for granular migration generation.
+- Advanced non-table objects may be preserved as opaque SQL and changed
+  through coarse create/drop/replace operations.
+- Primary-key mutation is intentionally manual.
+- Opaque body/source changes are not live drift inputs; opaque objects are
+  generally verified by owned presence and stable modeled metadata.
+- `inspect` is broader than `verify`: reflection helps onboarding, while drift
+  comparison includes only properties a dialect can recover deterministically.
 
-Gaman is not a universal DDL modeler or a live-database-first planner.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete lifecycle contract.
 
-- Flyway-style tools apply ordered SQL files; Gaman helps create them from a schema model.
-- Atlas-style tools inspect databases deeply; Gaman’s generation path is offline.
-- Diesel keeps migrations close to Rust; Gaman treats Rust as one frontend into a shared schema IR.
-- Handwritten SQL remains valuable; `Statement` is the escape hatch.
+## Ecosystem
 
-## Design Boundaries
+[Mool](https://github.com/vivsh/mool) integrates Gaman migration generation into
+a Rust ORM workflow and provides a concrete example of Gaman used beyond the
+standalone CLI.
 
-- Column-level `references` is single-column shorthand. Use table-level
-  `foreign_keys` for composite references.
-- Composite primary keys and foreign keys are canonical table-level metadata.
-- Primary-key mutation generation is intentionally unsupported; use raw
-  `Statement` operations for backend-specific PK surgery.
-- Opaque source text is preserved exactly. Lexical canonicalization is used only
-  to suppress formatting-only diff churn.
-- `inspect` preserves useful reflected catalog state for onboarding existing
-  projects, even when that state is not part of drift verification.
-- `verify` compares deterministic inspected properties only and reports the
-  entity property that drifted. It does not prove function, trigger, or view
-  body equivalence from live catalog text.
-- PostgreSQL trigger `query` source is wrapped in generated trigger functions
-  with default return behavior. Use explicit functions for custom returns.
-- SQLite table rebuilds require `atomic: true`; unsafe rebuilds fail early.
-- SQLite live introspection is intentionally narrower than authored schema metadata.
+## Project Documentation
 
-## Development
-
-```bash
-cargo test
-cargo test --test offline
-cargo test --features sqlite --test online
-```
-
-Online PostgreSQL tests need a database:
-
-```bash
-export POSTGRES_DATABASE_URL=postgres://localhost/gaman_test
-cargo test --test online -- --dialect postgres
-```
-
-More detail lives in:
-
-- [ARCHITECTURE.md](ARCHITECTURE.md)
-- [TESTING.md](TESTING.md)
-- [Embedding Gaman In Rust](docs/rust-embedding.md)
-- [Command Protocol](docs/command-protocol.md)
-- [Future C/FFI Embedding](docs/ffi-embedding.md)
+- [Architecture](ARCHITECTURE.md)
+- [Testing](TESTING.md)
+- [Detailed support evidence](docs/support-evidence.md)
+- [Command protocol](docs/command-protocol.md)

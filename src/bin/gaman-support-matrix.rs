@@ -8,6 +8,24 @@ use thiserror::Error;
 const START: &str = "<!-- gaman:support-matrix:start -->";
 const END: &str = "<!-- gaman:support-matrix:end -->";
 const DIALECTS: &[&str] = &["postgres", "sqlite", "mysql", "mariadb"];
+const README_FEATURE_ROWS: &[&str] = &[
+    "offline_planning",
+    "live_migration_application",
+    "live_introspection",
+    "live_verify_db",
+    "table_create_drop_rename",
+    "column_add_drop_rename",
+    "column_type_null_default",
+    "composite_primary_keys",
+    "single_foreign_keys",
+    "composite_foreign_keys",
+    "unique_constraints",
+    "indexes",
+    "extensions",
+    "enums",
+    "functions",
+    "trigger_query_objects",
+];
 
 #[derive(Debug, Error)]
 enum MatrixError {
@@ -27,7 +45,8 @@ struct SupportMatrix {
 #[derive(Debug, Deserialize)]
 struct SupportRow {
     id: String,
-    label: String,
+    #[serde(rename = "label")]
+    _label: String,
     dialects: BTreeMap<String, SupportCell>,
 }
 
@@ -457,18 +476,34 @@ fn render_support_table(matrix: &ResolvedMatrix) -> Result<String, MatrixError> 
         "| Feature | PostgreSQL | SQLite | MySQL | MariaDB |".to_string(),
         "| --- | --- | --- | --- | --- |".to_string(),
     ];
-    for row in &matrix.manifest.rows {
+    for row_id in README_FEATURE_ROWS {
+        let row = matrix
+            .manifest
+            .rows
+            .iter()
+            .find(|row| row.id == *row_id)
+            .ok_or_else(|| {
+                MatrixError::Message(format!(
+                    "README feature row '{row_id}' is missing from the support matrix"
+                ))
+            })?;
         lines.push(format!(
             "| {} | {} | {} | {} | {} |",
-            row.label,
-            support_symbol(row, "postgres")?,
-            support_symbol(row, "sqlite")?,
-            support_symbol(row, "mysql")?,
-            support_symbol(row, "mariadb")?
+            row._label,
+            linked_support_symbol(row, "postgres")?,
+            linked_support_symbol(row, "sqlite")?,
+            linked_support_symbol(row, "mysql")?,
+            linked_support_symbol(row, "mariadb")?
         ));
     }
-    append_notes(&mut lines, &matrix.manifest);
     Ok(lines.join("\n"))
+}
+
+fn linked_support_symbol(row: &SupportRow, dialect: &str) -> Result<String, MatrixError> {
+    Ok(format!(
+        "[{}](docs/support-evidence.md#lifecycle-compatibility)",
+        support_symbol(row, dialect)?
+    ))
 }
 
 fn support_symbol(row: &SupportRow, dialect: &str) -> Result<&'static str, MatrixError> {
@@ -482,41 +517,6 @@ fn support_symbol(row: &SupportRow, dialect: &str) -> Result<&'static str, Matri
         SupportStatus::Planned => "🚧",
         SupportStatus::Unsupported => "❌",
     })
-}
-
-fn append_notes(lines: &mut Vec<String>, manifest: &SupportMatrix) {
-    let notes = support_notes(manifest);
-    if notes.is_empty() {
-        return;
-    }
-    lines.push(String::new());
-    lines.push("Notes:".to_string());
-    for note in notes {
-        lines.push(format!("- {note}"));
-    }
-}
-
-fn support_notes(manifest: &SupportMatrix) -> Vec<String> {
-    let mut notes = Vec::new();
-    for row in &manifest.rows {
-        let mut grouped = BTreeMap::<&str, Vec<&str>>::new();
-        for dialect in DIALECTS {
-            let Some(cell) = row.dialects.get(*dialect) else {
-                continue;
-            };
-            if matches!(
-                cell.status,
-                SupportStatus::Partial | SupportStatus::Unsupported
-            ) && let Some(note) = &cell.note
-            {
-                grouped.entry(note.as_str()).or_default().push(*dialect);
-            }
-        }
-        for (note, dialects) in grouped {
-            notes.push(format!("{} ({}): {note}", row.label, dialects.join("/")));
-        }
-    }
-    notes
 }
 
 fn render_offline_table(

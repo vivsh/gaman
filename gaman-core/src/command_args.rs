@@ -1,7 +1,7 @@
 //! Shared token-oriented command grammar, help text, and parser diagnostics.
 //!
 //! These types are the authoritative Gaman command-line vocabulary. Native CLI
-//! uses `argh::from_env`; WASM and FFI callers can parse supplied token slices
+//! uses `argh::from_env`; WASM and other hosts can parse supplied token slices
 //! with [`CommandArgs::parse`]. They resolve into typed runner commands in their
 //! own host adapter and therefore never carry loaded schemas or database state.
 

@@ -10,7 +10,7 @@ use crate::migration_engine::{Executor, MigrationEngine, MigrationStore, Trackin
 use crate::parsers::segment_sql;
 use crate::repair::plan_repair;
 use crate::states::Schema;
-/// Unified lifecycle façade shared by native, FFI, and WASM host adapters.
+/// Unified lifecycle façade shared by native, WASM, and other host adapters.
 pub struct MigrationRunner<M, T, E> {
     engine: MigrationEngine<M, T, E>,
 }
