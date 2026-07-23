@@ -26,6 +26,14 @@ migration log ──┘                                              │
 > **Project status:** Early-stage. Core behavior is tested and usable, but
 > public API and file format may still change before 1.0.
 
+## Demo
+
+The 40-second demo shows Gaman starting from a blank PostgreSQL database,
+generating and applying an initial migration, then clarifying a schema change
+before applying and verifying the result.
+
+![Gaman schema migration demo](docs/assets/gaman-demo.gif)
+
 PostgreSQL is the default and broadest supported engine. SQLite is supported
 behind the `sqlite` Cargo feature as its own engine, not as a PostgreSQL
 compatibility mode.
