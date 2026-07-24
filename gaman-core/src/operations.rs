@@ -144,6 +144,37 @@ pub enum Operation {
 }
 
 impl Operation {
+    /// Reports whether this operation carries a raw or identity-only opaque object.
+    pub fn has_opaque_entity(&self) -> bool {
+        match self {
+            Self::CreateTable { table } | Self::DropTable { table } => {
+                table.indexes.iter().any(Index::is_opaque)
+                    || table.constraints.iter().any(Constraint::is_opaque)
+                    || table.triggers.iter().any(TriggerDef::is_opaque)
+            }
+            Self::AddIndex { index, .. } | Self::DropIndex { index, .. } => index.is_opaque(),
+            Self::AddConstraint { constraint, .. } | Self::DropConstraint { constraint, .. } => {
+                constraint.is_opaque()
+            }
+            Self::CreateFunction { function } | Self::DropFunction { function } => {
+                function.is_opaque()
+            }
+            Self::AlterFunction { old, new } => old.is_opaque() || new.is_opaque(),
+            Self::CreateTrigger { trigger, .. } | Self::DropTrigger { trigger, .. } => {
+                trigger.is_opaque()
+            }
+            Self::AlterTrigger { old, new, .. } => old.is_opaque() || new.is_opaque(),
+            Self::CreateView { view } | Self::DropView { view } => view.is_opaque(),
+            Self::ReplaceView { old, new } => old.is_opaque() || new.is_opaque(),
+            Self::CreateExtension { extension } | Self::DropExtension { extension } => {
+                extension.is_opaque()
+            }
+            Self::CreateEnum { enum_def } | Self::DropEnum { enum_def } => enum_def.is_opaque(),
+            Self::AlterEnum { old, new } => old.is_opaque() || new.is_opaque(),
+            _ => false,
+        }
+    }
+
     pub fn inverse(&self) -> Option<Operation> {
         match self {
             Self::CreateTable { .. }

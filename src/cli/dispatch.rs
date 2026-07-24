@@ -1,16 +1,20 @@
 //! Native CLI resolution, clarification, and presentation over the core runner.
 
 use crate::cli::args::{
-    ApplyCmd, Command as ArgsCommand, InspectCmd, MakeCmd, RepairCmd, ShowCmd, SqlCmd, apply_to,
-    load_env_file,
+    AdoptCmd, ApplyCmd, Command as ArgsCommand, InspectCmd, MakeCmd, RepairCmd, ShowCmd, SqlCmd,
+    apply_to, load_env_file,
 };
 use crate::cli::diagnostic::CommandError;
 use crate::conf::Config;
 use crate::prompter::CliPromptEngine;
 use crate::runner_factory::NativeRunnerFactory;
-use crate::schema_file::{SchemaCheckPathEntry, collect_schema_check_entries, load_schema_path};
+use crate::schema_file::{
+    SchemaCheckPathEntry, collect_schema_check_entries, load_schema_path, write_adopted_schema,
+};
 use gaman_core::Dialect;
 use gaman_core::clarifier::PromptEngine;
+use gaman_core::runner::EntityFilter;
+use gaman_core::schema::{Operation, Schema};
 use gaman_core::{
     ApplyCommand, Command, CommandError as RunnerError, CommandResult, MakeCommand, MakeResult,
     MigrationRunner, RepairOptions, SchemaCheckFailure, SchemaCheckInput, SchemaCheckStatus,
@@ -24,14 +28,20 @@ pub async fn handle_cmd(args: GamanArgs) -> Result<(), CommandError> {
     let mut config = Config::from_env_with_database_url(args.database_url.clone())
         .map_err(CommandError::from_config_error)?;
     let parsed = apply_to(args, &mut config)?;
-    validate_config(&config, &parsed)?;
-    if let ArgsCommand::Config(command) = parsed {
-        return print_config(&config, command.show_database_url);
+    match parsed {
+        ArgsCommand::Config(command) => print_config(&config, command.show_database_url),
+        ArgsCommand::Adopt(command) => {
+            config.validate().map_err(CommandError::from_config_error)?;
+            handle_adopt(config, command).await
+        }
+        command => {
+            validate_config(&config, &command)?;
+            let (command, interactive, inspect_output) = resolve_command(&config, command)?;
+            let mut runner = NativeRunnerFactory::from_directory(config).build();
+            let result = run_with_clarifications(&mut runner, command, interactive).await?;
+            present_result(result, inspect_output)
+        }
     }
-    let (command, interactive, inspect_output) = resolve_command(&config, parsed)?;
-    let mut runner = NativeRunnerFactory::from_directory(config).build();
-    let result = run_with_clarifications(&mut runner, command, interactive).await?;
-    present_result(result, inspect_output)
 }
 
 /// Applies command-specific configuration validation before filesystem or live work begins.
@@ -56,7 +66,7 @@ fn resolve_command(
 ) -> Result<(Command, bool, Option<String>), CommandError> {
     match command {
         ArgsCommand::Make(command) => resolve_make(config, command),
-        ArgsCommand::Apply(command) => Ok((resolve_apply(command)?, false, None)),
+        ArgsCommand::Apply(command) => Ok((resolve_apply(config, command)?, false, None)),
         ArgsCommand::Status(command) => Ok((
             Command::Status {
                 reverse: command.reverse,
@@ -70,7 +80,7 @@ fn resolve_command(
         ArgsCommand::CheckSchema(_) => Ok((resolve_check_schema(config)?, false, None)),
         ArgsCommand::Inspect(command) => {
             let output = command.output.clone();
-            Ok((resolve_inspect(config, command), false, output))
+            Ok((resolve_inspect(config, command)?, false, output))
         }
         ArgsCommand::Verify(command) => Ok((
             Command::Verify {
@@ -80,7 +90,7 @@ fn resolve_command(
             None,
         )),
         ArgsCommand::Repair(command) => Ok((resolve_repair(config, command), false, None)),
-        ArgsCommand::Config(_) => Err(CommandError::diagnostic(
+        ArgsCommand::Config(_) | ArgsCommand::Adopt(_) => Err(CommandError::diagnostic(
             "config does not require a migration runner",
         )),
     }
@@ -128,7 +138,7 @@ fn resolve_make(
 }
 
 /// Resolves one migration-application mode without opening a database connection.
-fn resolve_apply(command: ApplyCmd) -> Result<Command, CommandError> {
+fn resolve_apply(config: &Config, command: ApplyCmd) -> Result<Command, CommandError> {
     let apply = if command.plan {
         ApplyCommand::Plan
     } else if command.check {
@@ -137,6 +147,8 @@ fn resolve_apply(command: ApplyCmd) -> Result<Command, CommandError> {
         ApplyCommand::Execute {
             target: command.target,
             fake: command.fake,
+            fake_verified: command.fake_verified,
+            schemas: selected_schemas(config.dialect, command.schema),
         }
     };
     Ok(Command::Apply(apply))
@@ -176,11 +188,219 @@ fn resolve_check_schema(config: &Config) -> Result<Command, CommandError> {
 }
 
 /// Resolves live inspection while retaining the requested output path for presentation.
-fn resolve_inspect(config: &Config, command: InspectCmd) -> Command {
-    Command::Inspect {
+fn resolve_inspect(config: &Config, command: InspectCmd) -> Result<Command, CommandError> {
+    let filters = command
+        .filter
+        .iter()
+        .map(|filter| EntityFilter::parse(filter).map_err(CommandError::from_runner))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Command::Inspect {
         schemas: selected_schemas(config.dialect, command.schema),
-        table: command.table,
+        filters,
+        table: None,
+    })
+}
+
+/// Adopts selected modeled live entities through the normal desired-schema and make lifecycle.
+async fn handle_adopt(config: Config, command: AdoptCmd) -> Result<(), CommandError> {
+    let authored = load_schema_path(&config.schema_file, config.dialect)
+        .map_err(CommandError::from_schema_load)?;
+    let filters = command
+        .filter
+        .iter()
+        .map(|filter| EntityFilter::parse(filter).map_err(CommandError::from_runner))
+        .collect::<Result<Vec<_>, _>>()?;
+    let schemas = selected_schemas(config.dialect, command.schema.clone());
+    let mut runner = NativeRunnerFactory::from_directory(config.clone()).build();
+    ensure_adoption_preflight(&mut runner, authored.clone(), command.non_interactive).await?;
+    let fragment = inspect_for_adoption(&mut runner, schemas.clone(), filters).await?;
+    ensure_adoption_dependencies(&fragment, &authored)?;
+    let desired = authored
+        .clone()
+        .merge(fragment.clone())
+        .map_err(CommandError::from_schema_load)?;
+    let preview = preview_adoption(&mut runner, desired.clone(), &command).await?;
+    ensure_additive_adoption(&preview)?;
+    let filename = command
+        .output
+        .clone()
+        .unwrap_or_else(|| format!("{}_{}.yaml", preview.id, command.name));
+    let written = write_adopted_schema(&config.schema_file, &fragment, &desired, Some(&filename))
+        .map_err(CommandError::from_schema_load)?;
+    let created = persist_adoption(&mut runner, desired, &command)
+        .await
+        .map_err(|error| error.detail("schema source was updated; no migration was created"))?;
+    println!("Adopted schema: {}", written.display());
+    present_result(
+        CommandResult::Make(MakeResult::Created(created.clone())),
+        None,
+    )?;
+    if command.apply {
+        let result = run_with_clarifications(
+            &mut runner,
+            Command::Apply(ApplyCommand::Execute {
+                target: Some(created.id),
+                fake: false,
+                fake_verified: true,
+                schemas,
+            }),
+            false,
+        )
+        .await?;
+        present_result(result, None)?;
     }
+    Ok(())
+}
+
+/// Requires current authored schema to match migration replay before adoption changes it.
+async fn ensure_adoption_preflight<M, T, E>(
+    runner: &mut MigrationRunner<M, T, E>,
+    schema: Schema,
+    interactive: bool,
+) -> Result<(), CommandError>
+where
+    M: gaman_core::MigrationStore,
+    T: gaman_core::TrackingStore,
+    E: gaman_core::Executor + gaman_core::SchemaInspector,
+{
+    run_with_clarifications(
+        runner,
+        Command::Make(MakeCommand::Check {
+            schema,
+            decisions: Vec::new(),
+        }),
+        interactive,
+    )
+    .await
+    .map(|_| ())
+    .map_err(|error| error.hint("run 'gaman make' for existing schema changes before adopting"))
+}
+
+/// Runs a safe authored inspection for the requested adoption roots.
+async fn inspect_for_adoption<M, T, E>(
+    runner: &mut MigrationRunner<M, T, E>,
+    schemas: Vec<String>,
+    filters: Vec<EntityFilter>,
+) -> Result<Schema, CommandError>
+where
+    M: gaman_core::MigrationStore,
+    T: gaman_core::TrackingStore,
+    E: gaman_core::Executor + gaman_core::SchemaInspector,
+{
+    match runner
+        .run_command(&Command::Inspect {
+            schemas,
+            filters,
+            table: None,
+        })
+        .await
+        .map_err(CommandError::from_runner)?
+    {
+        CommandResult::Inspect(schema) => Ok(schema),
+        _ => Err(CommandError::diagnostic(
+            "inspect returned an unexpected result",
+        )),
+    }
+}
+
+/// Plans adoption before filesystem mutation and returns the exact candidate migration.
+async fn preview_adoption<M, T, E>(
+    runner: &mut MigrationRunner<M, T, E>,
+    schema: Schema,
+    command: &AdoptCmd,
+) -> Result<gaman_core::Migration, CommandError>
+where
+    M: gaman_core::MigrationStore,
+    T: gaman_core::TrackingStore,
+    E: gaman_core::Executor + gaman_core::SchemaInspector,
+{
+    match run_with_clarifications(
+        runner,
+        Command::Make(MakeCommand::Generate {
+            schema,
+            name: Some(command.name.clone()),
+            dry_run: true,
+            decisions: Vec::new(),
+        }),
+        !command.non_interactive,
+    )
+    .await?
+    {
+        CommandResult::Make(MakeResult::Preview(migration)) => Ok(migration),
+        CommandResult::Make(MakeResult::NoChanges) => Err(CommandError::diagnostic(
+            "adopt selected no entities that require a migration",
+        )),
+        _ => Err(CommandError::diagnostic(
+            "adopt planning returned an unexpected result",
+        )),
+    }
+}
+
+/// Saves the already-previewed adoption lifecycle through ordinary make behavior.
+async fn persist_adoption<M, T, E>(
+    runner: &mut MigrationRunner<M, T, E>,
+    schema: Schema,
+    command: &AdoptCmd,
+) -> Result<gaman_core::Migration, CommandError>
+where
+    M: gaman_core::MigrationStore,
+    T: gaman_core::TrackingStore,
+    E: gaman_core::Executor + gaman_core::SchemaInspector,
+{
+    match run_with_clarifications(
+        runner,
+        Command::Make(MakeCommand::Generate {
+            schema,
+            name: Some(command.name.clone()),
+            dry_run: false,
+            decisions: Vec::new(),
+        }),
+        !command.non_interactive,
+    )
+    .await?
+    {
+        CommandResult::Make(MakeResult::Created(migration)) => Ok(migration),
+        _ => Err(CommandError::diagnostic("adopt did not create a migration")),
+    }
+}
+
+/// Prevents adoption from creating destructive or unrelated migration operations.
+fn ensure_additive_adoption(migration: &gaman_core::Migration) -> Result<(), CommandError> {
+    if migration.operations.iter().all(Operation::is_create) {
+        Ok(())
+    } else {
+        Err(CommandError::diagnostic(
+            "adopt must produce only additive operations for selected entities",
+        ))
+    }
+}
+
+/// Requires every selected foreign-key target to be selected or already authored.
+fn ensure_adoption_dependencies(selected: &Schema, authored: &Schema) -> Result<(), CommandError> {
+    for table in selected.tables.values() {
+        for foreign_key in &table.foreign_keys {
+            if table_exists(selected, &foreign_key.to_table)
+                || table_exists(authored, &foreign_key.to_table)
+            {
+                continue;
+            }
+            return Err(CommandError::diagnostic(format!(
+                "adopted table '{}' references '{}' which is neither selected nor migration-owned",
+                table.qualified_name(),
+                foreign_key.to_table
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Matches a foreign-key target against schema keys and canonical qualified table names.
+fn table_exists(schema: &Schema, target: &str) -> bool {
+    schema.tables.contains_key(target)
+        || schema
+            .tables
+            .values()
+            .any(|table| table.qualified_name() == target || table.name == target)
 }
 
 /// Resolves one repair request and its selected namespaces.

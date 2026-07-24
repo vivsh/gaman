@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize, Serializer};
 
 use super::diagnostics::CommandError;
+use super::selector::EntityFilter;
 use crate::clarifier::Decision;
 use crate::drift::{DriftFinding, VerificationReport};
 use crate::migration_engine::{MigrationArtifact, MigrationMovement};
@@ -32,6 +33,11 @@ pub enum Command {
     /// Reflect selected database namespaces.
     Inspect {
         schemas: Vec<String>,
+        /// Root entities selected from catalog inspection.
+        #[serde(default)]
+        filters: Vec<EntityFilter>,
+        /// Legacy single-table selector retained for protocol-v2 consumers.
+        #[serde(default)]
         table: Option<String>,
     },
     /// Compare replayed migration ownership against live inspection.
@@ -111,7 +117,16 @@ pub enum MakeCommand {
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum ApplyCommand {
     /// Execute pending migrations, optionally converging on a target.
-    Execute { target: Option<String>, fake: bool },
+    Execute {
+        target: Option<String>,
+        fake: bool,
+        /// Verifies candidate owned state against the live database before faking.
+        #[serde(default)]
+        fake_verified: bool,
+        /// Namespaces used only by verified fake application.
+        #[serde(default)]
+        schemas: Vec<String>,
+    },
     /// Return pending migration identifiers without mutation.
     Plan,
     /// Fail when pending migrations exist without mutating state.

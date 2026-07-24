@@ -170,6 +170,20 @@ Repair is local recovery from verified drift. It plans or applies safe repairs
 without creating migration files or changing migration history. This keeps
 environment-specific drift out of the shared migration graph.
 
+## Adoption
+
+Inspection is read-only and exports only schema that can be represented as
+normal authored YAML. It never writes opaque catalog source or unmanaged table
+syntax into a project's desired state.
+
+Adoption is a deliberate composition of inspection, authored-schema update,
+ordinary offline planning, and optional verified fake application. It allows a
+team to declare selected existing entities before recording the matching
+migration history, without treating the live database as an alternative source
+of migration truth. A verified fake application records no migration until the
+replayed expected state matches the inspected database through the dialect
+drift contract. Blind fake application remains an explicit override.
+
 ## Evidence and Limits
 
 Gaman's public guarantees are layered:

@@ -207,6 +207,8 @@ impl MigrationRunner {
                 ApplyCommand::Execute {
                     target: command.target,
                     fake: command.fake,
+                    fake_verified: command.fake_verified,
+                    schemas: command.schema,
                 }
             })),
             ArgsCommand::Status(command) => Ok(Command::Status {

@@ -4,6 +4,7 @@ mod adapters;
 mod diagnostics;
 mod dispatch;
 mod protocol;
+mod selector;
 
 pub use adapters::{InspectionError, SchemaInspector};
 pub use diagnostics::{CommandDiagnostic, CommandError, CommandFailure, DiagnosticCode};
@@ -14,3 +15,4 @@ pub use protocol::{
     RepairReport, SchemaCheckFailure, SchemaCheckInput, SchemaCheckResult, SchemaCheckStatus,
     SqlInput,
 };
+pub use selector::EntityFilter;

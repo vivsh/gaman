@@ -48,6 +48,7 @@ pub enum Command {
     CheckSchema(CheckSchemaCmd),
     Config(ShowConfigCmd),
     Inspect(InspectCmd),
+    Adopt(AdoptCmd),
     Verify(VerifyCmd),
     Repair(RepairCmd),
 }
@@ -139,6 +140,12 @@ pub struct ApplyCmd {
     /// update migration tracking without running migration SQL
     #[argh(switch)]
     pub fake: bool,
+    /// verify the next pending migration against live state before recording it without SQL
+    #[argh(switch)]
+    pub fake_verified: bool,
+    /// schema to inspect for --fake-verified; may be repeated
+    #[argh(option)]
+    pub schema: Vec<String>,
     /// show the list of migrations that would be applied
     #[argh(switch)]
     pub plan: bool,
@@ -163,12 +170,36 @@ pub struct InspectCmd {
     /// namespaces to inspect; may repeat (default: dialect namespace)
     #[argh(option)]
     pub schema: Vec<String>,
-    /// restrict output to a single table
-    #[argh(option)]
-    pub table: Option<String>,
+    /// select `[kind:]glob`; defaults to table and may be repeated
+    #[argh(option, short = 'f')]
+    pub filter: Vec<String>,
     /// write output to a file instead of stdout
     #[argh(option)]
     pub output: Option<String>,
+}
+
+/// Add selected live entities to authored YAML, then create an adoption migration.
+#[derive(FromArgs, ArgsInfo, Debug, Clone)]
+#[argh(subcommand, name = "adopt")]
+pub struct AdoptCmd {
+    /// descriptive name for the generated adoption migration
+    #[argh(positional)]
+    pub name: String,
+    /// select `[kind:]glob`; defaults to table and may be repeated
+    #[argh(option, short = 'f')]
+    pub filter: Vec<String>,
+    /// filename for a schema-directory fragment
+    #[argh(option, short = 'o')]
+    pub output: Option<String>,
+    /// verify and fake-apply the new migration after it is created
+    #[argh(switch)]
+    pub apply: bool,
+    /// namespaces to inspect; may be repeated (default: dialect namespace)
+    #[argh(option)]
+    pub schema: Vec<String>,
+    /// fail instead of prompting when clarifications are required
+    #[argh(switch)]
+    pub non_interactive: bool,
 }
 
 /// Plan or apply one-off SQL that repairs verified database drift without writing migrations.
@@ -331,6 +362,7 @@ impl Command {
     /// Reports whether a command needs writable migration storage.
     pub fn requires_writable_migrations(&self) -> bool {
         matches!(self, Self::Make(command) if !command.check && !command.dry_run)
+            || matches!(self, Self::Adopt(_))
     }
 
     /// Reports whether a command only validates SQL schema inputs.
@@ -401,15 +433,23 @@ fn validate_make(command: &MakeCmd) -> Result<(), ArgumentDiagnostic> {
 }
 
 fn validate_apply(command: &ApplyCmd) -> Result<(), ArgumentDiagnostic> {
-    let modes = usize::from(command.fake) + usize::from(command.plan) + usize::from(command.check);
+    let modes = usize::from(command.fake)
+        + usize::from(command.fake_verified)
+        + usize::from(command.plan)
+        + usize::from(command.check);
     if modes > 1 {
         return Err(ArgumentDiagnostic::error(
-            "--fake, --plan, and --check are mutually exclusive",
+            "--fake, --fake-verified, --plan, and --check are mutually exclusive",
         ));
     }
     if (command.plan || command.check) && command.target.is_some() {
         return Err(ArgumentDiagnostic::error(
             "a target id is supported only when applying migrations",
+        ));
+    }
+    if command.fake_verified && command.target.is_none() {
+        return Err(ArgumentDiagnostic::error(
+            "--fake-verified requires the next pending migration id",
         ));
     }
     Ok(())
@@ -463,5 +503,35 @@ mod tests {
         let error = CommandArgs::parse(&["gaman"], &["unknown"]).unwrap_err();
         assert!(!error.success);
         assert!(error.output.contains("Unrecognized argument"));
+    }
+
+    /// Verifies verified fake application requires an explicit next migration id.
+    #[test]
+    fn verified_fake_requires_target() {
+        let parsed = CommandArgs::parse(&["gaman"], &["apply", "--fake-verified"])
+            .expect("parse verified fake arguments");
+        let error = parsed
+            .command
+            .validate()
+            .expect_err("target must be required");
+        assert!(
+            error
+                .output
+                .contains("requires the next pending migration id")
+        );
+    }
+
+    /// Verifies inspect accepts repeatable typed selectors from the shared grammar.
+    #[test]
+    fn inspect_accepts_repeated_filters() {
+        let parsed = CommandArgs::parse(
+            &["gaman"],
+            &["inspect", "-f", "users*", "-f", "function:public.audit_*"],
+        )
+        .expect("parse inspection filters");
+        let Command::Inspect(command) = parsed.command else {
+            panic!("expected inspect command");
+        };
+        assert_eq!(command.filter, ["users*", "function:public.audit_*"]);
     }
 }

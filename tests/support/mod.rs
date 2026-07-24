@@ -1486,6 +1486,8 @@ pub async fn apply_runner(
         .run_command(&RunnerCommand::Apply(ApplyCommand::Execute {
             target: target.map(str::to_string),
             fake: false,
+            fake_verified: false,
+            schemas: Vec::new(),
         }))
         .await
         .map_err(|error| TestSupportError::message(error.to_string()))?
@@ -1603,6 +1605,7 @@ pub async fn inspect_runner(
     match runner
         .run_command(&RunnerCommand::Inspect {
             schemas,
+            filters: Vec::new(),
             table: None,
         })
         .await

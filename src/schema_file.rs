@@ -9,7 +9,11 @@ use gaman_core::SqlInput;
 use gaman_core::dialects::Dialect;
 use gaman_core::states::{Schema, SchemaLoadError};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static ADOPTION_TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 
 /// One native schema input selected for `check_schema` output.
 #[cfg(feature = "db")]
@@ -36,6 +40,133 @@ pub fn load_schema_path(
     } else {
         load_schema_file(path, dialect)
     }
+}
+
+/// Writes inspected authored schema into a YAML source without editing SQL input.
+pub(crate) fn write_adopted_schema(
+    source: &Path,
+    fragment: &Schema,
+    merged: &Schema,
+    output: Option<&str>,
+) -> Result<PathBuf, SchemaLoadError> {
+    if source.is_dir() {
+        let filename =
+            output.ok_or_else(|| invalid_schema_path("adoption output filename is required"))?;
+        let path = source.join(normalize_yaml_filename(filename)?);
+        if path.exists() {
+            return Err(invalid_schema_path(&format!(
+                "refusing to overwrite existing schema fragment {}",
+                path.display()
+            )));
+        }
+        return write_yaml_no_overwrite(&path, fragment).map(|_| path);
+    }
+    match source.extension().and_then(|extension| extension.to_str()) {
+        Some("yaml" | "yml") => write_yaml_atomically(source, merged).map(|_| source.to_path_buf()),
+        Some("sql") => Err(invalid_schema_path(
+            "adopt cannot edit a single SQL schema file; use a YAML schema file or directory",
+        )),
+        _ => Err(invalid_schema_path(
+            "adopt requires a YAML schema file or schema directory",
+        )),
+    }
+}
+
+/// Writes canonical YAML through a private sibling file before publishing it atomically.
+fn write_yaml_atomically(path: &Path, schema: &Schema) -> Result<(), SchemaLoadError> {
+    let temporary = write_yaml_temporary(path, schema)?;
+    fs::rename(&temporary, path)
+        .map_err(|error| SchemaLoadError::Io(path.display().to_string(), error))?;
+    sync_schema_directory(path)
+}
+
+/// Publishes a new directory fragment without replacing a concurrent writer's file.
+fn write_yaml_no_overwrite(path: &Path, schema: &Schema) -> Result<(), SchemaLoadError> {
+    let temporary = write_yaml_temporary(path, schema)?;
+    let result = fs::hard_link(&temporary, path)
+        .map_err(|error| SchemaLoadError::Io(path.display().to_string(), error));
+    let _ = fs::remove_file(&temporary);
+    result?;
+    sync_schema_directory(path)
+}
+
+/// Writes and syncs a private sibling file before an atomic publication step.
+fn write_yaml_temporary(path: &Path, schema: &Schema) -> Result<PathBuf, SchemaLoadError> {
+    let yaml = serde_yaml::to_string(schema)
+        .map_err(|error| invalid_schema_path(&format!("cannot encode authored YAML: {error}")))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| invalid_schema_path("schema path has no parent"))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| SchemaLoadError::Io(parent.display().to_string(), error))?;
+    let temporary = unique_temporary_path(parent, path)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| SchemaLoadError::Io(temporary.display().to_string(), error))?;
+    let result = file
+        .write_all(yaml.as_bytes())
+        .and_then(|_| file.sync_all())
+        .map_err(|error| SchemaLoadError::Io(temporary.display().to_string(), error));
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result?;
+    Ok(temporary)
+}
+
+/// Synchronizes the containing directory after publishing schema content.
+fn sync_schema_directory(path: &Path) -> Result<(), SchemaLoadError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| invalid_schema_path("schema path has no parent"))?;
+    fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| SchemaLoadError::Io(parent.display().to_string(), error))
+}
+
+/// Allocates a private temporary filename without relying on a PID-only name.
+fn unique_temporary_path(parent: &Path, destination: &Path) -> Result<PathBuf, SchemaLoadError> {
+    let name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| invalid_schema_path("schema filename is not valid UTF-8"))?;
+    for _ in 0..32 {
+        let id = ADOPTION_TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(".{name}.gaman-{}-{id}.tmp", std::process::id()));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err(invalid_schema_path(
+        "could not allocate an adoption temporary file",
+    ))
+}
+
+/// Normalizes a directory fragment filename while keeping writes inside the schema directory.
+fn normalize_yaml_filename(name: &str) -> Result<String, SchemaLoadError> {
+    let path = Path::new(name);
+    if path.components().count() != 1 || name.is_empty() {
+        return Err(invalid_schema_path(
+            "adoption output must be a plain filename",
+        ));
+    }
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("yaml" | "yml") => Ok(name.to_string()),
+        None => Ok(format!("{name}.yaml")),
+        _ => Err(invalid_schema_path(
+            "adoption output must use .yaml or .yml",
+        )),
+    }
+}
+
+/// Wraps a native adoption-path validation error in the shared schema load type.
+fn invalid_schema_path(message: &str) -> SchemaLoadError {
+    SchemaLoadError::Io(
+        "schema".to_string(),
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, message),
+    )
 }
 
 /// Load one schema file and delegate parsing to `gaman-core` string APIs.
@@ -287,6 +418,50 @@ mod tests {
             err.to_string().contains("things"),
             "expected error mentioning 'things', got: {err}"
         );
+    }
+
+    /// Verifies adoption creates a new schema fragment without overwriting an existing file.
+    #[test]
+    fn adoption_directory_write_refuses_overwrite() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let schema = Schema::from_yaml_str(
+            "tables:\n  users:\n    columns:\n    - name: id\n      type: integer\n",
+            Dialect::Postgres,
+        )
+        .expect("schema");
+        let path = write_adopted_schema(dir.path(), &schema, &schema, Some("users"))
+            .expect("write fragment");
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("users.yaml")
+        );
+        let error = write_adopted_schema(dir.path(), &schema, &schema, Some("users"))
+            .expect_err("second write must not overwrite");
+        assert!(error.to_string().contains("refusing to overwrite"));
+    }
+
+    /// Verifies adoption rewrites a single YAML source but never edits SQL source automatically.
+    #[test]
+    fn adoption_yaml_write_and_sql_rejection() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let yaml = dir.path().join("schema.yaml");
+        let sql = dir.path().join("schema.sql");
+        fs::write(&yaml, "tables: {}\n").expect("write yaml");
+        fs::write(&sql, "CREATE TABLE users (id integer);\n").expect("write sql");
+        let schema = Schema::from_yaml_str(
+            "tables:\n  users:\n    columns:\n    - name: id\n      type: integer\n",
+            Dialect::Postgres,
+        )
+        .expect("schema");
+        write_adopted_schema(&yaml, &schema, &schema, None).expect("rewrite yaml");
+        assert!(
+            fs::read_to_string(&yaml)
+                .expect("read yaml")
+                .contains("users")
+        );
+        let error = write_adopted_schema(&sql, &schema, &schema, None)
+            .expect_err("sql source must not be edited");
+        assert!(error.to_string().contains("single SQL schema file"));
     }
 
     /// Verifies schema checking reads SQL while retaining YAML and JSON as ignored inputs.

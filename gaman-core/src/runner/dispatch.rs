@@ -5,6 +5,7 @@ use super::protocol::{
     RepairReport, SchemaCheckFailure, SchemaCheckInput, SchemaCheckResult, SchemaCheckStatus,
     SqlInput,
 };
+use super::selector::{EntityFilter, select_authored_schema, select_schema_for_drift};
 use crate::drift::{self, VerificationReport};
 use crate::migration_engine::{
     EngineError, Executor, MigrationCatalog, MigrationEngine, MigrationStore, TrackingStore,
@@ -34,9 +35,11 @@ where
     pub async fn run_command(&mut self, command: &Command) -> Result<CommandResult, CommandError> {
         match command {
             Command::CheckSchema { inputs } => self.run_check_schema(inputs).await,
-            Command::Inspect { schemas, table } => {
-                self.run_inspect(schemas, table.as_deref()).await
-            }
+            Command::Inspect {
+                schemas,
+                filters,
+                table,
+            } => self.run_inspect(schemas, filters, table.as_deref()).await,
             _ => self.run_catalog_command(command).await,
         }
     }
@@ -53,6 +56,18 @@ where
             .await
             .map_err(EngineError::from)?;
         let catalog = MigrationCatalog::new(migrations)?;
+        if let Command::Apply(ApplyCommand::Execute {
+            target,
+            fake_verified: true,
+            schemas,
+            ..
+        }) = command
+        {
+            let engine = self.engine.for_catalog(&catalog);
+            return MigrationRunner { engine }
+                .run_verified_fake(&catalog, target.as_deref(), schemas)
+                .await;
+        }
         let engine = self.engine.for_catalog(&catalog);
         MigrationRunner { engine }
             .dispatch_catalog_command(command)
@@ -129,7 +144,13 @@ where
 
     async fn run_apply(&mut self, command: &ApplyCommand) -> Result<CommandResult, CommandError> {
         match command {
-            ApplyCommand::Execute { target, fake } => Ok(CommandResult::Movement(
+            ApplyCommand::Execute {
+                fake_verified: true,
+                ..
+            } => Err(CommandError::Invalid(
+                "verified fake apply requires a command catalog".to_string(),
+            )),
+            ApplyCommand::Execute { target, fake, .. } => Ok(CommandResult::Movement(
                 self.engine.apply(target.as_deref(), *fake).await?,
             )),
             ApplyCommand::Plan => Ok(CommandResult::Pending(self.engine.plan().await?)),
@@ -266,13 +287,19 @@ where
     async fn run_inspect(
         &mut self,
         schemas: &[String],
+        filters: &[EntityFilter],
         table: Option<&str>,
     ) -> Result<CommandResult, CommandError> {
         let schema = self.inspect(schemas).await?;
-        Ok(CommandResult::Inspect(match table {
-            Some(table) => select_table(schema, table)?,
-            None => schema,
-        }))
+        let mut filters = filters.to_vec();
+        if let Some(table) = table {
+            filters.push(EntityFilter::parse(table)?);
+        }
+        Ok(CommandResult::Inspect(select_authored_schema(
+            schema,
+            &filters,
+            self.engine.dialect(),
+        )?))
     }
 
     async fn inspect(&mut self, schemas: &[String]) -> Result<Schema, CommandError> {
@@ -330,35 +357,138 @@ where
             skipped_findings: plan.skipped_findings,
         })
     }
+
+    /// Verifies the next migration's resulting replay state before recording it without DDL.
+    async fn run_verified_fake(
+        &mut self,
+        catalog: &MigrationCatalog,
+        target: Option<&str>,
+        schemas: &[String],
+    ) -> Result<CommandResult, CommandError> {
+        let target = target.ok_or_else(|| {
+            CommandError::Invalid("--fake-verified requires a target migration id".to_string())
+        })?;
+        let target = catalog.resolve_id(target)?;
+        let pending = self.engine.plan().await?;
+        if pending.first().map(String::as_str) != Some(target.as_str()) {
+            return Err(CommandError::Invalid(
+                "verified fake apply requires the target to be the next pending migration"
+                    .to_string(),
+            ));
+        }
+        let migration = catalog
+            .migrations()
+            .iter()
+            .find(|migration| migration.id == target)
+            .ok_or_else(|| CommandError::Invalid(format!("unknown migration '{target}'")))?;
+        if migration
+            .operations
+            .iter()
+            .any(crate::operations::Operation::has_opaque_entity)
+        {
+            return Err(CommandError::Invalid(
+                "verified fake apply cannot prove opaque entity definitions".to_string(),
+            ));
+        }
+        let filters = migration_filters(migration)?;
+        let replay = select_schema_for_drift(self.engine.replay_schema().await?, &filters)?;
+        let live = self
+            .engine
+            .dialect()
+            .normalize_inspected_schema(self.inspect(schemas).await?)
+            .map_err(|error| CommandError::Invalid(error.to_string()))?;
+        let live = select_schema_for_drift(live, &filters)?;
+        let names = schemas.iter().map(String::as_str).collect::<Vec<_>>();
+        let report = drift::diff_schemas(replay, live, &names, self.engine.dialect());
+        if !report.findings.is_empty() {
+            let details = drift::format_report(&report).join("; ");
+            return Err(CommandError::Invalid(format!(
+                "verified fake apply refused because {} drift finding(s) remain: {details}",
+                report.findings.len(),
+            )));
+        }
+        Ok(CommandResult::Movement(
+            self.engine.apply(Some(&target), true).await?,
+        ))
+    }
 }
 
-fn select_table(mut schema: Schema, input: &str) -> Result<Schema, CommandError> {
-    let selected = if schema.tables.contains_key(input) {
-        input.to_string()
-    } else {
-        let matches = schema
-            .tables
-            .iter()
-            .filter(|(_, table)| table.name == input)
-            .map(|(name, _)| name.clone())
-            .collect::<Vec<_>>();
-        match matches.as_slice() {
-            [] => {
-                return Err(CommandError::Invalid(format!(
-                    "unknown inspected table '{input}'"
-                )));
-            }
-            [name] => name.clone(),
-            _ => {
-                return Err(CommandError::Invalid(format!(
-                    "inspected table name '{input}' is ambiguous: {}",
-                    matches.join(", ")
-                )));
+/// Maps candidate migration operations to the roots verified by fake application.
+fn migration_filters(
+    migration: &crate::migrations::Migration,
+) -> Result<Vec<EntityFilter>, CommandError> {
+    let mut filters = Vec::new();
+    for operation in &migration.operations {
+        let filter = operation_filter(operation)?;
+        if !filters.contains(&filter) {
+            filters.push(filter);
+        }
+    }
+    if filters.is_empty() {
+        return Err(CommandError::Invalid(
+            "verified fake apply requires a migration with modeled owned entities".to_string(),
+        ));
+    }
+    Ok(filters)
+}
+
+/// Returns the root identity affected by one operation or rejects unobservable raw SQL.
+fn operation_filter(
+    operation: &crate::operations::Operation,
+) -> Result<EntityFilter, CommandError> {
+    use crate::operations::Operation;
+
+    if matches!(operation, Operation::AcknowledgeTableOptions { .. }) {
+        return Err(CommandError::Invalid(
+            "verified fake apply cannot verify unmanaged table options".to_string(),
+        ));
+    }
+    let filter = match operation {
+        Operation::CreateTable { table } | Operation::DropTable { table } => EntityFilter {
+            kind: crate::states::EntityKind::Table,
+            pattern: table.qualified_name(),
+        },
+        Operation::CreateFunction { function } | Operation::DropFunction { function } => {
+            EntityFilter {
+                kind: crate::states::EntityKind::Function,
+                pattern: function.qualified_name(),
             }
         }
+        Operation::CreateView { view } | Operation::DropView { view } => EntityFilter {
+            kind: crate::states::EntityKind::View,
+            pattern: view.qualified_name(),
+        },
+        Operation::CreateExtension { extension } | Operation::DropExtension { extension } => {
+            EntityFilter {
+                kind: crate::states::EntityKind::Extension,
+                pattern: extension.qualified_name(),
+            }
+        }
+        Operation::CreateEnum { enum_def } | Operation::DropEnum { enum_def } => EntityFilter {
+            kind: crate::states::EntityKind::Enum,
+            pattern: enum_def.qualified_name(),
+        },
+        _ => table_operation_filter(operation)?,
     };
-    schema.tables.retain(|name, _| name == &selected);
-    Ok(schema)
+    Ok(filter)
+}
+
+/// Maps table-owned operations to their containing table for semantic comparison.
+fn table_operation_filter(
+    operation: &crate::operations::Operation,
+) -> Result<EntityFilter, CommandError> {
+    operation
+        .table_name()
+        .map(|name| EntityFilter {
+            kind: crate::states::EntityKind::Table,
+            pattern: name.to_string(),
+        })
+        .ok_or_else(|| {
+            CommandError::Invalid(
+                "verified fake apply cannot verify raw statements or non-modeled changes"
+                    .to_string(),
+            )
+        })
 }
 
 #[cfg(test)]
@@ -484,6 +614,52 @@ mod tests {
         ) -> BoxFuture<'a, Result<Schema, InspectionError>> {
             Box::pin(async { Ok(Schema::default()) })
         }
+    }
+
+    struct MatchingExecutor;
+
+    impl Executor for MatchingExecutor {
+        fn execute<'a>(&'a mut self, _: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    impl SchemaInspector for MatchingExecutor {
+        fn inspect<'a>(
+            &'a mut self,
+            _: &'a [&'a str],
+        ) -> BoxFuture<'a, Result<Schema, InspectionError>> {
+            Box::pin(async { Ok(schema_with_users()) })
+        }
+    }
+
+    /// Returns the modeled live state used to prove verified fake application.
+    fn schema_with_users() -> Schema {
+        let mut schema = Schema::default();
+        schema.tables.insert(
+            "users".to_string(),
+            crate::states::Table {
+                name: "users".to_string(),
+                schema: None,
+                primary_key: None,
+                columns: Vec::new(),
+                foreign_keys: Vec::new(),
+                indexes: Vec::new(),
+                constraints: Vec::new(),
+                triggers: Vec::new(),
+                options: Default::default(),
+            },
+        );
+        schema
     }
 
     struct PrepareExecutor {
@@ -616,6 +792,43 @@ mod tests {
 
         block_on(runner.run_command(&command)).expect("schema check command");
         assert_eq!(loads.load(Ordering::SeqCst), 0);
+    }
+
+    /// Verifies matching live state permits a next-pending migration to be recorded without SQL.
+    #[test]
+    fn verified_fake_records_matching_next_migration() {
+        let migration = crate::migrations::Migration {
+            id: "0001_adopt_users".to_string(),
+            dependencies: Vec::new(),
+            operations: vec![crate::operations::Operation::CreateTable {
+                table: crate::states::Table {
+                    name: "users".to_string(),
+                    schema: None,
+                    primary_key: None,
+                    columns: Vec::new(),
+                    foreign_keys: Vec::new(),
+                    indexes: Vec::new(),
+                    constraints: Vec::new(),
+                    triggers: Vec::new(),
+                    options: Default::default(),
+                },
+            }],
+            atomic: true,
+        };
+        let mut runner = MigrationRunner::new(
+            Dialect::Postgres,
+            MemoryMigrations(Mutex::new(vec![migration])),
+            MemoryTracking::default(),
+            MatchingExecutor,
+        );
+        let result = block_on(runner.run_command(&Command::Apply(ApplyCommand::Execute {
+            target: Some("0001_adopt_users".to_string()),
+            fake: false,
+            fake_verified: true,
+            schemas: vec!["public".to_string()],
+        })))
+        .expect("verified fake application");
+        assert!(matches!(result, CommandResult::Movement(movement) if movement.applied == 1));
     }
 
     /// Verifies schema checking retains ignored inputs and continues after statement failures.

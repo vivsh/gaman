@@ -5,8 +5,8 @@ use crate::conf::Config;
 
 #[allow(unused_imports)]
 pub use gaman_core::command_args::{
-    ApplyCmd, CheckSchemaCmd, Command, CommandArgs as GamanArgs, InspectCmd, MakeCmd, RepairCmd,
-    ShowCmd, ShowConfigCmd, SqlCmd, StatusCmd, VerifyCmd,
+    AdoptCmd, ApplyCmd, CheckSchemaCmd, Command, CommandArgs as GamanArgs, InspectCmd, MakeCmd,
+    RepairCmd, ShowCmd, ShowConfigCmd, SqlCmd, StatusCmd, VerifyCmd,
 };
 
 /// Loads an explicitly requested environment file before native configuration resolution.
