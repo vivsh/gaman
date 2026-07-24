@@ -466,6 +466,7 @@ dependencies = [
  "sha2",
  "sqlparser",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

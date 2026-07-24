@@ -6,7 +6,9 @@ use super::protocol::{
     SqlInput,
 };
 use crate::drift::{self, VerificationReport};
-use crate::migration_engine::{Executor, MigrationEngine, MigrationStore, TrackingStore};
+use crate::migration_engine::{
+    EngineError, Executor, MigrationCatalog, MigrationEngine, MigrationStore, TrackingStore,
+};
 use crate::parsers::segment_sql;
 use crate::repair::plan_repair;
 use crate::states::Schema;
@@ -30,16 +32,38 @@ where
 
     /// Executes one resolved lifecycle command without host I/O or presentation.
     pub async fn run_command(&mut self, command: &Command) -> Result<CommandResult, CommandError> {
-        if !command.uses_migration_catalog() {
-            return self.dispatch_command(command).await;
+        match command {
+            Command::CheckSchema { inputs } => self.run_check_schema(inputs).await,
+            Command::Inspect { schemas, table } => {
+                self.run_inspect(schemas, table.as_deref()).await
+            }
+            _ => self.run_catalog_command(command).await,
         }
-        let catalog = self.engine.load_catalog().await?;
-        let engine = self.engine.for_catalog(&catalog);
-        MigrationRunner { engine }.dispatch_command(command).await
     }
 
-    /// Dispatches one borrowed command against the active migration snapshot.
-    async fn dispatch_command(&mut self, command: &Command) -> Result<CommandResult, CommandError> {
+    /// Loads one command-scoped catalog before executing a command that depends on migration history.
+    async fn run_catalog_command(
+        &mut self,
+        command: &Command,
+    ) -> Result<CommandResult, CommandError> {
+        let migrations = self
+            .engine
+            .migration_store()
+            .load_all()
+            .await
+            .map_err(EngineError::from)?;
+        let catalog = MigrationCatalog::new(migrations)?;
+        let engine = self.engine.for_catalog(&catalog);
+        MigrationRunner { engine }
+            .dispatch_catalog_command(command)
+            .await
+    }
+
+    /// Dispatches one command against an already-loaded immutable migration catalog.
+    async fn dispatch_catalog_command(
+        &mut self,
+        command: &Command,
+    ) -> Result<CommandResult, CommandError> {
         match command {
             Command::Make(command) => self.run_make(command).await,
             Command::Apply(command) => self.run_apply(command).await,
@@ -55,10 +79,9 @@ where
                     .await
             }
             Command::Sql { id, backwards } => self.run_sql(id.as_deref(), *backwards).await,
-            Command::CheckSchema { inputs } => self.run_check_schema(inputs).await,
-            Command::Inspect { schemas, table } => {
-                self.run_inspect(schemas, table.as_deref()).await
-            }
+            Command::CheckSchema { .. } | Command::Inspect { .. } => Err(CommandError::Invalid(
+                "command does not use a migration catalog".to_string(),
+            )),
             Command::Verify { schemas } => Ok(CommandResult::Verify(self.verify(schemas).await?)),
             Command::Repair { schemas, options } => {
                 Ok(CommandResult::Repair(self.repair(schemas, options).await?))

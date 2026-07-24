@@ -67,11 +67,6 @@ impl Command {
             )),
         }
     }
-
-    /// Returns whether this command requires one stable migration-history snapshot.
-    pub(super) fn uses_migration_catalog(&self) -> bool {
-        !matches!(self, Self::CheckSchema { .. } | Self::Inspect { .. })
-    }
 }
 
 /// Portable command vocabulary used by textual, WASM, and other hosts.

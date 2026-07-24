@@ -36,13 +36,17 @@ where
         }
     }
 
-    /// Loads one validated migration snapshot without retaining it in the engine.
-    pub async fn load_catalog(&self) -> Result<MigrationCatalog, EngineError> {
-        MigrationCatalog::new(self.migrations.load_all().await?)
+    /// Returns migration storage for command-scoped catalog loading.
+    ///
+    /// The returned projection deliberately excludes tracking and execution
+    /// adapters so callers can await storage reads without requiring them to be
+    /// thread-safe for shared access.
+    pub(crate) fn migration_store(&self) -> &M {
+        &self.migrations
     }
 
     /// Returns a fresh migration history snapshot from caller-owned storage.
-    async fn migration_snapshot(&self) -> Result<Vec<Migration>, EngineError> {
+    async fn migration_snapshot(&mut self) -> Result<Vec<Migration>, EngineError> {
         Ok(self.migrations.load_all().await?)
     }
 
@@ -74,7 +78,7 @@ where
 
     /// Generates and saves a migration for an authored schema.
     pub async fn make(
-        &self,
+        &mut self,
         schema: Schema,
         decisions: &[Decision],
     ) -> Result<Option<Migration>, EngineError> {
@@ -83,7 +87,7 @@ where
 
     /// Generates and saves a migration with an optional caller-selected descriptive suffix.
     pub async fn make_named(
-        &self,
+        &mut self,
         schema: Schema,
         name: Option<&str>,
         decisions: &[Decision],
@@ -99,7 +103,7 @@ where
 
     /// Generates a migration without persisting it to caller-owned storage.
     pub async fn make_dry_run(
-        &self,
+        &mut self,
         schema: Schema,
         decisions: &[Decision],
     ) -> Result<Option<Migration>, EngineError> {
@@ -108,7 +112,7 @@ where
 
     /// Generates a named migration without persisting it to caller-owned storage.
     pub async fn make_dry_run_named(
-        &self,
+        &mut self,
         schema: Schema,
         name: Option<&str>,
         decisions: &[Decision],
@@ -118,7 +122,7 @@ where
 
     /// Fails when prepared schema state differs from committed migration history.
     pub async fn make_check(
-        &self,
+        &mut self,
         schema: Schema,
         decisions: &[Decision],
     ) -> Result<(), EngineError> {
@@ -131,7 +135,7 @@ where
     }
 
     async fn plan_make(
-        &self,
+        &mut self,
         schema: Schema,
         name: Option<&str>,
         decisions: &[Decision],
@@ -149,7 +153,7 @@ where
     }
 
     /// Replays committed migrations into the dialect-prepared expected schema state.
-    pub async fn replay_schema(&self) -> Result<Schema, EngineError> {
+    pub async fn replay_schema(&mut self) -> Result<Schema, EngineError> {
         Ok(OfflinePlanner::new(self.dialect)
             .from_migrations(self.migration_snapshot().await?)
             .replay()?)
@@ -162,7 +166,7 @@ where
 
     /// Renders untracked repair operations against the current migration replay baseline.
     pub async fn render_operations(
-        &self,
+        &mut self,
         operations: &[Operation],
     ) -> Result<Vec<String>, EngineError> {
         let renderer = SqlPlanRenderer::new(self.dialect, self.migration_snapshot().await?)?;
@@ -201,7 +205,7 @@ where
     }
 
     /// Creates and saves an empty migration at the current graph head.
-    pub async fn make_empty(&self, name: &str) -> Result<Migration, EngineError> {
+    pub async fn make_empty(&mut self, name: &str) -> Result<Migration, EngineError> {
         let (graph, _) = self.graph().await?;
         let id = format!("{:04}_{}", graph.next_number(), name);
         MigrationGraph::validate_id(&id)?;
@@ -216,7 +220,7 @@ where
     }
 
     /// Creates and saves a merge migration for a graph with multiple heads.
-    pub async fn make_merge(&self, name: &str) -> Result<Migration, EngineError> {
+    pub async fn make_merge(&mut self, name: &str) -> Result<Migration, EngineError> {
         let (graph, _) = self.graph().await?;
         let id = format!("{:04}_{}", graph.next_number(), name);
         MigrationGraph::validate_id(&id)?;
@@ -226,7 +230,7 @@ where
     }
 
     /// Returns canonical migration YAML in graph order.
-    pub async fn show(&self) -> Result<Vec<MigrationArtifact>, EngineError> {
+    pub async fn show(&mut self) -> Result<Vec<MigrationArtifact>, EngineError> {
         let (graph, ordered) = self.graph().await?;
         ordered
             .iter()
@@ -246,7 +250,7 @@ where
     }
 
     /// Renders forward SQL for all migrations or one resolved ID.
-    pub async fn sql(&self, id: Option<&str>) -> Result<Vec<String>, EngineError> {
+    pub async fn sql(&mut self, id: Option<&str>) -> Result<Vec<String>, EngineError> {
         let migrations = self.migration_snapshot().await?;
         let (graph, ordered) = graph_from(&migrations)?;
         let selected = select_migrations(&graph, &ordered, id)?;
@@ -254,7 +258,7 @@ where
     }
 
     /// Renders rollback SQL for all migrations or one resolved ID.
-    pub async fn sql_rollback(&self, id: Option<&str>) -> Result<Vec<String>, EngineError> {
+    pub async fn sql_rollback(&mut self, id: Option<&str>) -> Result<Vec<String>, EngineError> {
         let migrations = self.migration_snapshot().await?;
         let (graph, ordered) = graph_from(&migrations)?;
         let selected = select_migrations(&graph, &ordered, id)?;
@@ -359,7 +363,7 @@ where
     }
 
     /// Resolves a full migration ID or unique prefix.
-    pub async fn resolve_id(&self, input: &str) -> Result<String, EngineError> {
+    pub async fn resolve_id(&mut self, input: &str) -> Result<String, EngineError> {
         let (graph, _) = self.graph().await?;
         Ok(graph.resolve_id(input)?)
     }
@@ -529,7 +533,7 @@ where
         Ok(())
     }
 
-    async fn graph(&self) -> Result<(MigrationGraph, Vec<String>), EngineError> {
+    async fn graph(&mut self) -> Result<(MigrationGraph, Vec<String>), EngineError> {
         Ok(graph_from(&self.migration_snapshot().await?)?)
     }
 }

@@ -1,7 +1,9 @@
 //! Contract tests for the portable runner protocol and migration snapshots.
 
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::future::Future;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
@@ -96,6 +98,39 @@ impl gaman_core::SchemaInspector for NoopExecutor {
         Box::pin(async { Ok(gaman_core::schema::Schema::default()) })
     }
 }
+
+/// Executes no SQL while deliberately remaining sendable but not shareable.
+struct SendOnlyExecutor(PhantomData<Cell<()>>);
+
+impl Executor for SendOnlyExecutor {
+    fn execute<'a>(&'a mut self, _: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+impl gaman_core::SchemaInspector for SendOnlyExecutor {
+    fn inspect<'a>(
+        &'a mut self,
+        _: &'a [&'a str],
+    ) -> BoxFuture<'a, Result<gaman_core::schema::Schema, gaman_core::InspectionError>> {
+        Box::pin(async { Ok(gaman_core::schema::Schema::default()) })
+    }
+}
+
+/// Requires an expression's concrete type to be transferable between threads.
+fn assert_send<T: Send>(_: T) {}
 
 struct ThreadWake(std::thread::Thread);
 
@@ -214,4 +249,56 @@ fn runner_uses_one_catalog_snapshot_per_command() {
 
     assert!(matches!(result, CommandResult::Status(rows) if rows.is_empty()));
     assert_eq!(loads.load(Ordering::SeqCst), 1);
+}
+
+/// Verifies catalog loading does not require a send-only executor to be shareable.
+#[test]
+fn catalog_backed_runner_future_is_send_with_send_only_executor() {
+    let mut runner = MigrationRunner::new(
+        Dialect::Postgres,
+        CountingStore {
+            loads: Arc::new(AtomicUsize::new(0)),
+        },
+        EmptyTracking,
+        SendOnlyExecutor(PhantomData),
+    );
+    let command = Command::Status {
+        reverse: false,
+        search: None,
+    };
+
+    assert_send(runner.run_command(&command));
+}
+
+/// Verifies a send-only executor works behind the Tokio mutex used by host request handlers.
+#[test]
+fn catalog_backed_runner_executes_in_a_send_tokio_task() {
+    let runner = Arc::new(tokio::sync::Mutex::new(MigrationRunner::new(
+        Dialect::Postgres,
+        CountingStore {
+            loads: Arc::new(AtomicUsize::new(0)),
+        },
+        EmptyTracking,
+        SendOnlyExecutor(PhantomData),
+    )));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("build Tokio runtime");
+
+    let result = runtime.block_on(async move {
+        tokio::spawn(async move {
+            let mut runner = runner.lock().await;
+            runner
+                .run_command(&Command::Status {
+                    reverse: false,
+                    search: None,
+                })
+                .await
+        })
+        .await
+        .expect("join Tokio task")
+    });
+
+    assert!(matches!(result, Ok(CommandResult::Status(rows)) if rows.is_empty()));
 }
