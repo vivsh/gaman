@@ -38,8 +38,8 @@ pub mod migration_engine;
 pub mod migrations;
 pub mod operations;
 pub mod parsers;
-pub mod repair;
 pub mod redaction;
+pub mod repair;
 pub mod replay;
 pub mod runner;
 #[doc(hidden)]

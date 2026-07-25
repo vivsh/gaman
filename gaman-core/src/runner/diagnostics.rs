@@ -123,13 +123,15 @@ impl CommandError {
                 Vec::new(),
                 false,
             ),
-            Self::NeedsInput(_) | Self::Migration(EngineError::NeedsInput(_)) => command_diagnostic(
-                DiagnosticCode::ClarificationRequired,
-                "migration generation needs clarification input".to_string(),
-                Some("supply decisions and run the command again".to_string()),
-                Vec::new(),
-                true,
-            ),
+            Self::NeedsInput(_) | Self::Migration(EngineError::NeedsInput(_)) => {
+                command_diagnostic(
+                    DiagnosticCode::ClarificationRequired,
+                    "migration generation needs clarification input".to_string(),
+                    Some("supply decisions and run the command again".to_string()),
+                    Vec::new(),
+                    true,
+                )
+            }
             Self::Invalid(message) => command_diagnostic(
                 DiagnosticCode::InvalidCommand,
                 message.clone(),
@@ -199,6 +201,13 @@ impl CommandError {
 /// Projects one migration-engine error without discarding nested lifecycle context.
 fn migration_diagnostic(error: &EngineError) -> CommandDiagnostic {
     match error {
+        EngineError::MigrationExecution {
+            migration,
+            direction,
+            statement_ordinal,
+            statement,
+            source,
+        } => execution_diagnostic(migration, direction, *statement_ordinal, statement, source),
         EngineError::Graph(error) => graph_diagnostic(error),
         EngineError::Offline(error) => offline_diagnostic(error),
         EngineError::SqlPlan(error) => sql_plan_diagnostic(error),
@@ -234,6 +243,54 @@ fn migration_diagnostic(error: &EngineError) -> CommandDiagnostic {
             error,
             "check database connectivity, permissions, and the reported database error",
         ),
+    }
+}
+
+/// Projects one rendered migration statement failure without exposing its complete SQL text.
+fn execution_diagnostic(
+    migration: &str,
+    direction: &str,
+    statement_ordinal: usize,
+    statement: &crate::migration_engine::execution_diagnostic::StatementDiagnostic,
+    source: &ExecutorError,
+) -> CommandDiagnostic {
+    let mut details = vec![
+        format!("migration: {migration}"),
+        format!(
+            "{direction} statement {statement_ordinal}: {}",
+            statement.signature
+        ),
+        database_failure_detail(source),
+    ];
+    if let Some(location) = &statement.location {
+        details.push(format!(
+            "at {} line {}, column {}",
+            location.source.label(),
+            location.line,
+            location.column
+        ));
+        details.push(format!("  {}", location.excerpt));
+        details.push(format!("  {}^", " ".repeat(location.caret_offset)));
+    }
+    command_diagnostic(
+        DiagnosticCode::ExecutionFailed,
+        "database operation failed".to_string(),
+        Some(format!(
+            "inspect migration '{migration}' with `gaman show {migration}`"
+        )),
+        details,
+        false,
+    )
+}
+
+/// Formats a stable database message without relying on driver display text conventions.
+fn database_failure_detail(error: &ExecutorError) -> String {
+    match error.database_failure() {
+        Some(failure) => match &failure.code {
+            Some(code) => format!("execute failed [{code}]: {}", failure.message),
+            None => format!("execute failed: {}", failure.message),
+        },
+        None => error.to_string(),
     }
 }
 
@@ -297,10 +354,7 @@ fn replay_diagnostic(error: &ReplayError) -> CommandDiagnostic {
                 "correct the migration order or restore the missing prerequisite migration"
                     .to_string(),
             ),
-            vec![format!(
-                "operation {op_num} ({operation}): {}",
-                inner
-            )],
+            vec![format!("operation {op_num} ({operation}): {}", inner)],
             false,
         ),
         _ => diagnostic_with_detail(
@@ -434,15 +488,20 @@ mod tests {
 
         let diagnostic = error.diagnostic();
         assert_eq!(diagnostic.code, DiagnosticCode::MigrationFailed);
-        assert_eq!(diagnostic.summary, "cannot replay migration '0002_add_posts'");
+        assert_eq!(
+            diagnostic.summary,
+            "cannot replay migration '0002_add_posts'"
+        );
         assert_eq!(
             diagnostic.details,
             ["operation 2 (add foreign key posts.author_id): table 'posts' not found"]
         );
-        assert!(diagnostic
-            .hint
-            .as_deref()
-            .is_some_and(|hint| hint.contains("migration order")));
+        assert!(
+            diagnostic
+                .hint
+                .as_deref()
+                .is_some_and(|hint| hint.contains("migration order"))
+        );
     }
 
     /// Verifies adapter text cannot expose URL credentials or common secret assignments.
@@ -461,5 +520,52 @@ mod tests {
         let failure = serde_json::to_string(&error.failure()).expect("serialize command failure");
         assert!(!failure.contains("secret"));
         assert!(!error.verbose_causes().join(" ").contains("hunter2"));
+    }
+
+    /// Verifies migration execution diagnostics retain bounded statement context and SQLSTATE.
+    #[test]
+    fn migration_execution_failure_is_compact_and_actionable() {
+        let error = CommandError::Migration(EngineError::MigrationExecution {
+            migration: "0012_reports".to_string(),
+            direction: "apply",
+            statement_ordinal: 1,
+            statement: crate::migration_engine::execution_diagnostic::StatementDiagnostic {
+                signature: "CREATE OR REPLACE FUNCTION dynrs_daily_report()".to_string(),
+                location: Some(
+                    crate::migration_engine::execution_diagnostic::StatementLocation {
+                        source: crate::migration_engine::execution_diagnostic::StatementLocationSource::Internal,
+                        line: 18,
+                        column: 9,
+                        excerpt: "SELECT session_type_provider_tip".to_string(),
+                        caret_offset: 8,
+                    },
+                ),
+            },
+            source: ExecutorError::ExecuteDatabase(
+                crate::migration_engine::DatabaseFailure::message(
+                    "column reference is ambiguous",
+                )
+                .with_code("42702"),
+            ),
+        });
+        let diagnostic = error.diagnostic();
+        assert_eq!(diagnostic.summary, "database operation failed");
+        assert!(
+            diagnostic
+                .details
+                .iter()
+                .any(|detail| detail == "migration: 0012_reports")
+        );
+        assert!(
+            diagnostic.details.iter().any(|detail| {
+                detail == "execute failed [42702]: column reference is ambiguous"
+            })
+        );
+        assert!(
+            diagnostic
+                .hint
+                .as_deref()
+                .is_some_and(|hint| hint.contains("gaman show 0012_reports"))
+        );
     }
 }

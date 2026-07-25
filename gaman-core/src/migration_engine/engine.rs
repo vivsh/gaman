@@ -4,6 +4,7 @@ use super::adapters::{Executor, MigrationStore, TrackingStore};
 use super::catalog::{
     CatalogMigrationStore, EngineError, MigrationArtifact, MigrationCatalog, MigrationMovement,
 };
+use super::execution_diagnostic::statement_diagnostic;
 use crate::clarifier::Decision;
 use crate::dialects::Dialect;
 use crate::graphs::{GraphError, MigrationGraph};
@@ -431,12 +432,18 @@ where
             self.executor.begin().await?;
         }
         if let Some(statements) = sql {
-            for statement in statements {
+            for (statement_ordinal, statement) in statements.iter().enumerate() {
                 if let Err(error) = self.executor.execute(&statement).await {
                     if migration.atomic {
                         let _ = self.executor.rollback().await;
                     }
-                    return Err(error.into());
+                    return Err(migration_execution_error(
+                        migration,
+                        "apply",
+                        statement_ordinal + 1,
+                        statement,
+                        error,
+                    ));
                 }
             }
         }
@@ -508,12 +515,18 @@ where
             self.executor.begin().await?;
         }
         if let Some(statements) = sql {
-            for statement in statements {
+            for (statement_ordinal, statement) in statements.iter().enumerate() {
                 if let Err(error) = self.executor.execute(&statement).await {
                     if migration.atomic {
                         let _ = self.executor.rollback().await;
                     }
-                    return Err(error.into());
+                    return Err(migration_execution_error(
+                        migration,
+                        "rollback",
+                        statement_ordinal + 1,
+                        statement,
+                        error,
+                    ));
                 }
             }
         }
@@ -535,6 +548,29 @@ where
 
     async fn graph(&mut self) -> Result<(MigrationGraph, Vec<String>), EngineError> {
         Ok(graph_from(&self.migration_snapshot().await?)?)
+    }
+}
+
+/// Preserves migration and bounded statement context when a live executor rejects rendered SQL.
+fn migration_execution_error(
+    migration: &Migration,
+    direction: &'static str,
+    statement_ordinal: usize,
+    statement: &str,
+    source: super::adapters::ExecutorError,
+) -> EngineError {
+    let statement = statement_diagnostic(
+        statement,
+        source
+            .database_failure()
+            .and_then(|failure| failure.position.as_ref()),
+    );
+    EngineError::MigrationExecution {
+        migration: migration.id.clone(),
+        direction,
+        statement_ordinal,
+        statement,
+        source,
     }
 }
 

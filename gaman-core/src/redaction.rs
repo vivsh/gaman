@@ -13,10 +13,9 @@ fn redact_url_userinfo(value: &str) -> String {
     while let Some(relative) = value[scan_from..].find("://") {
         let authority_start = scan_from + relative + 3;
         let authority_end = authority_end(value, authority_start);
-        if let Some((password_start, password_end)) = password_range(
-            &value[authority_start..authority_end],
-            authority_start,
-        ) {
+        if let Some((password_start, password_end)) =
+            password_range(&value[authority_start..authority_end], authority_start)
+        {
             output.push_str(&value[copied_from..password_start]);
             output.push_str("***");
             copied_from = password_end;
@@ -81,18 +80,25 @@ fn secret_value_start(value: &str, scan_from: usize) -> Option<(usize, bool)> {
         }
         for (key, allow_spaces) in KEYS {
             let after_key = start + key.len();
-            if !value[start..].starts_with(key) && !value[start..].to_ascii_lowercase().starts_with(key) {
+            if !value[start..].starts_with(key)
+                && !value[start..].to_ascii_lowercase().starts_with(key)
+            {
                 continue;
             }
             let equals = value[after_key..]
                 .char_indices()
-                .find_map(|(offset, character)| (!character.is_whitespace()).then_some(after_key + offset))?;
+                .find_map(|(offset, character)| {
+                    (!character.is_whitespace()).then_some(after_key + offset)
+                })?;
             if value.as_bytes().get(equals) != Some(&b'=') {
                 continue;
             }
-            let value_start = value[equals + 1..]
-                .char_indices()
-                .find_map(|(offset, character)| (!character.is_whitespace()).then_some(equals + 1 + offset))?;
+            let value_start =
+                value[equals + 1..]
+                    .char_indices()
+                    .find_map(|(offset, character)| {
+                        (!character.is_whitespace()).then_some(equals + 1 + offset)
+                    })?;
             if assignment_delimiter(value[value_start..].chars().next()?) {
                 continue;
             }
@@ -104,10 +110,9 @@ fn secret_value_start(value: &str, scan_from: usize) -> Option<(usize, bool)> {
 
 /// Checks that a candidate assignment key is not part of a longer identifier.
 fn assignment_boundary(value: &str, start: usize) -> bool {
-    value[..start]
-        .chars()
-        .next_back()
-        .is_none_or(|character| !(character.is_ascii_alphanumeric() || matches!(character, '_' | '-')))
+    value[..start].chars().next_back().is_none_or(|character| {
+        !(character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+    })
 }
 
 /// Returns the exclusive end of one secret value, including matching quote delimiters.

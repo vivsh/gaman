@@ -3,6 +3,7 @@ use thiserror::Error;
 
 use super::adapters::{BoxFuture, ExecutorError, MigrationStore, StoreError, TrackingError};
 use super::engine::graph_from;
+use super::execution_diagnostic::StatementDiagnostic;
 use crate::clarifier::Clarification;
 use crate::graphs::{GraphError, MigrationGraph};
 use crate::migrations::Migration;
@@ -38,6 +39,21 @@ pub enum EngineError {
     /// SQL execution failed.
     #[error(transparent)]
     Executor(#[from] ExecutorError),
+    /// One rendered migration statement was rejected by the target database.
+    #[error("migration '{migration}' {direction} statement {statement_ordinal} failed: {source}")]
+    MigrationExecution {
+        /// Migration whose rendered SQL failed.
+        migration: String,
+        /// Whether Gaman was applying or rolling back that migration.
+        direction: &'static str,
+        /// One-based statement ordinal within the migration direction.
+        statement_ordinal: usize,
+        /// Bounded statement identity and optional database-provided location.
+        statement: StatementDiagnostic,
+        /// Database failure returned by the active executor.
+        #[source]
+        source: ExecutorError,
+    },
     /// Migration graph construction failed.
     #[error(transparent)]
     Graph(#[from] GraphError),

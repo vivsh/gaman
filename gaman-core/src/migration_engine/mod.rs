@@ -6,6 +6,7 @@
 mod adapters;
 mod catalog;
 mod engine;
+pub(crate) mod execution_diagnostic;
 
 pub use adapters::{
     BoxFuture, DatabaseTrackingStore, Executor, ExecutorError, MigrationStore, StoreError,
@@ -13,3 +14,7 @@ pub use adapters::{
 };
 pub use catalog::{EngineError, MigrationArtifact, MigrationCatalog, MigrationMovement};
 pub use engine::MigrationEngine;
+pub use execution_diagnostic::{
+    DatabaseFailure, DatabasePosition, StatementDiagnostic, StatementLocation,
+    StatementLocationSource,
+};

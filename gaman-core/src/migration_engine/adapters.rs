@@ -6,6 +6,8 @@ use thiserror::Error;
 
 use crate::dialects::Dialect;
 use crate::migrations::Migration;
+
+use super::execution_diagnostic::DatabaseFailure;
 /// A boxed future that can be used by native hosts and single-threaded WASM adapters.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -76,12 +78,18 @@ pub enum ExecutorError {
     /// A SQL statement could not be prepared without execution.
     #[error("prepare failed: {0}")]
     Prepare(String),
+    /// A SQL statement could not be prepared and the database provided structured context.
+    #[error("prepare failed: {0}")]
+    PrepareDatabase(DatabaseFailure),
     /// A query needed for migration tracking could not be executed.
     #[error("query failed: {0}")]
     Fetch(String),
     /// A SQL statement could not be executed.
     #[error("execute failed: {0}")]
     Execute(String),
+    /// A SQL statement could not be executed and the database provided structured context.
+    #[error("execute failed: {0}")]
+    ExecuteDatabase(DatabaseFailure),
     /// A transaction or migration lock operation failed.
     #[error("transaction failed: {0}")]
     Transaction(String),
@@ -91,6 +99,16 @@ pub enum ExecutorError {
     /// The executor does not provide a required capability.
     #[error("unsupported executor capability: {0}")]
     Unsupported(String),
+}
+
+impl ExecutorError {
+    /// Returns stable database context when the executor received it directly from the driver.
+    pub(crate) fn database_failure(&self) -> Option<&DatabaseFailure> {
+        match self {
+            Self::PrepareDatabase(failure) | Self::ExecuteDatabase(failure) => Some(failure),
+            _ => None,
+        }
+    }
 }
 
 /// Loads and persists migration definitions without prescribing a storage medium.

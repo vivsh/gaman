@@ -4,6 +4,7 @@ use gaman_core::dialects::Dialect;
 use sqlx::{ConnectOptions, MySqlConnection};
 
 use super::{BoxFuture, ConnectError, Executor, ExecutorError, InspectionError, SchemaInspector};
+use gaman_core::migration_engine::DatabaseFailure;
 
 /// SQLx-backed executor shared by MySQL and MariaDB after product validation.
 pub struct MysqlFamilyExecutor {
@@ -87,7 +88,9 @@ impl Executor for MysqlFamilyExecutor {
             sqlx::Executor::prepare(&mut self.conn, sql)
                 .await
                 .map(|_| ())
-                .map_err(|error| ExecutorError::Prepare(format!("{error}\n  SQL: {sql}")))
+                .map_err(|error| {
+                    ExecutorError::PrepareDatabase(DatabaseFailure::message(error.to_string()))
+                })
         })
     }
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
@@ -95,7 +98,9 @@ impl Executor for MysqlFamilyExecutor {
             sqlx::Executor::execute(&mut self.conn, sql)
                 .await
                 .map(|_| ())
-                .map_err(|error| ExecutorError::Execute(format!("{error}\n  SQL: {sql}")))
+                .map_err(|error| {
+                    ExecutorError::ExecuteDatabase(DatabaseFailure::message(error.to_string()))
+                })
         })
     }
     fn fetch_strings<'a>(

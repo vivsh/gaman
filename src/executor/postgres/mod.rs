@@ -1,7 +1,9 @@
 use sqlx::PgConnection;
 use sqlx::Row;
+use sqlx::postgres::{PgDatabaseError, PgErrorPosition};
 
 use super::{BoxFuture, Executor, ExecutorError, InspectionError, SchemaInspector};
+use gaman_core::migration_engine::{DatabaseFailure, DatabasePosition};
 
 const GAMAN_LOCK_KEY: i64 = 7242068691819328000;
 
@@ -23,7 +25,7 @@ impl Executor for PostgresExecutor {
             sqlx::Executor::prepare(&mut self.conn, sql)
                 .await
                 .map(|_| ())
-                .map_err(|e| ExecutorError::Prepare(format!("{e}\n  SQL: {sql}")))
+                .map_err(|error| ExecutorError::PrepareDatabase(postgres_failure(error)))
         })
     }
 
@@ -33,7 +35,7 @@ impl Executor for PostgresExecutor {
                 .execute(&mut self.conn)
                 .await
                 .map(|_| ())
-                .map_err(|e| ExecutorError::Execute(format!("{e}\n  SQL: {sql}")))
+                .map_err(|error| ExecutorError::ExecuteDatabase(postgres_failure(error)))
         })
     }
 
@@ -113,6 +115,30 @@ impl Executor for PostgresExecutor {
                     ExecutorError::Execute(format!("could not release migration lock: {e}"))
                 })
         })
+    }
+}
+
+/// Converts stable PostgreSQL server fields into portable executor context.
+fn postgres_failure(error: sqlx::Error) -> DatabaseFailure {
+    let Some(database_error) = error.as_database_error() else {
+        return DatabaseFailure::message(error.to_string());
+    };
+    let Some(postgres_error) = database_error.try_downcast_ref::<PgDatabaseError>() else {
+        return DatabaseFailure::message(database_error.message());
+    };
+    let failure =
+        DatabaseFailure::message(postgres_error.message()).with_code(postgres_error.code());
+    match postgres_error.position() {
+        Some(PgErrorPosition::Original(position)) => {
+            failure.with_position(DatabasePosition::Statement(position))
+        }
+        Some(PgErrorPosition::Internal { position, query }) => {
+            failure.with_position(DatabasePosition::Internal {
+                position,
+                query: query.to_string(),
+            })
+        }
+        None => failure,
     }
 }
 

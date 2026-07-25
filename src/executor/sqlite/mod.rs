@@ -1,6 +1,7 @@
 use sqlx::{Row, SqliteConnection};
 
 use super::{BoxFuture, Executor, ExecutorError, InspectionError, SchemaInspector};
+use gaman_core::migration_engine::DatabaseFailure;
 
 /// Wraps a live SQLite connection and manages transaction boundaries explicitly.
 pub struct SqliteExecutor {
@@ -19,7 +20,9 @@ impl Executor for SqliteExecutor {
             sqlx::Executor::prepare(&mut self.conn, sql)
                 .await
                 .map(|_| ())
-                .map_err(|e| ExecutorError::Prepare(format!("{e}\n  SQL: {sql}")))
+                .map_err(|error| {
+                    ExecutorError::PrepareDatabase(DatabaseFailure::message(error.to_string()))
+                })
         })
     }
 
@@ -29,7 +32,9 @@ impl Executor for SqliteExecutor {
                 .execute(&mut self.conn)
                 .await
                 .map(|_| ())
-                .map_err(|e| ExecutorError::Execute(format!("{e}\n  SQL: {sql}")))
+                .map_err(|error| {
+                    ExecutorError::ExecuteDatabase(DatabaseFailure::message(error.to_string()))
+                })
         })
     }
 
