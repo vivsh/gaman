@@ -9,6 +9,7 @@ use crate::clarifier::Clarification;
 use crate::graphs::GraphError;
 use crate::migration_engine::{EngineError, ExecutorError, StoreError, TrackingError};
 use crate::offline_planner::OfflineError;
+use crate::redact_diagnostic_text;
 use crate::sql_plan::SqlPlanError;
 use crate::states::ReplayError;
 /// Structured semantic or host-adapter failure from runner command execution.
@@ -115,31 +116,27 @@ impl CommandError {
     /// Returns concise shared diagnostic language without discarding the typed error.
     pub fn diagnostic(&self) -> CommandDiagnostic {
         match self {
-            Self::UnsupportedProtocolVersion { expected, observed } => CommandDiagnostic {
-                code: DiagnosticCode::UnsupportedProtocolVersion,
-                summary: format!(
-                    "unsupported command protocol version {observed}; expected {expected}"
-                ),
-                hint: Some("update the host binding and retry the command".to_string()),
-                details: Vec::new(),
-                retryable: false,
-            },
-            Self::NeedsInput(_) | Self::Migration(EngineError::NeedsInput(_)) => {
-                CommandDiagnostic {
-                    code: DiagnosticCode::ClarificationRequired,
-                    summary: "migration generation needs clarification input".to_string(),
-                    hint: Some("supply decisions and run the command again".to_string()),
-                    details: Vec::new(),
-                    retryable: true,
-                }
-            }
-            Self::Invalid(message) => CommandDiagnostic {
-                code: DiagnosticCode::InvalidCommand,
-                summary: message.clone(),
-                hint: None,
-                details: Vec::new(),
-                retryable: false,
-            },
+            Self::UnsupportedProtocolVersion { expected, observed } => command_diagnostic(
+                DiagnosticCode::UnsupportedProtocolVersion,
+                format!("unsupported command protocol version {observed}; expected {expected}"),
+                Some("update the host binding and retry the command".to_string()),
+                Vec::new(),
+                false,
+            ),
+            Self::NeedsInput(_) | Self::Migration(EngineError::NeedsInput(_)) => command_diagnostic(
+                DiagnosticCode::ClarificationRequired,
+                "migration generation needs clarification input".to_string(),
+                Some("supply decisions and run the command again".to_string()),
+                Vec::new(),
+                true,
+            ),
+            Self::Invalid(message) => command_diagnostic(
+                DiagnosticCode::InvalidCommand,
+                message.clone(),
+                None,
+                Vec::new(),
+                false,
+            ),
             Self::Inspection(error) => inspection_diagnostic(error),
             Self::Store(error) => adapter_diagnostic(
                 DiagnosticCode::MigrationStoreFailed,
@@ -175,7 +172,7 @@ impl CommandError {
         let mut causes = Vec::new();
         let mut current: &(dyn StdError + 'static) = self;
         while let Some(source) = current.source() {
-            let rendered = sanitize(source.to_string());
+            let rendered = redact_diagnostic_text(&source.to_string());
             if causes.last() != Some(&rendered) {
                 causes.push(rendered);
             }
@@ -212,13 +209,13 @@ fn migration_diagnostic(error: &EngineError) -> CommandDiagnostic {
             "correct the migration configuration and retry the command",
             false,
         ),
-        EngineError::NeedsInput(_) => CommandDiagnostic {
-            code: DiagnosticCode::ClarificationRequired,
-            summary: "migration generation needs clarification input".to_string(),
-            hint: Some("supply decisions and run the command again".to_string()),
-            details: Vec::new(),
-            retryable: true,
-        },
+        EngineError::NeedsInput(_) => command_diagnostic(
+            DiagnosticCode::ClarificationRequired,
+            "migration generation needs clarification input".to_string(),
+            Some("supply decisions and run the command again".to_string()),
+            Vec::new(),
+            true,
+        ),
         EngineError::Store(error) => adapter_diagnostic(
             DiagnosticCode::MigrationStoreFailed,
             "migration storage failed",
@@ -253,13 +250,13 @@ fn offline_diagnostic(error: &OfflineError) -> CommandDiagnostic {
             "correct the schema or migration history and retry the command",
             false,
         ),
-        OfflineError::NeedsInput(_) => CommandDiagnostic {
-            code: DiagnosticCode::ClarificationRequired,
-            summary: "migration generation needs clarification input".to_string(),
-            hint: Some("supply decisions and run the command again".to_string()),
-            details: Vec::new(),
-            retryable: true,
-        },
+        OfflineError::NeedsInput(_) => command_diagnostic(
+            DiagnosticCode::ClarificationRequired,
+            "migration generation needs clarification input".to_string(),
+            Some("supply decisions and run the command again".to_string()),
+            Vec::new(),
+            true,
+        ),
         _ => diagnostic_with_detail(
             DiagnosticCode::MigrationFailed,
             "migration planning failed",
@@ -293,19 +290,19 @@ fn replay_diagnostic(error: &ReplayError) -> CommandDiagnostic {
             op_num,
             operation,
             inner,
-        } => CommandDiagnostic {
-            code: DiagnosticCode::MigrationFailed,
-            summary: format!("cannot replay migration '{migration}'"),
-            hint: Some(
+        } => command_diagnostic(
+            DiagnosticCode::MigrationFailed,
+            format!("cannot replay migration '{migration}'"),
+            Some(
                 "correct the migration order or restore the missing prerequisite migration"
                     .to_string(),
             ),
-            details: vec![format!(
+            vec![format!(
                 "operation {op_num} ({operation}): {}",
-                sanitize(inner.to_string())
+                inner
             )],
-            retryable: false,
-        },
+            false,
+        ),
         _ => diagnostic_with_detail(
             DiagnosticCode::MigrationFailed,
             "cannot replay migration history",
@@ -373,61 +370,33 @@ fn diagnostic_with_detail(
     hint: &str,
     retryable: bool,
 ) -> CommandDiagnostic {
+    command_diagnostic(
+        code,
+        summary.to_string(),
+        Some(hint.to_string()),
+        vec![detail.to_string()],
+        retryable,
+    )
+}
+
+/// Constructs a diagnostic after redacting every potentially adapter-controlled field.
+fn command_diagnostic(
+    code: DiagnosticCode,
+    summary: String,
+    hint: Option<String>,
+    details: Vec<String>,
+    retryable: bool,
+) -> CommandDiagnostic {
     CommandDiagnostic {
         code,
-        summary: summary.to_string(),
-        hint: Some(hint.to_string()),
-        details: vec![sanitize(detail.to_string())],
+        summary: redact_diagnostic_text(&summary),
+        hint: hint.map(|value| redact_diagnostic_text(&value)),
+        details: details
+            .into_iter()
+            .map(|value| redact_diagnostic_text(&value))
+            .collect(),
         retryable,
     }
-}
-
-/// Redacts credentials and common secret assignments from adapter-provided diagnostic text.
-fn sanitize(value: String) -> String {
-    let value = redact_url_passwords(value);
-    redact_assignments(value)
-}
-
-/// Replaces URL password segments while preserving the database host and user identity.
-fn redact_url_passwords(mut value: String) -> String {
-    let mut search_from = 0;
-    while let Some(relative) = value[search_from..].find("://") {
-        let authority_start = search_from + relative + 3;
-        let Some(authority_end) = value[authority_start..]
-            .find(|character: char| character.is_whitespace() || matches!(character, '/' | '?' | '#'))
-            .map(|offset| authority_start + offset)
-        else {
-            break;
-        };
-        let authority = &value[authority_start..authority_end];
-        if let Some(at) = authority.rfind('@') {
-            if let Some(colon) = authority[..at].find(':') {
-                let password_start = authority_start + colon + 1;
-                let password_end = authority_start + at;
-                value.replace_range(password_start..password_end, "***");
-                search_from = password_start + 3;
-                continue;
-            }
-        }
-        search_from = authority_end;
-    }
-    value
-}
-
-/// Replaces values following common secret-like assignment keys in free-form adapter text.
-fn redact_assignments(mut value: String) -> String {
-    for key in ["password=", "pwd=", "token=", "secret=", "api_key="] {
-        let mut search_from = 0;
-        while let Some(relative) = value[search_from..].to_ascii_lowercase().find(key) {
-            let start = search_from + relative + key.len();
-            let end = value[start..]
-                .find(|character: char| character.is_whitespace() || matches!(character, '&' | ',' | ';'))
-                .map_or(value.len(), |offset| start + offset);
-            value.replace_range(start..end, "***");
-            search_from = start + 3;
-        }
-    }
-    value
 }
 
 #[cfg(test)]
@@ -489,5 +458,8 @@ mod tests {
         assert!(!detail.contains("hunter2"));
         assert!(!detail.contains("abc"));
         assert!(detail.contains("gaman:***@localhost"));
+        let failure = serde_json::to_string(&error.failure()).expect("serialize command failure");
+        assert!(!failure.contains("secret"));
+        assert!(!error.verbose_causes().join(" ").contains("hunter2"));
     }
 }

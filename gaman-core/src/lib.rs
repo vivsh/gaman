@@ -39,6 +39,7 @@ pub mod migrations;
 pub mod operations;
 pub mod parsers;
 pub mod repair;
+pub mod redaction;
 pub mod replay;
 pub mod runner;
 #[doc(hidden)]
@@ -56,6 +57,7 @@ pub use migration_engine::{
 };
 pub use migrations::Migration;
 pub use offline_planner::{EmbeddedMigrations, OfflineError, OfflinePlanner};
+pub use redaction::redact_diagnostic_text;
 pub use runner::{
     ApplyCommand, COMMAND_PROTOCOL_VERSION, Command, CommandDiagnostic, CommandEnvelope,
     CommandError, CommandFailure, CommandRequest, CommandResponse, CommandResult, DiagnosticCode,

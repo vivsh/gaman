@@ -107,7 +107,7 @@ impl Config {
 
     /// Returns the configured database URL with a password, if present, redacted.
     pub fn redacted_database_url(&self) -> String {
-        redact_database_url(&self.database_url)
+        gaman_core::redact_diagnostic_text(&self.database_url)
     }
 
     /// Validates configuration for operations that may write migration files.
@@ -237,30 +237,26 @@ fn validate_schema_file(path: &Path) -> Result<(), ConfigError> {
     Ok(())
 }
 
-/// Redacts URL user-info passwords without parsing database-specific URL paths.
-fn redact_database_url(database_url: &str) -> String {
-    let Some((scheme, authority_and_path)) = database_url.split_once("://") else {
-        return database_url.to_string();
-    };
-    let Some((user_info, host_and_path)) = authority_and_path.rsplit_once('@') else {
-        return database_url.to_string();
-    };
-    let Some((username, _password)) = user_info.split_once(':') else {
-        return database_url.to_string();
-    };
-    format!("{scheme}://{username}:***@{host_and_path}")
-}
-
 #[cfg(test)]
 mod redaction_tests {
-    use super::{Config, redact_database_url};
+    use super::Config;
+    use gaman_core::redact_diagnostic_text;
 
     /// Redacts passwords while retaining enough URL information for diagnostics.
     #[test]
     fn redacted_database_url_hides_password() {
         assert_eq!(
-            redact_database_url("postgres://gaman:secret@localhost/app"),
+            redact_diagnostic_text("postgres://gaman:secret@localhost/app"),
             "postgres://gaman:***@localhost/app"
+        );
+    }
+
+    /// Verifies authority-only URLs receive the same password protection as path-bearing URLs.
+    #[test]
+    fn redacted_database_url_hides_authority_only_password() {
+        assert_eq!(
+            redact_diagnostic_text("postgres://gaman:secret@localhost"),
+            "postgres://gaman:***@localhost"
         );
     }
 

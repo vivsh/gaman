@@ -70,9 +70,10 @@ filesystem error types never appear in the protocol.
 
 The normal diagnostic must identify the failed Gaman action and retain useful
 context such as a migration ID, operation ordinal, entity identity, or SQL
-source location. Hosts may present `details` and `hint` directly. Native CLI
-verbose mode may additionally show a sanitized internal cause chain; that
-chain is not part of the protocol payload.
+source location. Every protocol diagnostic field is sanitized before transport.
+Hosts may present `details` and `hint` directly. Native CLI verbose mode may
+additionally show a sanitized internal cause chain; that chain is not part of
+the protocol payload.
 
 ## Clarification Retry
 

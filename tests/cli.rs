@@ -214,6 +214,31 @@ fn make_reports_actionable_replay_failures() {
     assert!(stderr.contains("hint: correct the migration order"));
 }
 
+/// Verifies normal and verbose CLI failures do not reveal connection credentials.
+#[test]
+fn verbose_connection_failures_redact_credentials() {
+    let dir = tempfile::tempdir().expect("create temp directory");
+    let normal = gaman_command(&dir)
+        .env("DATABASE_URL", "postgres://gaman:secret@127.0.0.1:1/app")
+        .arg("status")
+        .output()
+        .expect("run normal gaman status");
+    let verbose = gaman_command(&dir)
+        .env("DATABASE_URL", "postgres://gaman:secret@127.0.0.1:1/app")
+        .args(["--verbose", "status"])
+        .output()
+        .expect("run verbose gaman status");
+
+    let normal_stderr = String::from_utf8(normal.stderr).expect("utf8 normal stderr");
+    let verbose_stderr = String::from_utf8(verbose.stderr).expect("utf8 verbose stderr");
+    assert!(!normal.status.success());
+    assert!(!verbose.status.success());
+    assert!(!normal_stderr.contains("secret"));
+    assert!(!normal_stderr.contains("causes:"));
+    assert!(!verbose_stderr.contains("secret"));
+    assert!(verbose_stderr.contains("causes:"), "{verbose_stderr}");
+}
+
 /// Verifies SQL rendering uses the shared unique-prefix resolver.
 #[test]
 fn sql_accepts_a_unique_migration_prefix() {
