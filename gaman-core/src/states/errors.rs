@@ -70,10 +70,12 @@ pub enum ReplayError {
     EnumAlreadyExists(String),
     #[error("enum '{0}' not found")]
     EnumNotFound(String),
-    #[error("in migration '{migration}' (operation {op_num})")]
+    #[error("in migration '{migration}' (operation {op_num}: {operation})")]
     WithContext {
         migration: String,
         op_num: usize,
+        /// Human-readable identity of the operation that failed during replay.
+        operation: String,
         #[source]
         inner: Box<ReplayError>,
     },

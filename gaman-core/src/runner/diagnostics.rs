@@ -1,10 +1,16 @@
+use std::error::Error as StdError;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::adapters::InspectionError;
 use super::protocol::COMMAND_PROTOCOL_VERSION;
 use crate::clarifier::Clarification;
+use crate::graphs::GraphError;
 use crate::migration_engine::{EngineError, ExecutorError, StoreError, TrackingError};
+use crate::offline_planner::OfflineError;
+use crate::sql_plan::SqlPlanError;
+use crate::states::ReplayError;
 /// Structured semantic or host-adapter failure from runner command execution.
 #[derive(Debug, Error)]
 pub enum CommandError {
@@ -134,19 +140,48 @@ impl CommandError {
                 details: Vec::new(),
                 retryable: false,
             },
-            Self::Inspection(error) => CommandDiagnostic {
-                code: DiagnosticCode::InspectionFailed,
-                summary: error.to_string(),
-                hint: Some("check database connectivity and selected namespaces".to_string()),
-                details: Vec::new(),
-                retryable: true,
-            },
-            Self::Store(error) => diagnostic(DiagnosticCode::MigrationStoreFailed, error),
-            Self::Tracking(error) => diagnostic(DiagnosticCode::TrackingFailed, error),
-            Self::Execution(error) => diagnostic(DiagnosticCode::ExecutionFailed, error),
-            Self::Parse(error) => diagnostic(DiagnosticCode::ParseFailed, error),
-            Self::Migration(error) => diagnostic(DiagnosticCode::MigrationFailed, error),
+            Self::Inspection(error) => inspection_diagnostic(error),
+            Self::Store(error) => adapter_diagnostic(
+                DiagnosticCode::MigrationStoreFailed,
+                "migration storage failed",
+                error,
+                "check the migration directory and resolve any conflicting migration id",
+            ),
+            Self::Tracking(error) => adapter_diagnostic(
+                DiagnosticCode::TrackingFailed,
+                "migration tracking failed",
+                error,
+                "check database connectivity, tracking-table permissions, and migration lock state",
+            ),
+            Self::Execution(error) => adapter_diagnostic(
+                DiagnosticCode::ExecutionFailed,
+                "database operation failed",
+                error,
+                "check database connectivity, permissions, and the reported database error",
+            ),
+            Self::Parse(error) => diagnostic_with_detail(
+                DiagnosticCode::ParseFailed,
+                "SQL parsing failed",
+                error,
+                "correct the SQL input and retry the command",
+                false,
+            ),
+            Self::Migration(error) => migration_diagnostic(error),
         }
+    }
+
+    /// Returns sanitized internal causes for host-specific verbose diagnostics.
+    pub fn verbose_causes(&self) -> Vec<String> {
+        let mut causes = Vec::new();
+        let mut current: &(dyn StdError + 'static) = self;
+        while let Some(source) = current.source() {
+            let rendered = sanitize(source.to_string());
+            if causes.last() != Some(&rendered) {
+                causes.push(rendered);
+            }
+            current = source;
+        }
+        causes
     }
 
     /// Returns a serializable failure preserving typed clarification requests.
@@ -164,14 +199,235 @@ impl CommandError {
     }
 }
 
-fn diagnostic(code: DiagnosticCode, error: &impl std::fmt::Display) -> CommandDiagnostic {
+/// Projects one migration-engine error without discarding nested lifecycle context.
+fn migration_diagnostic(error: &EngineError) -> CommandDiagnostic {
+    match error {
+        EngineError::Graph(error) => graph_diagnostic(error),
+        EngineError::Offline(error) => offline_diagnostic(error),
+        EngineError::SqlPlan(error) => sql_plan_diagnostic(error),
+        EngineError::Config(message) => diagnostic_with_detail(
+            DiagnosticCode::MigrationFailed,
+            "migration command cannot run",
+            message,
+            "correct the migration configuration and retry the command",
+            false,
+        ),
+        EngineError::NeedsInput(_) => CommandDiagnostic {
+            code: DiagnosticCode::ClarificationRequired,
+            summary: "migration generation needs clarification input".to_string(),
+            hint: Some("supply decisions and run the command again".to_string()),
+            details: Vec::new(),
+            retryable: true,
+        },
+        EngineError::Store(error) => adapter_diagnostic(
+            DiagnosticCode::MigrationStoreFailed,
+            "migration storage failed",
+            error,
+            "check the migration directory and resolve any conflicting migration id",
+        ),
+        EngineError::Tracking(error) => adapter_diagnostic(
+            DiagnosticCode::TrackingFailed,
+            "migration tracking failed",
+            error,
+            "check database connectivity, tracking-table permissions, and migration lock state",
+        ),
+        EngineError::Executor(error) => adapter_diagnostic(
+            DiagnosticCode::ExecutionFailed,
+            "database operation failed",
+            error,
+            "check database connectivity, permissions, and the reported database error",
+        ),
+    }
+}
+
+/// Projects planning failures by preserving the most actionable nested category.
+fn offline_diagnostic(error: &OfflineError) -> CommandDiagnostic {
+    match error {
+        OfflineError::Graph(error) => graph_diagnostic(error),
+        OfflineError::Replay(error) => replay_diagnostic(error),
+        OfflineError::SqlPlan(error) => sql_plan_diagnostic(error),
+        OfflineError::Schema(message) => diagnostic_with_detail(
+            DiagnosticCode::MigrationFailed,
+            "schema validation failed during migration planning",
+            message,
+            "correct the schema or migration history and retry the command",
+            false,
+        ),
+        OfflineError::NeedsInput(_) => CommandDiagnostic {
+            code: DiagnosticCode::ClarificationRequired,
+            summary: "migration generation needs clarification input".to_string(),
+            hint: Some("supply decisions and run the command again".to_string()),
+            details: Vec::new(),
+            retryable: true,
+        },
+        _ => diagnostic_with_detail(
+            DiagnosticCode::MigrationFailed,
+            "migration planning failed",
+            error,
+            "correct the reported schema or migration definition and retry the command",
+            false,
+        ),
+    }
+}
+
+/// Projects SQL planning failures while retaining replay and graph causes.
+fn sql_plan_diagnostic(error: &SqlPlanError) -> CommandDiagnostic {
+    match error {
+        SqlPlanError::Graph(error) => graph_diagnostic(error),
+        SqlPlanError::Replay(error) => replay_diagnostic(error),
+        _ => diagnostic_with_detail(
+            DiagnosticCode::MigrationFailed,
+            "migration SQL planning failed",
+            error,
+            "correct the reported migration or use explicit SQL for unsupported changes",
+            false,
+        ),
+    }
+}
+
+/// Projects replay errors with migration and operation context in normal output.
+fn replay_diagnostic(error: &ReplayError) -> CommandDiagnostic {
+    match error {
+        ReplayError::WithContext {
+            migration,
+            op_num,
+            operation,
+            inner,
+        } => CommandDiagnostic {
+            code: DiagnosticCode::MigrationFailed,
+            summary: format!("cannot replay migration '{migration}'"),
+            hint: Some(
+                "correct the migration order or restore the missing prerequisite migration"
+                    .to_string(),
+            ),
+            details: vec![format!(
+                "operation {op_num} ({operation}): {}",
+                sanitize(inner.to_string())
+            )],
+            retryable: false,
+        },
+        _ => diagnostic_with_detail(
+            DiagnosticCode::MigrationFailed,
+            "cannot replay migration history",
+            error,
+            "correct the reported migration definition and retry the command",
+            false,
+        ),
+    }
+}
+
+/// Projects invalid migration-graph state into a corrective diagnostic.
+fn graph_diagnostic(error: &GraphError) -> CommandDiagnostic {
+    diagnostic_with_detail(
+        DiagnosticCode::MigrationFailed,
+        "migration graph is invalid",
+        error,
+        graph_hint(error),
+        false,
+    )
+}
+
+/// Returns the narrowest safe remediation for a migration-graph failure.
+fn graph_hint(error: &GraphError) -> &'static str {
+    match error {
+        GraphError::DuplicateId(_) => "rename or remove the duplicate migration id",
+        GraphError::CycleDetected => "remove the dependency cycle between migrations",
+        GraphError::Conflict => "run make --merge after resolving the competing migration heads",
+        GraphError::UnknownDependency { .. } => {
+            "restore the referenced dependency or correct the migration dependencies"
+        }
+        GraphError::InvalidId(_) => "rename the migration using a valid lowercase id",
+        GraphError::UnknownId(_) | GraphError::AmbiguousId { .. } => {
+            "use one exact migration id or an unambiguous prefix"
+        }
+        GraphError::Empty => "create a migration before requesting this operation",
+    }
+}
+
+/// Projects catalog inspection errors without exposing host-adapter internals in the summary.
+fn inspection_diagnostic(error: &InspectionError) -> CommandDiagnostic {
+    diagnostic_with_detail(
+        DiagnosticCode::InspectionFailed,
+        "database inspection failed",
+        error,
+        "check database connectivity, selected namespaces, and catalog permissions",
+        true,
+    )
+}
+
+/// Projects one host adapter failure with stable action wording and sanitized detail.
+fn adapter_diagnostic(
+    code: DiagnosticCode,
+    summary: &str,
+    error: &impl std::fmt::Display,
+    hint: &str,
+) -> CommandDiagnostic {
+    diagnostic_with_detail(code, summary, error, hint, false)
+}
+
+/// Creates one protocol-v2 diagnostic while keeping sensitive adapter text out of public fields.
+fn diagnostic_with_detail(
+    code: DiagnosticCode,
+    summary: &str,
+    detail: &impl std::fmt::Display,
+    hint: &str,
+    retryable: bool,
+) -> CommandDiagnostic {
     CommandDiagnostic {
         code,
-        summary: error.to_string(),
-        hint: None,
-        details: Vec::new(),
-        retryable: false,
+        summary: summary.to_string(),
+        hint: Some(hint.to_string()),
+        details: vec![sanitize(detail.to_string())],
+        retryable,
     }
+}
+
+/// Redacts credentials and common secret assignments from adapter-provided diagnostic text.
+fn sanitize(value: String) -> String {
+    let value = redact_url_passwords(value);
+    redact_assignments(value)
+}
+
+/// Replaces URL password segments while preserving the database host and user identity.
+fn redact_url_passwords(mut value: String) -> String {
+    let mut search_from = 0;
+    while let Some(relative) = value[search_from..].find("://") {
+        let authority_start = search_from + relative + 3;
+        let Some(authority_end) = value[authority_start..]
+            .find(|character: char| character.is_whitespace() || matches!(character, '/' | '?' | '#'))
+            .map(|offset| authority_start + offset)
+        else {
+            break;
+        };
+        let authority = &value[authority_start..authority_end];
+        if let Some(at) = authority.rfind('@') {
+            if let Some(colon) = authority[..at].find(':') {
+                let password_start = authority_start + colon + 1;
+                let password_end = authority_start + at;
+                value.replace_range(password_start..password_end, "***");
+                search_from = password_start + 3;
+                continue;
+            }
+        }
+        search_from = authority_end;
+    }
+    value
+}
+
+/// Replaces values following common secret-like assignment keys in free-form adapter text.
+fn redact_assignments(mut value: String) -> String {
+    for key in ["password=", "pwd=", "token=", "secret=", "api_key="] {
+        let mut search_from = 0;
+        while let Some(relative) = value[search_from..].to_ascii_lowercase().find(key) {
+            let start = search_from + relative + key.len();
+            let end = value[start..]
+                .find(|character: char| character.is_whitespace() || matches!(character, '&' | ',' | ';'))
+                .map_or(value.len(), |offset| start + offset);
+            value.replace_range(start..end, "***");
+            search_from = start + 3;
+        }
+    }
+    value
 }
 
 #[cfg(test)]
@@ -193,5 +449,45 @@ mod tests {
             DiagnosticCode::UnsupportedProtocolVersion
         );
         assert!(!failure.diagnostic.retryable);
+    }
+
+    /// Verifies replay diagnostics preserve migration, operation, and root-cause context.
+    #[test]
+    fn replay_failure_is_actionable() {
+        let error = CommandError::Migration(EngineError::Offline(OfflineError::Replay(
+            ReplayError::WithContext {
+                migration: "0002_add_posts".to_string(),
+                op_num: 2,
+                operation: "add foreign key posts.author_id".to_string(),
+                inner: Box::new(ReplayError::TableNotFound("posts".to_string())),
+            },
+        )));
+
+        let diagnostic = error.diagnostic();
+        assert_eq!(diagnostic.code, DiagnosticCode::MigrationFailed);
+        assert_eq!(diagnostic.summary, "cannot replay migration '0002_add_posts'");
+        assert_eq!(
+            diagnostic.details,
+            ["operation 2 (add foreign key posts.author_id): table 'posts' not found"]
+        );
+        assert!(diagnostic
+            .hint
+            .as_deref()
+            .is_some_and(|hint| hint.contains("migration order")));
+    }
+
+    /// Verifies adapter text cannot expose URL credentials or common secret assignments.
+    #[test]
+    fn diagnostics_redact_sensitive_adapter_text() {
+        let error = CommandError::Execution(ExecutorError::Connect(
+            "postgres://gaman:secret@localhost/app password=hunter2 token=abc".to_string(),
+        ));
+
+        let diagnostic = error.diagnostic();
+        let detail = &diagnostic.details[0];
+        assert!(!detail.contains("secret"));
+        assert!(!detail.contains("hunter2"));
+        assert!(!detail.contains("abc"));
+        assert!(detail.contains("gaman:***@localhost"));
     }
 }

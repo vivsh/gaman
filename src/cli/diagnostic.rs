@@ -14,6 +14,7 @@ pub struct CliDiagnostic {
     summary: String,
     details: Vec<String>,
     hints: Vec<String>,
+    verbose_causes: Vec<String>,
 }
 
 impl CliDiagnostic {
@@ -23,6 +24,7 @@ impl CliDiagnostic {
             summary: summary.into(),
             details: Vec::new(),
             hints: Vec::new(),
+            verbose_causes: Vec::new(),
         }
     }
 
@@ -35,6 +37,12 @@ impl CliDiagnostic {
     /// Adds one actionable hint line.
     pub(crate) fn hint(mut self, hint: impl Into<String>) -> Self {
         self.hints.push(hint.into());
+        self
+    }
+
+    /// Adds sanitized internal causes that are printed only when verbose diagnostics are enabled.
+    pub(crate) fn verbose_causes(mut self, causes: Vec<String>) -> Self {
+        self.verbose_causes = causes;
         self
     }
 }
@@ -95,12 +103,16 @@ impl CommandError {
                 Self::clarifications_disabled("make", &clarifications)
             }
             error => {
+                let causes = error.verbose_causes();
                 let diagnostic = error.diagnostic();
                 let mut rendered = CliDiagnostic::new(diagnostic.summary);
+                for detail in diagnostic.details {
+                    rendered = rendered.detail(detail);
+                }
                 if let Some(hint) = diagnostic.hint {
                     rendered = rendered.hint(hint);
                 }
-                Self::Diagnostic(rendered)
+                Self::Diagnostic(rendered.verbose_causes(causes))
             }
         }
     }
@@ -125,8 +137,8 @@ impl CommandError {
         )
     }
 
-    /// Prints the concise diagnostic. Shared runner errors intentionally omit Rust source chains.
-    pub fn print(&self, _verbose: bool) {
+    /// Prints normal actionable diagnostics and optional sanitized causes for debugging.
+    pub fn print(&self, verbose: bool) {
         let Self::Diagnostic(diagnostic) = self;
         eprintln!("error: {}", diagnostic.summary);
         for detail in &diagnostic.details {
@@ -134,6 +146,12 @@ impl CommandError {
         }
         for hint in &diagnostic.hints {
             eprintln!("  hint: {hint}");
+        }
+        if verbose && !diagnostic.verbose_causes.is_empty() {
+            eprintln!("  causes:");
+            for cause in &diagnostic.verbose_causes {
+                eprintln!("    - {cause}");
+            }
         }
     }
 }

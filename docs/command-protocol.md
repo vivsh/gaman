@@ -60,13 +60,19 @@ migration YAML intentionally omits that field.
 - the protocol version;
 - a stable `DiagnosticCode`;
 - a concise summary;
-- optional details and hint;
+- ordered, sanitized details and an optional actionable hint;
 - whether host input can make the request retryable;
 - typed clarification requests when decisions are required.
 
 Storage, tracking, execution, inspection, parsing, invalid-command, and
 migration lifecycle failures remain distinguishable. Native driver and
 filesystem error types never appear in the protocol.
+
+The normal diagnostic must identify the failed Gaman action and retain useful
+context such as a migration ID, operation ordinal, entity identity, or SQL
+source location. Hosts may present `details` and `hint` directly. Native CLI
+verbose mode may additionally show a sanitized internal cause chain; that
+chain is not part of the protocol payload.
 
 ## Clarification Retry
 

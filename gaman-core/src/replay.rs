@@ -81,11 +81,21 @@ impl<'a> ReplayEngine<'a> {
                 .map_err(|inner| ReplayError::WithContext {
                     migration: migration.id.clone(),
                     op_num: index + 1,
+                    operation: operation_summary(operation),
                     inner: Box::new(inner),
                 })?;
         }
         Ok(())
     }
+}
+
+/// Produces stable operation context for replay diagnostics without exposing migration internals.
+fn operation_summary(operation: &Operation) -> String {
+    format!(
+        "{} {}",
+        operation.type_name().replace('_', " "),
+        operation.entity_name()
+    )
 }
 
 /// Return the namespace prefix of a migration id, or an empty string for root migrations.

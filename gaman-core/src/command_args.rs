@@ -26,7 +26,7 @@ pub struct CommandArgs {
     /// database connection string (env: DATABASE_URL, required)
     #[argh(option, short = 'd')]
     pub database_url: Option<String>,
-    /// show internal error causes after the concise diagnostic (env: GAMAN_DEBUG=1)
+    /// show sanitized internal causes after the actionable diagnostic (env: GAMAN_DEBUG=1)
     #[argh(switch)]
     pub verbose: bool,
     /// print the Gaman version

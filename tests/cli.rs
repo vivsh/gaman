@@ -189,6 +189,31 @@ fn show_reports_ambiguous_prefixes() {
     assert!(stderr.contains("0001_posts, 0001_users"));
 }
 
+/// Verifies replay failures retain migration and operation context in normal CLI output.
+#[test]
+fn make_reports_actionable_replay_failures() {
+    let dir = tempfile::tempdir().expect("create temp directory");
+    let migrations = dir.path().join("migrations");
+    fs::create_dir_all(&migrations).expect("create migrations directory");
+    fs::write(
+        migrations.join("0001_drop_missing.yaml"),
+        "id: 0001_drop_missing\ndependencies: []\noperations:\n  - type: drop_table\n    table:\n      name: missing\n      columns: []\natomic: true\n",
+    )
+    .expect("write invalid replay migration");
+    fs::write(dir.path().join("schema.yaml"), "tables: {}\n").expect("write schema");
+
+    let output = gaman_command(&dir)
+        .arg("make")
+        .output()
+        .expect("run gaman make");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(stderr.contains("cannot replay migration '0001_drop_missing'"));
+    assert!(stderr.contains("operation 1 (drop table missing): table 'missing' not found"));
+    assert!(stderr.contains("hint: correct the migration order"));
+}
+
 /// Verifies SQL rendering uses the shared unique-prefix resolver.
 #[test]
 fn sql_accepts_a_unique_migration_prefix() {
