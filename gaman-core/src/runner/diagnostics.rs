@@ -180,6 +180,9 @@ impl CommandError {
             }
             current = source;
         }
+        if causes.is_empty() {
+            causes.push(redact_diagnostic_text(&self.to_string()));
+        }
         causes
     }
 
@@ -529,7 +532,7 @@ mod tests {
             migration: "0012_reports".to_string(),
             direction: "apply",
             statement_ordinal: 1,
-            statement: crate::migration_engine::execution_diagnostic::StatementDiagnostic {
+            statement: Box::new(crate::migration_engine::execution_diagnostic::StatementDiagnostic {
                 signature: "CREATE OR REPLACE FUNCTION dynrs_daily_report()".to_string(),
                 location: Some(
                     crate::migration_engine::execution_diagnostic::StatementLocation {
@@ -540,13 +543,13 @@ mod tests {
                         caret_offset: 8,
                     },
                 ),
-            },
-            source: ExecutorError::ExecuteDatabase(
+            }),
+            source: Box::new(ExecutorError::ExecuteDatabase(
                 crate::migration_engine::DatabaseFailure::message(
                     "column reference is ambiguous",
                 )
                 .with_code("42702"),
-            ),
+            )),
         });
         let diagnostic = error.diagnostic();
         assert_eq!(diagnostic.summary, "database operation failed");

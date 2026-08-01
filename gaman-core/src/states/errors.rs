@@ -20,6 +20,8 @@ impl From<&str> for SchemaValidationError {
 
 #[derive(Debug, Error, PartialEq)]
 pub enum ReplayError {
+    #[error("invalid migration structure: {0}")]
+    InvalidMigration(String),
     #[error("migration '{0}' not found in graph")]
     MigrationNotFound(String),
     #[error("table '{0}' already exists")]

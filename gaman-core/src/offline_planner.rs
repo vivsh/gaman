@@ -120,12 +120,13 @@ impl OfflinePlanner {
             .unwrap_or_else(|| deterministic_name_from_ops(&ops));
         let id = format!("{:04}_{suffix}", self.next_number());
         MigrationGraph::validate_id(&id)?;
-        Ok(Some(Migration {
+        let migration = Migration {
             id,
             dependencies: compute_deps(&ops, &replay.last_per_ns, &replay.entity_ns),
             operations: ops,
             atomic: self.dialect.supports_transactional_ddl(),
-        }))
+        };
+        Ok(Some(migration.canonicalized()?))
     }
 
     pub fn sql_migrate(&self, migrations: &[Migration]) -> Result<Vec<String>, OfflineError> {

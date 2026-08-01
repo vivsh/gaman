@@ -299,6 +299,7 @@ pub fn render_migration_sql(
     migration: &Migration,
     start: &Schema,
 ) -> Result<Vec<String>, SqlPlanError> {
+    let migration = migration.canonicalized()?;
     let mut start = start.clone();
     start
         .prepare_mut(&dialect)
@@ -308,7 +309,7 @@ pub fn render_migration_sql(
         })?;
 
     let mut target = start.clone();
-    apply_migration_to_state(&mut target, migration)?;
+    apply_migration_to_state(&mut target, &migration)?;
     target
         .prepare_mut(&dialect)
         .map_err(|source| SqlPlanError::Schema {
@@ -316,7 +317,7 @@ pub fn render_migration_sql(
             source,
         })?;
 
-    let normalized = normalized_migration_for_rendering(migration, &target);
+    let normalized = normalized_migration_for_rendering(&migration, &target);
     dialect
         .migration_to_sql(&normalized, &start)
         .map_err(|source| SqlPlanError::Dialect {

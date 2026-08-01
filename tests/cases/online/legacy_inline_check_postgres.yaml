@@ -1,0 +1,94 @@
+description: Legacy inline checks are created with canonical names and enforce data rules.
+features:
+- check_constraints
+- live_migration_application
+- live_inspect_verify
+migrations:
+- id: 0001_create_results
+  atomic: false
+  operations:
+  - type: create_table
+    table:
+      name: results
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: confidence
+        type: double precision
+        check: confidence >= 0 AND confidence <= 1
+dialects:
+  postgres:
+    checks: [migrate, inspect, verify, data]
+    expect_schema:
+      tables:
+        results:
+          name: results
+          primary_key:
+            name: results_pkey
+            columns: [id]
+          columns:
+          - name: id
+            type: integer
+            nullable: false
+            primary_key: true
+          - name: confidence
+            type: double precision
+            nullable: false
+          constraints:
+          - kind: check
+            name: results_confidence_check
+            expression: confidence >= 0::double precision AND confidence <= 1::double precision
+    expect_verification:
+      findings: []
+      operations: []
+    data:
+    - sql: INSERT INTO results (id, confidence) VALUES (1, 0.75)
+    - sql: INSERT INTO results (id, confidence) VALUES (2, 1.5)
+      expect_error: constraint
+  sqlite:
+    checks: [migrate, inspect, verify, data]
+    expect_schema:
+      tables:
+        results:
+          name: results
+          primary_key:
+            name: results_pkey
+            columns: [id]
+          columns:
+          - name: id
+            type: INTEGER
+            nullable: false
+            primary_key: true
+          - name: confidence
+            type: double precision
+            nullable: false
+          constraints:
+          - kind: check
+            name: results_confidence_check
+            expression: confidence >= 0 AND confidence <= 1
+    expect_verification:
+      findings: []
+      operations: []
+    data:
+    - sql: INSERT INTO results (id, confidence) VALUES (1, 0.75)
+    - sql: INSERT INTO results (id, confidence) VALUES (2, 1.5)
+      expect_error: constraint
+  mysql:
+    checks: [migrate, verify, data]
+    expect_verification:
+      findings: []
+      operations: []
+    data:
+    - sql: INSERT INTO results (id, confidence) VALUES (1, 0.75)
+    - sql: INSERT INTO results (id, confidence) VALUES (2, 1.5)
+      expect_error: constraint
+  mariadb:
+    checks: [migrate, verify, data]
+    expect_verification:
+      findings: []
+      operations: []
+    data:
+    - sql: INSERT INTO results (id, confidence) VALUES (1, 0.75)
+    - sql: INSERT INTO results (id, confidence) VALUES (2, 1.5)
+      expect_error: constraint

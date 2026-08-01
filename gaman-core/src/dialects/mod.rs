@@ -219,7 +219,10 @@ impl Dialect {
         migration: &Migration,
         _start: &Schema,
     ) -> Result<Vec<String>, DialectError> {
-        self.processor().migration_to_sql(migration, _start)
+        let migration = migration.canonicalized().map_err(|error| {
+            DialectError::Unsupported("migration".to_string(), error.to_string())
+        })?;
+        self.processor().migration_to_sql(&migration, _start)
     }
 
     /// Reorders operations to satisfy database-specific execution constraints.

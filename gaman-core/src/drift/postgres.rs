@@ -494,16 +494,73 @@ fn constraint_kind(
 fn constraint_definition(
     expected: &Constraint,
     observed: &Constraint,
-    _: DriftContext<'_>,
+    context: DriftContext<'_>,
 ) -> PropertyMatch {
     match (expected, observed) {
         (Constraint::Unique { columns: a, .. }, Constraint::Unique { columns: b, .. }) => {
             exact_vec(a, b)
         }
+        (Constraint::Check { expression: a, .. }, Constraint::Check { expression: b, .. })
+            if postgres_check_expressions_equal(a, b, context) =>
+        {
+            PropertyMatch::Match
+        }
         (Constraint::Check { expression: a, .. }, Constraint::Check { expression: b, .. }) => {
             exact_string(a, b)
         }
         _ => PropertyMatch::Match,
+    }
+}
+
+/// Compares checks while removing only catalog-added casts on numeric literals.
+fn postgres_check_expressions_equal(
+    expected: &str,
+    observed: &str,
+    context: DriftContext<'_>,
+) -> bool {
+    let tokenizer = context.dialect.tokenizer();
+    let Ok(expected) = tokenizer.tokenize(expected) else {
+        return false;
+    };
+    let Ok(observed) = tokenizer.tokenize(observed) else {
+        return false;
+    };
+    check_expression_tokens(&expected) == check_expression_tokens(&observed)
+}
+
+/// Produces conservative check-expression tokens without numeric literal casts.
+fn check_expression_tokens(tokens: &[SqlToken]) -> Vec<String> {
+    let meaningful = tokens
+        .iter()
+        .filter(|token| !token.is_trivia())
+        .collect::<Vec<_>>();
+    let mut result = Vec::with_capacity(meaningful.len());
+    let mut index = 0;
+    while index < meaningful.len() {
+        result.push(comparison_token(meaningful[index]));
+        index += 1;
+        if matches!(meaningful[index - 1].kind, SqlTokenKind::Number) {
+            index += numeric_cast_token_count(&meaningful, index);
+        }
+    }
+    result
+}
+
+/// Returns the number of safe numeric cast tokens following one numeric literal.
+fn numeric_cast_token_count(tokens: &[&SqlToken], index: usize) -> usize {
+    if tokens.get(index).is_none_or(|token| token.raw != "::") {
+        return 0;
+    }
+    let first = tokens
+        .get(index + 1)
+        .and_then(|token| token.canonical_word());
+    let second = tokens
+        .get(index + 2)
+        .and_then(|token| token.canonical_word());
+    match (first, second) {
+        (Some("DOUBLE"), Some("PRECISION")) => 3,
+        (Some("NUMERIC" | "DECIMAL" | "SMALLINT" | "INTEGER" | "BIGINT" | "REAL"), _) => 2,
+        _ => 0,
     }
 }
 
@@ -792,7 +849,7 @@ fn constraint_kind_name(constraint: &Constraint) -> &'static str {
 mod generated_expression_tests {
     use crate::parsers::tokens::{POSTGRES_TOKENIZER, SqlTokenizer};
 
-    use super::generated_expression_tokens;
+    use super::{check_expression_tokens, generated_expression_tokens};
 
     /// PostgreSQL's catalog-added text coercion does not create generated-column drift.
     #[test]
@@ -823,6 +880,36 @@ mod generated_expression_tests {
         assert_ne!(
             generated_expression_tokens(&expected),
             generated_expression_tokens(&observed)
+        );
+    }
+
+    /// PostgreSQL numeric casts added while deparsing checks do not create drift.
+    #[test]
+    fn numeric_literal_casts_in_checks_are_ignored() {
+        let expected = POSTGRES_TOKENIZER
+            .tokenize("confidence >= 0 AND confidence <= 1")
+            .expect("expected check should tokenize");
+        let observed = POSTGRES_TOKENIZER
+            .tokenize("confidence >= 0::double precision AND confidence <= 1::double precision")
+            .expect("observed check should tokenize");
+        assert_eq!(
+            check_expression_tokens(&expected),
+            check_expression_tokens(&observed)
+        );
+    }
+
+    /// Cast removal remains limited to numeric literals and numeric target types.
+    #[test]
+    fn non_numeric_check_casts_remain_significant() {
+        let plain = POSTGRES_TOKENIZER
+            .tokenize("status = 1")
+            .expect("plain check should tokenize");
+        let text_cast = POSTGRES_TOKENIZER
+            .tokenize("status = 1::text")
+            .expect("cast check should tokenize");
+        assert_ne!(
+            check_expression_tokens(&plain),
+            check_expression_tokens(&text_cast)
         );
     }
 }

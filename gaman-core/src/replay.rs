@@ -75,6 +75,7 @@ impl<'a> ReplayEngine<'a> {
 
     /// Apply one migration to a schema with migration/operation error context.
     pub fn apply_migration(schema: &mut Schema, migration: &Migration) -> Result<(), ReplayError> {
+        let migration = migration.canonicalized()?;
         for (index, operation) in migration.operations.iter().enumerate() {
             schema
                 .apply(operation)

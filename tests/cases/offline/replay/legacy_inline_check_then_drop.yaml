@@ -1,0 +1,34 @@
+description: Legacy inline checks replay as named constraints that later migrations can drop.
+group: replay
+features:
+- group.replay
+- kind.migration_to_replay
+- operation.drop_constraint
+kind: migration_to_replay
+dialect: postgres
+migrations:
+- id: 0001_create_results
+  operations:
+  - type: create_table
+    table:
+      name: results
+      columns:
+      - name: score
+        type: integer
+        check: score >= 0 AND score <= 100
+- id: 0002_drop_score_check
+  dependencies: [0001_create_results]
+  operations:
+  - type: drop_constraint
+    table_name: results
+    constraint:
+      kind: check
+      name: results_score_check
+      expression: score >= 0 AND score <= 100
+expect_schema:
+  tables:
+    results:
+      name: results
+      columns:
+      - name: score
+        type: integer

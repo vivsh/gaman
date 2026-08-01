@@ -1,0 +1,31 @@
+description: Legacy inline references render as canonical named PostgreSQL foreign keys.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- renderer.postgres.create_table
+kind: migration_to_sql
+dialect: postgres
+migrations:
+- id: 0001_create_parent_child
+  operations:
+  - type: create_table
+    table:
+      name: parents
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+  - type: create_table
+    table:
+      name: children
+      columns:
+      - name: parent_id
+        type: integer
+        references:
+          table: parents
+          column: id
+          on_delete: CASCADE
+expect_sql: |
+  CREATE TABLE "parents" ("id" integer NOT NULL, CONSTRAINT "parents_pkey" PRIMARY KEY ("id"))
+  CREATE TABLE "children" ("parent_id" integer NOT NULL, CONSTRAINT "children_parent_id_fkey" FOREIGN KEY ("parent_id") REFERENCES "parents" ("id") ON DELETE CASCADE)

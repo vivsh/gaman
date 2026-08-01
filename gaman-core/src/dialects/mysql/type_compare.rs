@@ -18,6 +18,7 @@ pub(crate) fn token_key(value: &str, dialect: Dialect, mysql_json: bool) -> Stri
     };
     let mut parts = tokens
         .iter()
+        .filter(|token| !token.is_trivia())
         .map(|token| {
             token
                 .canonical_word()
@@ -35,6 +36,7 @@ pub(crate) fn token_key(value: &str, dialect: Dialect, mysql_json: bool) -> Stri
             other => other.to_string(),
         };
     }
+    normalize_double_precision(&mut parts);
     strip_integer_display_width(&mut parts);
     if value.trim().to_ascii_lowercase().starts_with("serial")
         && !parts.iter().any(|part| part == "unsigned")
@@ -49,6 +51,15 @@ pub(crate) fn token_key(value: &str, dialect: Dialect, mysql_json: bool) -> Stri
         parts.insert(position, "unsigned".to_string());
     }
     parts.join("\u{1f}")
+}
+
+/// Treats the documented `DOUBLE PRECISION` spelling as the `DOUBLE` catalog type.
+fn normalize_double_precision(parts: &mut Vec<String>) {
+    if parts.first().is_some_and(|part| part == "double")
+        && parts.get(1).is_some_and(|part| part == "precision")
+    {
+        parts.remove(1);
+    }
 }
 
 /// Removes deprecated integer display widths while preserving precision elsewhere.
@@ -66,5 +77,16 @@ fn strip_integer_display_width(parts: &mut Vec<String>) {
         && parts[2].chars().all(|ch| ch.is_ascii_digit())
     {
         parts.drain(1..4);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies MySQL's `DOUBLE PRECISION` alias matches its reflected `DOUBLE` type.
+    #[test]
+    fn double_precision_matches_double() {
+        assert_eq!(key("DOUBLE PRECISION"), key("double"));
     }
 }

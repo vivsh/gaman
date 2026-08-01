@@ -672,6 +672,9 @@ fn create_index_sql(table: &str, index: &Index) -> Result<String, DialectError> 
 }
 
 fn operation_sql(operation: &Operation, flavor: FamilyFlavor) -> Result<Vec<String>, DialectError> {
+    crate::migration_normalize::ensure_operation_is_canonical(operation).map_err(|error| {
+        DialectError::Unsupported("migration invariant".to_string(), error.to_string())
+    })?;
     match operation {
         Operation::CreateTable { table } => create_table_sql(table, flavor),
         Operation::DropTable { table } => Ok(vec![format!(

@@ -508,6 +508,9 @@ fn drop_index_sql(table_name: &str, index_name: &str, concurrent: bool) -> Strin
 }
 
 fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
+    crate::migration_normalize::ensure_operation_is_canonical(op).map_err(|error| {
+        DialectError::Unsupported("migration invariant".to_string(), error.to_string())
+    })?;
     let stmts = match op {
         Operation::CreateTable { table } => {
             let render_inline_pk = table.primary_key.is_none();

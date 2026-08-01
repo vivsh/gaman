@@ -57,6 +57,10 @@ goals and intentionally use different equality rules.
 Gaman tracks supported DDL `CREATE` definitions only. A schema file declares
 objects that should exist; it is not a stream of commands to execute.
 
+Inline column checks and references are authored-schema shorthand. Committed
+migrations and replayed state use canonical named constraints and foreign keys,
+so planning, replay, rendering, and verification share one entity identity.
+
 Supported desired state can include:
 
 - tables and columns;

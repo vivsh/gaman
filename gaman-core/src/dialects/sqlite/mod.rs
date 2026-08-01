@@ -792,6 +792,9 @@ fn validate_target_references(state: &Schema, table: &Table) -> Result<(), Diale
 }
 
 fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
+    crate::migration_normalize::ensure_operation_is_canonical(op).map_err(|error| {
+        DialectError::Unsupported("migration invariant".to_string(), error.to_string())
+    })?;
     match op {
         Operation::CreateTable { table } => {
             qualified_table(table)?;

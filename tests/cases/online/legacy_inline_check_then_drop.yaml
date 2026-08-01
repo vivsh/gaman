@@ -1,0 +1,134 @@
+description: A later migration drops a canonical constraint created from legacy inline shorthand.
+features:
+- check_constraints
+- live_migration_application
+- live_inspect_verify
+migrations:
+- id: 0001_create_results
+  operations:
+  - type: create_table
+    table:
+      name: results
+      columns:
+      - name: id
+        type: integer
+        primary_key: true
+      - name: confidence
+        type: double precision
+        check: confidence >= 0 AND confidence <= 1
+- id: 0002_drop_confidence_check
+  dependencies: [0001_create_results]
+  operations:
+  - type: drop_constraint
+    table_name: results
+    constraint:
+      kind: check
+      name: results_confidence_check
+      expression: confidence >= 0 AND confidence <= 1
+dialects:
+  postgres:
+    checks: [migrate, inspect, verify, data]
+    expect_schema:
+      tables:
+        results:
+          name: results
+          primary_key:
+            name: results_pkey
+            columns: [id]
+          columns:
+          - name: id
+            type: integer
+            nullable: false
+            primary_key: true
+          - name: confidence
+            type: double precision
+            nullable: false
+    expect_verification:
+      findings: []
+      operations: []
+    data:
+    - sql: INSERT INTO results (id, confidence) VALUES (1, 1.5)
+  sqlite:
+    checks: [migrate, inspect, verify, data]
+    expect_schema:
+      tables:
+        results:
+          name: results
+          primary_key:
+            name: results_pkey
+            columns: [id]
+          columns:
+          - name: id
+            type: INTEGER
+            nullable: false
+            primary_key: true
+          - name: confidence
+            type: double precision
+            nullable: false
+    expect_verification:
+      findings: []
+      operations: []
+    data:
+    - sql: INSERT INTO results (id, confidence) VALUES (1, 1.5)
+  mysql:
+    checks: [migrate, verify, data]
+    migrations:
+    - id: 0001_create_results
+      atomic: false
+      operations:
+      - type: create_table
+        table:
+          name: results
+          columns:
+          - name: id
+            type: integer
+            primary_key: true
+          - name: confidence
+            type: double precision
+            check: confidence >= 0 AND confidence <= 1
+    - id: 0002_drop_confidence_check
+      atomic: false
+      dependencies: [0001_create_results]
+      operations:
+      - type: drop_constraint
+        table_name: results
+        constraint:
+          kind: check
+          name: results_confidence_check
+          expression: confidence >= 0 AND confidence <= 1
+    expect_verification:
+      findings: []
+      operations: []
+    data:
+    - sql: INSERT INTO results (id, confidence) VALUES (1, 1.5)
+  mariadb:
+    checks: [migrate, verify, data]
+    migrations:
+    - id: 0001_create_results
+      atomic: false
+      operations:
+      - type: create_table
+        table:
+          name: results
+          columns:
+          - name: id
+            type: integer
+            primary_key: true
+          - name: confidence
+            type: double precision
+            check: confidence >= 0 AND confidence <= 1
+    - id: 0002_drop_confidence_check
+      atomic: false
+      dependencies: [0001_create_results]
+      operations:
+      - type: drop_constraint
+        table_name: results
+        constraint:
+          kind: check
+          name: results_confidence_check
+          expression: confidence >= 0 AND confidence <= 1
+    expect_verification:
+      findings: []
+      operations: []
+    data:
+    - sql: INSERT INTO results (id, confidence) VALUES (1, 1.5)

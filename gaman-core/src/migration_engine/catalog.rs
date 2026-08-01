@@ -49,10 +49,10 @@ pub enum EngineError {
         /// One-based statement ordinal within the migration direction.
         statement_ordinal: usize,
         /// Bounded statement identity and optional database-provided location.
-        statement: StatementDiagnostic,
+        statement: Box<StatementDiagnostic>,
         /// Database failure returned by the active executor.
         #[source]
-        source: ExecutorError,
+        source: Box<ExecutorError>,
     },
     /// Migration graph construction failed.
     #[error(transparent)]

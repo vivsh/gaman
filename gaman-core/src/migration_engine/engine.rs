@@ -433,7 +433,7 @@ where
         }
         if let Some(statements) = sql {
             for (statement_ordinal, statement) in statements.iter().enumerate() {
-                if let Err(error) = self.executor.execute(&statement).await {
+                if let Err(error) = self.executor.execute(statement).await {
                     if migration.atomic {
                         let _ = self.executor.rollback().await;
                     }
@@ -516,7 +516,7 @@ where
         }
         if let Some(statements) = sql {
             for (statement_ordinal, statement) in statements.iter().enumerate() {
-                if let Err(error) = self.executor.execute(&statement).await {
+                if let Err(error) = self.executor.execute(statement).await {
                     if migration.atomic {
                         let _ = self.executor.rollback().await;
                     }
@@ -569,8 +569,8 @@ fn migration_execution_error(
         migration: migration.id.clone(),
         direction,
         statement_ordinal,
-        statement,
-        source,
+        statement: Box::new(statement),
+        source: Box::new(source),
     }
 }
 

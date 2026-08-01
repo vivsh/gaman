@@ -5,11 +5,18 @@ use crate::states::{Column, Constraint, GeneratedStorage};
 
 use super::{DriftContext, PropertyMatch};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ExpressionToken {
     LeftParen,
     RightParen,
     Value(String),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum CanonicalExpression {
+    Or(Vec<Self>),
+    And(Vec<Self>),
+    Tokens(Vec<ExpressionToken>),
 }
 
 /// Compares optional expressions after conservative MySQL-family token normalization.
@@ -106,8 +113,54 @@ fn expressions_equal(tokenizer: &dyn SqlTokenizer, left: &str, right: &str) -> b
         expression_tokens(tokenizer, left),
         expression_tokens(tokenizer, right),
     ) {
-        (Ok(left), Ok(right)) => strip_outer_parentheses(&left) == strip_outer_parentheses(&right),
+        (Ok(left), Ok(right)) => canonical_expression(&left) == canonical_expression(&right),
         _ => left == right,
+    }
+}
+
+/// Preserves logical precedence while discarding redundant boolean grouping.
+fn canonical_expression(tokens: &[ExpressionToken]) -> CanonicalExpression {
+    let tokens = strip_outer_parentheses(tokens);
+    if let Some(parts) = split_logical(tokens, "word:or") {
+        return CanonicalExpression::Or(parts.into_iter().map(canonical_expression).collect());
+    }
+    if let Some(parts) = split_logical(tokens, "word:and") {
+        return CanonicalExpression::And(parts.into_iter().map(canonical_expression).collect());
+    }
+    CanonicalExpression::Tokens(tokens.to_vec())
+}
+
+/// Splits one expression only at top-level logical operators.
+fn split_logical<'a>(
+    tokens: &'a [ExpressionToken],
+    operator: &str,
+) -> Option<Vec<&'a [ExpressionToken]>> {
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut parts = Vec::new();
+    let mut between = false;
+    for (index, token) in tokens.iter().enumerate() {
+        match token {
+            ExpressionToken::LeftParen => depth += 1,
+            ExpressionToken::RightParen => depth = depth.saturating_sub(1),
+            ExpressionToken::Value(value) if depth == 0 && value == "word:between" => {
+                between = true
+            }
+            ExpressionToken::Value(value) if depth == 0 && value == "word:and" && between => {
+                between = false;
+            }
+            ExpressionToken::Value(value) if depth == 0 && value == operator => {
+                parts.push(&tokens[start..index]);
+                start = index + 1;
+            }
+            ExpressionToken::Value(_) => {}
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        parts.push(&tokens[start..]);
+        Some(parts)
     }
 }
 
@@ -184,6 +237,26 @@ mod tests {
             &MYSQL_TOKENIZER,
             "CURRENT_TIMESTAMP(6)",
             "current_timestamp(6)"
+        ));
+        assert!(expressions_equal(
+            &MYSQL_TOKENIZER,
+            "confidence >= 0 AND confidence <= 1",
+            "((`confidence` >= 0) and (`confidence` <= 1))"
+        ));
+    }
+
+    /// Verifies removing catalog grouping never erases logical precedence.
+    #[test]
+    fn preserves_logical_grouping() {
+        assert!(!expressions_equal(
+            &MYSQL_TOKENIZER,
+            "a AND (b OR c)",
+            "(a AND b) OR c"
+        ));
+        assert!(expressions_equal(
+            &MYSQL_TOKENIZER,
+            "score BETWEEN 0 AND 1",
+            "(score between 0 and 1)"
         ));
     }
 

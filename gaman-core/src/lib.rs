@@ -46,6 +46,7 @@ pub mod runner;
 pub mod sql_plan;
 pub mod states;
 
+mod migration_normalize;
 mod offline_planner;
 mod opaque;
 

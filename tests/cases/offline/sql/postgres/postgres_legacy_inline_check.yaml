@@ -1,0 +1,23 @@
+description: Legacy inline column checks render as canonical named PostgreSQL constraints.
+group: sql_rendering
+features:
+- group.sql_rendering
+- kind.migration_to_sql
+- renderer.postgres.create_table
+kind: migration_to_sql
+dialect: postgres
+migrations:
+- id: 0001_create_results
+  operations:
+  - type: create_table
+    table:
+      name: results
+      columns:
+      - name: sentiment
+        type: text
+        check: sentiment IN ('positive', 'neutral', 'negative')
+      - name: confidence
+        type: double precision
+        check: confidence >= 0 AND confidence <= 1
+expect_sql: |
+  CREATE TABLE "results" ("sentiment" text NOT NULL, "confidence" double precision NOT NULL, CONSTRAINT "results_sentiment_check" CHECK (sentiment IN ('positive', 'neutral', 'negative')), CONSTRAINT "results_confidence_check" CHECK (confidence >= 0 AND confidence <= 1))
