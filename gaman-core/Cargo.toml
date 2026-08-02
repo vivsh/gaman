@@ -1,6 +1,6 @@
 [package]
 name = "gaman-core"
-version = "0.3.27"
+version = "0.3.29"
 edition = "2024"
 description = "Offline core engine for Gaman migrations"
 license = "MIT"
@@ -8,16 +8,25 @@ repository = "https://github.com/vivsh/gaman"
 
 [dependencies]
 argh = { version = "0.1.19", optional = true }
+chrono = { version = "0.4", default-features = false, optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_yaml = "0.9.34"
 sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, optional = true }
 sqlparser = "0.62.0"
+time = { version = "0.3", default-features = false, optional = true }
 thiserror = "2.0.18"
+uuid = { version = "1", default-features = false, optional = true }
 
 [features]
 command-args = ["dep:argh"]
+chrono-types = ["dep:chrono"]
+json-types = ["dep:sqlx", "sqlx/json"]
+time-types = ["dep:time"]
+uuid-types = ["dep:uuid"]
 
 [dev-dependencies]
 proptest = "1"
+sqlx = { version = "0.8", default-features = false, features = ["chrono", "json", "mysql", "postgres", "sqlite", "time", "uuid"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }

@@ -1,6 +1,6 @@
 # Support Evidence
 
-Evidence generation: `20260713T170126Z-51770`.
+Evidence generation: `20260802T110657Z-42232`.
 
 This is Gaman's authoritative compatibility reference. It expands the README lifecycle summary with the full feature matrix, limitations, and accepted fixture evidence for parsing, inspection, and `verify` drift detection.
 
@@ -144,6 +144,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 | Single-column foreign keys (`single_foreign_keys`) | success | success | success |
 | Composite foreign keys (`composite_foreign_keys`) | success | success | success |
 | Indexes (`indexes`) | success | success | success |
+| Check constraints (`check_constraints`) | success | success | success |
 | Indexes and constraints (`indexes_constraints`) | success | success | success |
 | Partial indexes (`partial_indexes`) | success | success | unimplemented (dialect section missing) |
 | Opaque index metadata (`opaque_index_metadata`) | success | unimplemented (dialect section missing) | success |
@@ -164,9 +165,11 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`drop_column_shared`](tests/cases/online/drop_column_shared.yaml): dropping a column preserves remaining rows and inspected schema (`migrate, inspect, data`)
 - [`empty_migration`](tests/cases/online/empty_migration.yaml): empty migrations apply without changing inspected schema (`migrate, inspect`)
 - [`fk_on_update_cascade_shared`](tests/cases/online/fk_on_update_cascade_shared.yaml): PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE. (`migrate, inspect, verify, data`)
-- [`postgres_advanced_index_metadata_inspect`](tests/cases/online/postgres_advanced_index_metadata_inspect.yaml): PostgreSQL inspect preserves advanced index metadata without making it verified drift input (`inspect`)
+- [`legacy_inline_check_postgres`](tests/cases/online/legacy_inline_check_postgres.yaml): Legacy inline checks are created with canonical names and enforce data rules. (`migrate, inspect, verify, data`)
+- [`legacy_inline_check_then_drop`](tests/cases/online/legacy_inline_check_then_drop.yaml): A later migration drops a canonical constraint created from legacy inline shorthand. (`migrate, inspect, verify, data`)
+- [`postgres_advanced_index_metadata_inspect`](tests/cases/online/postgres_advanced_index_metadata_inspect.yaml): PostgreSQL inspect rejects advanced opaque indexes from authored YAML export (`inspect, error`)
 - [`postgres_enum_append_inspect`](tests/cases/online/postgres_enum_append_inspect.yaml): PostgreSQL enum append preserves ordered labels during inspect (`migrate, inspect`)
-- [`postgres_expression_index_inspect`](tests/cases/online/postgres_expression_index_inspect.yaml): PostgreSQL inspect preserves expression index metadata without failing (`inspect`)
+- [`postgres_expression_index_inspect`](tests/cases/online/postgres_expression_index_inspect.yaml): PostgreSQL inspect rejects opaque expression indexes from authored YAML export (`inspect, error`)
 - [`postgres_fk_on_delete_inspect`](tests/cases/online/postgres_fk_on_delete_inspect.yaml): PostgreSQL inspect reflects foreign key on_delete action (`migrate, inspect`)
 - [`postgres_function_name_trigger`](tests/cases/online/postgres_function_name_trigger.yaml): PostgreSQL function-name triggers execute and inspect stable wiring (`migrate, inspect, data`)
 - [`postgres_opaque_objects`](tests/cases/online/postgres_opaque_objects.yaml): PostgreSQL migrates and inspects enums functions views and query triggers (`migrate, inspect`)
@@ -183,6 +186,8 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`drop_column_shared`](tests/cases/online/drop_column_shared.yaml): dropping a column preserves remaining rows and inspected schema (`migrate, inspect, data`)
 - [`empty_migration`](tests/cases/online/empty_migration.yaml): empty migrations apply without changing inspected schema (`migrate, inspect`)
 - [`fk_on_update_cascade_shared`](tests/cases/online/fk_on_update_cascade_shared.yaml): PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE. (`migrate, inspect, verify, data`)
+- [`legacy_inline_check_postgres`](tests/cases/online/legacy_inline_check_postgres.yaml): Legacy inline checks are created with canonical names and enforce data rules. (`migrate, inspect, verify, data`)
+- [`legacy_inline_check_then_drop`](tests/cases/online/legacy_inline_check_then_drop.yaml): A later migration drops a canonical constraint created from legacy inline shorthand. (`migrate, inspect, verify, data`)
 - [`quoted_identifiers_shared`](tests/cases/online/quoted_identifiers_shared.yaml): PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers. (`migrate, inspect, verify, data`)
 - [`rename_table_column`](tests/cases/online/rename_table_column.yaml): live migrations rename tables and columns while preserving data (`migrate, inspect, data`)
 - [`sqlite_fk_on_delete_inspect_verify`](tests/cases/online/sqlite_fk_on_delete_inspect_verify.yaml): SQLite inspect and verify preserve foreign key on_delete action (`migrate, inspect, verify`)
@@ -308,9 +313,21 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 
 ##### PostgreSQL
 
-- [`postgres_advanced_index_metadata_inspect`](tests/cases/online/postgres_advanced_index_metadata_inspect.yaml): PostgreSQL inspect preserves advanced index metadata without making it verified drift input (`inspect`)
-- [`postgres_expression_index_inspect`](tests/cases/online/postgres_expression_index_inspect.yaml): PostgreSQL inspect preserves expression index metadata without failing (`inspect`)
+- [`postgres_advanced_index_metadata_inspect`](tests/cases/online/postgres_advanced_index_metadata_inspect.yaml): PostgreSQL inspect rejects advanced opaque indexes from authored YAML export (`inspect, error`)
+- [`postgres_expression_index_inspect`](tests/cases/online/postgres_expression_index_inspect.yaml): PostgreSQL inspect rejects opaque expression indexes from authored YAML export (`inspect, error`)
 - [`postgres_partial_index`](tests/cases/online/postgres_partial_index.yaml): PostgreSQL migrates and inspects partial indexes (`migrate, inspect`)
+
+#### Check constraints (`check_constraints`)
+
+##### PostgreSQL
+
+- [`legacy_inline_check_postgres`](tests/cases/online/legacy_inline_check_postgres.yaml): Legacy inline checks are created with canonical names and enforce data rules. (`migrate, inspect, verify, data`)
+- [`legacy_inline_check_then_drop`](tests/cases/online/legacy_inline_check_then_drop.yaml): A later migration drops a canonical constraint created from legacy inline shorthand. (`migrate, inspect, verify, data`)
+
+##### SQLite
+
+- [`legacy_inline_check_postgres`](tests/cases/online/legacy_inline_check_postgres.yaml): Legacy inline checks are created with canonical names and enforce data rules. (`migrate, inspect, verify, data`)
+- [`legacy_inline_check_then_drop`](tests/cases/online/legacy_inline_check_then_drop.yaml): A later migration drops a canonical constraint created from legacy inline shorthand. (`migrate, inspect, verify, data`)
 
 #### Indexes and constraints (`indexes_constraints`)
 
@@ -328,8 +345,8 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 
 ##### PostgreSQL
 
-- [`postgres_advanced_index_metadata_inspect`](tests/cases/online/postgres_advanced_index_metadata_inspect.yaml): PostgreSQL inspect preserves advanced index metadata without making it verified drift input (`inspect`)
-- [`postgres_expression_index_inspect`](tests/cases/online/postgres_expression_index_inspect.yaml): PostgreSQL inspect preserves expression index metadata without failing (`inspect`)
+- [`postgres_advanced_index_metadata_inspect`](tests/cases/online/postgres_advanced_index_metadata_inspect.yaml): PostgreSQL inspect rejects advanced opaque indexes from authored YAML export (`inspect, error`)
+- [`postgres_expression_index_inspect`](tests/cases/online/postgres_expression_index_inspect.yaml): PostgreSQL inspect rejects opaque expression indexes from authored YAML export (`inspect, error`)
 
 #### Extensions (`extensions`)
 
@@ -520,7 +537,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 | Single-column foreign keys (`single_foreign_keys`) | success | success | success |
 | Composite foreign keys (`composite_foreign_keys`) | success | success | success |
 | Indexes (`indexes`) | success | success | success |
-| Check constraints (`check_constraints`) | success | success | unimplemented (dialect section missing) |
+| Check constraints (`check_constraints`) | success | success | success |
 | Indexes and constraints (`indexes_constraints`) | success | success | success |
 | Opaque index metadata (`opaque_index_metadata`) | success | unimplemented (dialect section missing) | success |
 | Schemas / namespaces (`schemas_namespaces`) | success | unimplemented (dialect section missing) | unimplemented (dialect section missing) |
@@ -538,6 +555,8 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 ##### PostgreSQL
 
 - [`fk_on_update_cascade_shared`](tests/cases/online/fk_on_update_cascade_shared.yaml): PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE. (`migrate, inspect, verify, data`)
+- [`legacy_inline_check_postgres`](tests/cases/online/legacy_inline_check_postgres.yaml): Legacy inline checks are created with canonical names and enforce data rules. (`migrate, inspect, verify, data`)
+- [`legacy_inline_check_then_drop`](tests/cases/online/legacy_inline_check_then_drop.yaml): A later migration drops a canonical constraint created from legacy inline shorthand. (`migrate, inspect, verify, data`)
 - [`postgres_default_canonical_forms`](tests/cases/online/postgres_default_canonical_forms.yaml): PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift. (`migrate, verify`)
 - [`postgres_opaque_index_with_modeled_drift`](tests/cases/online/postgres_opaque_index_with_modeled_drift.yaml): PostgreSQL modeled column drift remains visible beside an owned opaque index. (`verify`)
 - [`postgres_pgcrypto_uuid`](tests/cases/online/postgres_pgcrypto_uuid.yaml): PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type (`migrate, inspect, verify, data`)
@@ -573,6 +592,8 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 ##### SQLite
 
 - [`fk_on_update_cascade_shared`](tests/cases/online/fk_on_update_cascade_shared.yaml): PostgreSQL and SQLite inspect and enforce ON UPDATE CASCADE. (`migrate, inspect, verify, data`)
+- [`legacy_inline_check_postgres`](tests/cases/online/legacy_inline_check_postgres.yaml): Legacy inline checks are created with canonical names and enforce data rules. (`migrate, inspect, verify, data`)
+- [`legacy_inline_check_then_drop`](tests/cases/online/legacy_inline_check_then_drop.yaml): A later migration drops a canonical constraint created from legacy inline shorthand. (`migrate, inspect, verify, data`)
 - [`quoted_identifiers_shared`](tests/cases/online/quoted_identifiers_shared.yaml): PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers. (`migrate, inspect, verify, data`)
 - [`sqlite_fk_on_delete_inspect_verify`](tests/cases/online/sqlite_fk_on_delete_inspect_verify.yaml): SQLite inspect and verify preserve foreign key on_delete action (`migrate, inspect, verify`)
 - [`sqlite_rebuild_combined_features`](tests/cases/online/sqlite_rebuild_combined_features.yaml): SQLite rebuild preserves composite keys actions constraints generated data and partial indexes together. (`migrate, verify, data`)
@@ -593,6 +614,8 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 
 ##### MySQL
 
+- [`legacy_inline_check_postgres`](tests/cases/online/legacy_inline_check_postgres.yaml): Legacy inline checks are created with canonical names and enforce data rules. (`migrate, verify, data`)
+- [`legacy_inline_check_then_drop`](tests/cases/online/legacy_inline_check_then_drop.yaml): A later migration drops a canonical constraint created from legacy inline shorthand. (`migrate, verify, data`)
 - [`mysql_advanced_indexes`](tests/cases/online/mysql_advanced_indexes.yaml): MySQL advanced index forms remain opaque and never block live verification. (`verify`)
 - [`mysql_column_default_drift`](tests/cases/online/mysql_column_default_drift.yaml): MySQL verify reports an observed column default that differs from migration history. (`verify`)
 - [`mysql_mariadb_advanced_index_inspection`](tests/cases/online/mysql_mariadb_advanced_index_inspection.yaml): MySQL invisible and MariaDB ignored indexes remain opaque without blocking verification. (`verify`)
@@ -801,11 +824,20 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 
 ##### PostgreSQL
 
+- [`legacy_inline_check_postgres`](tests/cases/online/legacy_inline_check_postgres.yaml): Legacy inline checks are created with canonical names and enforce data rules. (`migrate, inspect, verify, data`)
+- [`legacy_inline_check_then_drop`](tests/cases/online/legacy_inline_check_then_drop.yaml): A later migration drops a canonical constraint created from legacy inline shorthand. (`migrate, inspect, verify, data`)
 - [`verify_detects_missing_index_constraint_fk`](tests/cases/online/verify_detects_missing_index_constraint_fk.yaml): verify reports missing owned indexes constraints and foreign keys (`verify`)
 
 ##### SQLite
 
+- [`legacy_inline_check_postgres`](tests/cases/online/legacy_inline_check_postgres.yaml): Legacy inline checks are created with canonical names and enforce data rules. (`migrate, inspect, verify, data`)
+- [`legacy_inline_check_then_drop`](tests/cases/online/legacy_inline_check_then_drop.yaml): A later migration drops a canonical constraint created from legacy inline shorthand. (`migrate, inspect, verify, data`)
 - [`verify_sqlite_detects_missing_index_constraint_fk`](tests/cases/online/verify_sqlite_detects_missing_index_constraint_fk.yaml): SQLite verify reports missing owned indexes constraints and foreign keys (`verify`)
+
+##### MySQL
+
+- [`legacy_inline_check_postgres`](tests/cases/online/legacy_inline_check_postgres.yaml): Legacy inline checks are created with canonical names and enforce data rules. (`migrate, verify, data`)
+- [`legacy_inline_check_then_drop`](tests/cases/online/legacy_inline_check_then_drop.yaml): A later migration drops a canonical constraint created from legacy inline shorthand. (`migrate, verify, data`)
 
 #### Indexes and constraints (`indexes_constraints`)
 

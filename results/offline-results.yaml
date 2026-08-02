@@ -1,4 +1,4 @@
-generation: 20260713T170126Z-51770
+generation: 20260802T110657Z-42232
 features:
   answer.keep_type:
     mariadb:
@@ -2126,6 +2126,14 @@ features:
         assertions:
         - migration_to_replay
         - replayed_schema
+      - case: legacy_inline_check_then_drop
+        description: Legacy inline checks replay as named constraints that later migrations can drop.
+        group: replay
+        kind: migration_to_replay
+        dialect: postgres
+        assertions:
+        - migration_to_replay
+        - replayed_schema
       - case: replay_branching_merge
         description: Replay independent branches joined by an explicit merge migration.
         group: replay
@@ -2340,6 +2348,22 @@ features:
         - sql
       - case: postgres_fk_set_actions
         description: PostgreSQL renders uncommon foreign key delete and update actions.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: postgres
+        assertions:
+        - migration_to_sql
+        - sql
+      - case: postgres_legacy_inline_check
+        description: Legacy inline column checks render as canonical named PostgreSQL constraints.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: postgres
+        assertions:
+        - migration_to_sql
+        - sql
+      - case: postgres_legacy_inline_reference
+        description: Legacy inline references render as canonical named PostgreSQL foreign keys.
         group: sql_rendering
         kind: migration_to_sql
         dialect: postgres
@@ -2769,6 +2793,14 @@ features:
         assertions:
         - migration_to_replay
         - replayed_schema
+      - case: legacy_inline_check_then_drop
+        description: Legacy inline checks replay as named constraints that later migrations can drop.
+        group: replay
+        kind: migration_to_replay
+        dialect: postgres
+        assertions:
+        - migration_to_replay
+        - replayed_schema
       - case: replay_branching_merge
         description: Replay independent branches joined by an explicit merge migration.
         group: replay
@@ -2960,6 +2992,22 @@ features:
         - sql
       - case: postgres_fk_set_actions
         description: PostgreSQL renders uncommon foreign key delete and update actions.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: postgres
+        assertions:
+        - migration_to_sql
+        - sql
+      - case: postgres_legacy_inline_check
+        description: Legacy inline column checks render as canonical named PostgreSQL constraints.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: postgres
+        assertions:
+        - migration_to_sql
+        - sql
+      - case: postgres_legacy_inline_reference
+        description: Legacy inline references render as canonical named PostgreSQL foreign keys.
         group: sql_rendering
         kind: migration_to_sql
         dialect: postgres
@@ -4744,6 +4792,14 @@ features:
     postgres:
       status: success
       evidence:
+      - case: legacy_inline_check_then_drop
+        description: Legacy inline checks replay as named constraints that later migrations can drop.
+        group: replay
+        kind: migration_to_replay
+        dialect: postgres
+        assertions:
+        - migration_to_replay
+        - replayed_schema
       - case: reversible_table_column_index_fk_constraint
         description: Rollback SQL reverses table, column, index, foreign-key, and constraint operations in graph order.
         group: rollback
@@ -6341,6 +6397,22 @@ features:
         - sql
       - case: postgres_drop_opaque_objects
         description: PostgreSQL renders explicit drop operations for opaque schema objects.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: postgres
+        assertions:
+        - migration_to_sql
+        - sql
+      - case: postgres_legacy_inline_check
+        description: Legacy inline column checks render as canonical named PostgreSQL constraints.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: postgres
+        assertions:
+        - migration_to_sql
+        - sql
+      - case: postgres_legacy_inline_reference
+        description: Legacy inline references render as canonical named PostgreSQL foreign keys.
         group: sql_rendering
         kind: migration_to_sql
         dialect: postgres

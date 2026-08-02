@@ -1,12 +1,24 @@
-generation: 20260713T170126Z-51770
+generation: 20260802T110657Z-42232
 features:
   check_constraints:
     mariadb:
       status: unimplemented
       reason: dialect section missing
     mysql:
-      status: unimplemented
-      reason: dialect section missing
+      status: success
+      evidence:
+      - case: legacy_inline_check_postgres
+        description: Legacy inline checks are created with canonical names and enforce data rules.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: legacy_inline_check_then_drop
+        description: A later migration drops a canonical constraint created from legacy inline shorthand.
+        checks:
+        - migrate
+        - verify
+        - data
     postgres:
       status: success
       evidence:
@@ -19,6 +31,20 @@ features:
         description: indexes unique constraints and check constraints enforce live data rules
         checks:
         - migrate
+        - data
+      - case: legacy_inline_check_postgres
+        description: Legacy inline checks are created with canonical names and enforce data rules.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
+      - case: legacy_inline_check_then_drop
+        description: A later migration drops a canonical constraint created from legacy inline shorthand.
+        checks:
+        - migrate
+        - inspect
+        - verify
         - data
       - case: verify_detects_missing_index_constraint_fk
         description: verify reports missing owned indexes constraints and foreign keys
@@ -36,6 +62,20 @@ features:
         description: indexes unique constraints and check constraints enforce live data rules
         checks:
         - migrate
+        - data
+      - case: legacy_inline_check_postgres
+        description: Legacy inline checks are created with canonical names and enforce data rules.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
+      - case: legacy_inline_check_then_drop
+        description: A later migration drops a canonical constraint created from legacy inline shorthand.
+        checks:
+        - migrate
+        - inspect
+        - verify
         - data
       - case: verify_sqlite_detects_missing_index_constraint_fk
         description: SQLite verify reports missing owned indexes constraints and foreign keys
@@ -817,13 +857,15 @@ features:
         - migrate
         - data
       - case: postgres_advanced_index_metadata_inspect
-        description: PostgreSQL inspect preserves advanced index metadata without making it verified drift input
+        description: PostgreSQL inspect rejects advanced opaque indexes from authored YAML export
         checks:
         - inspect
+        - error
       - case: postgres_expression_index_inspect
-        description: PostgreSQL inspect preserves expression index metadata without failing
+        description: PostgreSQL inspect rejects opaque expression indexes from authored YAML export
         checks:
         - inspect
+        - error
       - case: postgres_partial_index
         description: PostgreSQL migrates and inspects partial indexes
         checks:
@@ -957,6 +999,18 @@ features:
     mysql:
       status: success
       evidence:
+      - case: legacy_inline_check_postgres
+        description: Legacy inline checks are created with canonical names and enforce data rules.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: legacy_inline_check_then_drop
+        description: A later migration drops a canonical constraint created from legacy inline shorthand.
+        checks:
+        - migrate
+        - verify
+        - data
       - case: mysql_advanced_indexes
         description: MySQL advanced index forms remain opaque and never block live verification.
         checks:
@@ -1021,15 +1075,30 @@ features:
         - inspect
         - verify
         - data
+      - case: legacy_inline_check_postgres
+        description: Legacy inline checks are created with canonical names and enforce data rules.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
+      - case: legacy_inline_check_then_drop
+        description: A later migration drops a canonical constraint created from legacy inline shorthand.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: linear_chain_order
         description: linear migration chains apply in dependency order
         checks:
         - migrate
         - data
       - case: postgres_advanced_index_metadata_inspect
-        description: PostgreSQL inspect preserves advanced index metadata without making it verified drift input
+        description: PostgreSQL inspect rejects advanced opaque indexes from authored YAML export
         checks:
         - inspect
+        - error
       - case: postgres_default_canonical_forms
         description: PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift.
         checks:
@@ -1041,9 +1110,10 @@ features:
         - migrate
         - inspect
       - case: postgres_expression_index_inspect
-        description: PostgreSQL inspect preserves expression index metadata without failing
+        description: PostgreSQL inspect rejects opaque expression indexes from authored YAML export
         checks:
         - inspect
+        - error
       - case: postgres_fk_on_delete_inspect
         description: PostgreSQL inspect reflects foreign key on_delete action
         checks:
@@ -1233,6 +1303,20 @@ features:
         - inspect
         - verify
         - data
+      - case: legacy_inline_check_postgres
+        description: Legacy inline checks are created with canonical names and enforce data rules.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
+      - case: legacy_inline_check_then_drop
+        description: A later migration drops a canonical constraint created from legacy inline shorthand.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
       - case: linear_chain_order
         description: linear migration chains apply in dependency order
         checks:
@@ -1332,6 +1416,18 @@ features:
     mysql:
       status: success
       evidence:
+      - case: legacy_inline_check_postgres
+        description: Legacy inline checks are created with canonical names and enforce data rules.
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: legacy_inline_check_then_drop
+        description: A later migration drops a canonical constraint created from legacy inline shorthand.
+        checks:
+        - migrate
+        - verify
+        - data
       - case: mysql_advanced_indexes
         description: MySQL advanced index forms remain opaque and never block live verification.
         checks:
@@ -1458,6 +1554,20 @@ features:
         description: indexes unique constraints and check constraints enforce live data rules
         checks:
         - migrate
+        - data
+      - case: legacy_inline_check_postgres
+        description: Legacy inline checks are created with canonical names and enforce data rules.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
+      - case: legacy_inline_check_then_drop
+        description: A later migration drops a canonical constraint created from legacy inline shorthand.
+        checks:
+        - migrate
+        - inspect
+        - verify
         - data
       - case: lifecycle_atomic_failure_rolls_back
         description: atomic migration failure rolls back SQL and does not record the failed migration
@@ -1653,6 +1763,20 @@ features:
         description: indexes unique constraints and check constraints enforce live data rules
         checks:
         - migrate
+        - data
+      - case: legacy_inline_check_postgres
+        description: Legacy inline checks are created with canonical names and enforce data rules.
+        checks:
+        - migrate
+        - inspect
+        - verify
+        - data
+      - case: legacy_inline_check_then_drop
+        description: A later migration drops a canonical constraint created from legacy inline shorthand.
+        checks:
+        - migrate
+        - inspect
+        - verify
         - data
       - case: lifecycle_atomic_failure_rolls_back
         description: atomic migration failure rolls back SQL and does not record the failed migration
@@ -1957,13 +2081,15 @@ features:
       status: success
       evidence:
       - case: postgres_advanced_index_metadata_inspect
-        description: PostgreSQL inspect preserves advanced index metadata without making it verified drift input
+        description: PostgreSQL inspect rejects advanced opaque indexes from authored YAML export
         checks:
         - inspect
+        - error
       - case: postgres_expression_index_inspect
-        description: PostgreSQL inspect preserves expression index metadata without failing
+        description: PostgreSQL inspect rejects opaque expression indexes from authored YAML export
         checks:
         - inspect
+        - error
       - case: postgres_opaque_index_with_modeled_drift
         description: PostgreSQL modeled column drift remains visible beside an owned opaque index.
         checks:

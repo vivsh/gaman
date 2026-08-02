@@ -12,7 +12,7 @@ strip = "symbols"
 
 [package]
 name = "gaman"
-version = "0.3.27"
+version = "0.3.29"
 edition = "2024"
 default-run = "gaman"
 description = "Schema-first SQL migration CLI for PostgreSQL, SQLite, and MySQL with offline planning, Django-style prompts, drift verification, and repair"
@@ -79,18 +79,22 @@ all-supported-dialects = ["postgres", "sqlite"]
 offline = ["dep:gaman-core"]
 offline-sqlite = ["offline"]
 native = ["dep:gaman-core", "dep:serde", "dep:serde_yaml", "dep:thiserror"]
+chrono-types = ["native", "gaman-core/chrono-types"]
 fs = ["native", "dep:tempfile"]
 db = ["native", "dep:sqlx", "dep:tokio"]
+json-types = ["native", "gaman-core/json-types"]
 cli = ["fs", "db", "dep:argh", "dep:dotenvy", "gaman-core/command-args"]
 postgres = ["db", "sqlx/postgres"]
 sqlite = ["db", "sqlx/sqlite"]
 mysql = ["db", "sqlx/mysql"]
 mariadb = ["db", "sqlx/mysql"]
+time-types = ["native", "gaman-core/time-types"]
+uuid-types = ["native", "gaman-core/uuid-types"]
 
 [dependencies]
 argh = { version = "0.1.19", optional = true }
 dotenvy = { version = "0.15.7", optional = true }
-gaman-core = { version = "0.3.27", path = "gaman-core", optional = true, default-features = false }
+gaman-core = { version = "0.3.29", path = "gaman-core", optional = true, default-features = false }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-native-tls", "derive"], optional = true }
 tokio = { version = "1", features = ["rt", "macros", "fs", "io-util"], optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }

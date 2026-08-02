@@ -1687,7 +1687,12 @@ async fn sqlite_rebuild_live_fails_foreign_key_check_for_existing_bad_data() {
         .await
         .unwrap_err();
 
-    assert!(err.to_string().contains("__gaman_fk_check"));
+    match err {
+        gaman::EngineError::MigrationExecution { statement, .. } => {
+            assert!(statement.signature.contains("__gaman_fk_check"));
+        }
+        other => panic!("expected structured migration execution failure, got {other}"),
+    }
 }
 
 async fn sqlite_executor() -> SqliteExecutor {

@@ -1,4 +1,4 @@
-generation: 20260713T170126Z-51770
+generation: 20260802T110657Z-42232
 cases:
   check_constraint:
     description: PostgreSQL CHECK constraint lowers into Constraint::Check.

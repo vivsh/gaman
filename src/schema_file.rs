@@ -4,19 +4,22 @@
 //! `gaman-core` string parsers. Keeping them here preserves CLI ergonomics
 //! without adding filesystem access to the offline core.
 
-#[cfg(feature = "db")]
+#[cfg(feature = "cli")]
 use gaman_core::SqlInput;
 use gaman_core::dialects::Dialect;
 use gaman_core::states::{Schema, SchemaLoadError};
 use std::fs;
+#[cfg(feature = "cli")]
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "cli")]
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(feature = "cli")]
 static ADOPTION_TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 
 /// One native schema input selected for `check_schema` output.
-#[cfg(feature = "db")]
+#[cfg(feature = "cli")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SchemaCheckPathEntry {
     /// SQL source to prepare through the selected database executor.
@@ -43,6 +46,7 @@ pub fn load_schema_path(
 }
 
 /// Writes inspected authored schema into a YAML source without editing SQL input.
+#[cfg(feature = "cli")]
 pub(crate) fn write_adopted_schema(
     source: &Path,
     fragment: &Schema,
@@ -73,6 +77,7 @@ pub(crate) fn write_adopted_schema(
 }
 
 /// Writes canonical YAML through a private sibling file before publishing it atomically.
+#[cfg(feature = "cli")]
 fn write_yaml_atomically(path: &Path, schema: &Schema) -> Result<(), SchemaLoadError> {
     let temporary = write_yaml_temporary(path, schema)?;
     fs::rename(&temporary, path)
@@ -81,6 +86,7 @@ fn write_yaml_atomically(path: &Path, schema: &Schema) -> Result<(), SchemaLoadE
 }
 
 /// Publishes a new directory fragment without replacing a concurrent writer's file.
+#[cfg(feature = "cli")]
 fn write_yaml_no_overwrite(path: &Path, schema: &Schema) -> Result<(), SchemaLoadError> {
     let temporary = write_yaml_temporary(path, schema)?;
     let result = fs::hard_link(&temporary, path)
@@ -91,6 +97,7 @@ fn write_yaml_no_overwrite(path: &Path, schema: &Schema) -> Result<(), SchemaLoa
 }
 
 /// Writes and syncs a private sibling file before an atomic publication step.
+#[cfg(feature = "cli")]
 fn write_yaml_temporary(path: &Path, schema: &Schema) -> Result<PathBuf, SchemaLoadError> {
     let yaml = serde_yaml::to_string(schema)
         .map_err(|error| invalid_schema_path(&format!("cannot encode authored YAML: {error}")))?;
@@ -117,6 +124,7 @@ fn write_yaml_temporary(path: &Path, schema: &Schema) -> Result<PathBuf, SchemaL
 }
 
 /// Synchronizes the containing directory after publishing schema content.
+#[cfg(feature = "cli")]
 fn sync_schema_directory(path: &Path) -> Result<(), SchemaLoadError> {
     let parent = path
         .parent()
@@ -127,6 +135,7 @@ fn sync_schema_directory(path: &Path) -> Result<(), SchemaLoadError> {
 }
 
 /// Allocates a private temporary filename without relying on a PID-only name.
+#[cfg(feature = "cli")]
 fn unique_temporary_path(parent: &Path, destination: &Path) -> Result<PathBuf, SchemaLoadError> {
     let name = destination
         .file_name()
@@ -145,6 +154,7 @@ fn unique_temporary_path(parent: &Path, destination: &Path) -> Result<PathBuf, S
 }
 
 /// Normalizes a directory fragment filename while keeping writes inside the schema directory.
+#[cfg(feature = "cli")]
 fn normalize_yaml_filename(name: &str) -> Result<String, SchemaLoadError> {
     let path = Path::new(name);
     if path.components().count() != 1 || name.is_empty() {
@@ -162,6 +172,7 @@ fn normalize_yaml_filename(name: &str) -> Result<String, SchemaLoadError> {
 }
 
 /// Wraps a native adoption-path validation error in the shared schema load type.
+#[cfg(feature = "cli")]
 fn invalid_schema_path(message: &str) -> SchemaLoadError {
     SchemaLoadError::Io(
         "schema".to_string(),
@@ -220,7 +231,7 @@ fn schema_entries(dir: &Path) -> Result<Vec<PathBuf>, SchemaLoadError> {
 /// Files are ordered by descending modification time and then ascending path
 /// for deterministic ties. YAML and JSON inputs remain visible as ignored
 /// entries; only SQL source is read and supplied to the engine.
-#[cfg(feature = "db")]
+#[cfg(feature = "cli")]
 pub(crate) fn collect_schema_check_entries(
     path: impl AsRef<Path>,
 ) -> Result<Vec<SchemaCheckPathEntry>, SchemaLoadError> {
@@ -231,7 +242,7 @@ pub(crate) fn collect_schema_check_entries(
         .collect()
 }
 
-#[cfg(feature = "db")]
+#[cfg(feature = "cli")]
 fn schema_check_paths(path: &Path) -> Result<Vec<PathBuf>, SchemaLoadError> {
     let metadata = fs::metadata(path)
         .map_err(|error| SchemaLoadError::Io(path.display().to_string(), error))?;
@@ -250,7 +261,7 @@ fn schema_check_paths(path: &Path) -> Result<Vec<PathBuf>, SchemaLoadError> {
     }
 }
 
-#[cfg(feature = "db")]
+#[cfg(feature = "cli")]
 fn sort_schema_check_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, SchemaLoadError> {
     let mut dated_paths = Vec::with_capacity(paths.len());
     for path in paths {
@@ -262,7 +273,7 @@ fn sort_schema_check_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, SchemaLo
     Ok(sort_dated_schema_check_paths(dated_paths))
 }
 
-#[cfg(feature = "db")]
+#[cfg(feature = "cli")]
 fn sort_dated_schema_check_paths(
     mut dated_paths: Vec<(PathBuf, std::time::SystemTime)>,
 ) -> Vec<PathBuf> {
@@ -274,7 +285,7 @@ fn sort_dated_schema_check_paths(
     dated_paths.into_iter().map(|(path, _)| path).collect()
 }
 
-#[cfg(feature = "db")]
+#[cfg(feature = "cli")]
 fn schema_check_entry(path: PathBuf) -> Result<SchemaCheckPathEntry, SchemaLoadError> {
     let label = path.display().to_string();
     match path.extension().and_then(|extension| extension.to_str()) {

@@ -32,9 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `verify` and `repair` accept repeated `--schema` scopes for migration history
   spanning multiple PostgreSQL schemas.
 
-- `gaman-core` is now featureless and string/in-memory only. Native schema file
-  loading moved to the root `gaman::schema_file` module, which reads files and
-  delegates to core string parsers.
+- The default `gaman-core` build remains string/in-memory only. Native schema
+  file loading moved to the root `gaman::schema_file` module, which reads files
+  and delegates to core string parsers.
+- Added opt-in `chrono-types`, `time-types`, `uuid-types`, and `json-types`
+  features that implement `ColumnType` without changing the default core
+  dependency graph.
 - `offline-sqlite` is now a compatibility alias for `offline`; SQLite offline
   rendering is always available in `gaman-core`.
 
