@@ -3,4 +3,4 @@ description: SQLite CREATE TYPE enum is not represented in Schema.
 dialect: sqlite
 sql: |
   CREATE TYPE mood AS ENUM ('happy', 'sad');
-expect_error: unsupported sqlite SQL statement
+expect_error: SQLite does not support enums

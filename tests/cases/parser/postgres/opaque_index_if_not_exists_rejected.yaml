@@ -1,0 +1,12 @@
+---
+description: PostgreSQL opaque indexes reject caller-owned existence handling.
+dialect: postgres
+sql: |
+  CREATE TABLE users (
+    id bigint PRIMARY KEY,
+    email text NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS users_lower_email_idx
+    ON users ((lower(email)));
+expect_error: Gaman owns existence handling

@@ -353,10 +353,7 @@ fn replay_diagnostic(error: &ReplayError) -> CommandDiagnostic {
         } => command_diagnostic(
             DiagnosticCode::MigrationFailed,
             format!("cannot replay migration '{migration}'"),
-            Some(
-                "correct the migration order or restore the missing prerequisite migration"
-                    .to_string(),
-            ),
+            Some(replay_hint(inner)),
             vec![format!("operation {op_num} ({operation}): {}", inner)],
             false,
         ),
@@ -367,6 +364,16 @@ fn replay_diagnostic(error: &ReplayError) -> CommandDiagnostic {
             "correct the reported migration definition and retry the command",
             false,
         ),
+    }
+}
+
+fn replay_hint(error: &ReplayError) -> String {
+    match error {
+        ReplayError::InvalidOpaqueCreate { .. } => {
+            "replace the opaque source with one plain CREATE statement; Gaman owns existence and replacement"
+                .to_string()
+        }
+        _ => "correct the migration order or restore the missing prerequisite migration".to_string(),
     }
 }
 
@@ -504,6 +511,31 @@ mod tests {
                 .hint
                 .as_deref()
                 .is_some_and(|hint| hint.contains("migration order"))
+        );
+    }
+
+    /// Verifies opaque migration failures explain the plain-CREATE remediation.
+    #[test]
+    fn opaque_create_replay_failure_has_specific_hint() {
+        let error = CommandError::Migration(EngineError::Offline(OfflineError::Replay(
+            ReplayError::WithContext {
+                migration: "0003_active_users".to_string(),
+                op_num: 1,
+                operation: "create view active_users".to_string(),
+                inner: Box::new(ReplayError::InvalidOpaqueCreate {
+                    entity: "active_users".to_string(),
+                    reason: "CREATE OR REPLACE is not accepted; Gaman owns replacement".to_string(),
+                }),
+            },
+        )));
+
+        let diagnostic = error.diagnostic();
+        assert!(diagnostic.details[0].contains("CREATE OR REPLACE"));
+        assert!(
+            diagnostic
+                .hint
+                .as_deref()
+                .is_some_and(|hint| hint.contains("plain CREATE"))
         );
     }
 

@@ -12,9 +12,7 @@ mod validate;
 pub(crate) use partitioning::{
     reject_postgres_range_partitioning, validate_postgres_range_partitioning,
 };
-pub(crate) use raw_validation::{
-    extract_function_arguments, parse_qualified_name, validate_authored_raw,
-};
+pub(crate) use raw_validation::{parse_qualified_name, validate_authored_raw};
 pub(crate) use validate::reject_family_column_options;
 
 pub mod builder;

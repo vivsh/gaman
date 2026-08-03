@@ -103,6 +103,12 @@ then converge into the same validation, fingerprinting, clarification,
 migration, and replay lifecycle. YAML and JSON remain structured-only authored
 formats.
 
+Opaque entity source is exactly one plain `CREATE` statement. Authored and
+committed opaque definitions cannot contain `CREATE OR REPLACE` or `CREATE IF
+NOT EXISTS`: Gaman owns existence, replacement, and removal. Accepted opaque
+replacement is a clarified `DROP` followed by the stored plain `CREATE`; raw
+migration statements remain the explicit escape hatch for custom lifecycle SQL.
+
 Tables are always modeled. Dialect-specific table clauses that Gaman cannot
 manage granularly may be preserved as unmanaged options, but the table body and
 its core entities must remain understandable.

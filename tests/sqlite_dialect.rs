@@ -324,9 +324,9 @@ fn sqlite_trigger_truncate_is_unsupported() {
     assert!(err.to_string().contains("TRUNCATE"));
 }
 
-/// SQLite renders trigger alteration as direct CREATE TRIGGER for the new trigger shape.
+/// SQLite replaces an existing trigger through an explicit drop followed by creation.
 #[test]
-fn sqlite_renders_alter_trigger_as_create_trigger() {
+fn sqlite_renders_alter_trigger_as_drop_then_create() {
     let old = TriggerDef {
         name: Some("orders_insert_after_trg".to_string()),
         timing: TriggerTiming::After,
@@ -360,6 +360,7 @@ fn sqlite_renders_alter_trigger_as_create_trigger() {
     assert_eq!(
         sql,
         vec![
+            "DROP TRIGGER \"orders_insert_after_trg\"",
             "CREATE TRIGGER \"orders_insert_after_trg\"\nAFTER INSERT ON \"orders\"\nFOR EACH ROW\nBEGIN\nINSERT INTO audit_log(action) VALUES ('new');\nEND"
         ]
     );

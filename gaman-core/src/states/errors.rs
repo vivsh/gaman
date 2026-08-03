@@ -98,6 +98,14 @@ impl From<&str> for SchemaValidationError {
 pub enum ReplayError {
     #[error("invalid migration structure: {0}")]
     InvalidMigration(String),
+    /// An opaque operation contains caller-owned lifecycle modifiers or mismatched identity.
+    #[error("invalid opaque CREATE for '{entity}': {reason}")]
+    InvalidOpaqueCreate {
+        /// Canonical operation entity identity.
+        entity: String,
+        /// Stable parser-owned rejection reason.
+        reason: String,
+    },
     #[error("migration '{0}' not found in graph")]
     MigrationNotFound(String),
     #[error("table '{0}' already exists")]

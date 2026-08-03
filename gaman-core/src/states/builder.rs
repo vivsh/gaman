@@ -5,7 +5,7 @@ use super::{
 };
 use crate::column_type::ColumnType;
 use crate::dialects::Dialect;
-use crate::parsers::{OpaqueDeclaration, ParseError, parse_opaque_create};
+use crate::parsers::{OpaqueDeclaration, opaque_parse_reason, parse_opaque_create};
 
 /// Map a Rust type to a table definition.
 pub trait IntoTable {
@@ -839,12 +839,5 @@ fn insert_owned_trigger(
         });
     } else {
         table.triggers.push(trigger);
-    }
-}
-
-fn opaque_parse_reason(error: &ParseError) -> String {
-    match error {
-        ParseError::UnsupportedStatement { reason, .. } => reason.clone(),
-        _ => error.to_string(),
     }
 }

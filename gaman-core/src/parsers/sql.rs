@@ -5,6 +5,7 @@ use sqlparser::parser::Parser;
 use super::error::ParseError;
 use super::segments::{SqlObjectName, SqlSegment, SqlStatementKind, segment_sql};
 use super::table_recovery::recover_table_sql;
+use super::tokens::{SqlToken, SqlTokenKind};
 use super::{postgres, sqlite};
 use crate::dialects::Dialect;
 use crate::states::types::EntityKind;
@@ -14,6 +15,7 @@ use crate::states::{
 };
 
 /// One classifiable opaque CREATE declaration shared by SQL and Rust ingestion.
+#[derive(Debug)]
 pub(crate) enum OpaqueDeclaration {
     Index { table: String, value: Index },
     Trigger { table: String, value: TriggerDef },
@@ -21,6 +23,40 @@ pub(crate) enum OpaqueDeclaration {
     View { key: String, value: ViewDef },
     Extension { key: String, value: ExtensionDef },
     Enum { key: String, value: EnumDef },
+}
+
+impl OpaqueDeclaration {
+    /// Returns the closed entity kind proven by SQL classification.
+    pub(crate) fn kind(&self) -> EntityKind {
+        match self {
+            Self::Index { .. } => EntityKind::Index,
+            Self::Trigger { .. } => EntityKind::Trigger,
+            Self::Function { .. } => EntityKind::Function,
+            Self::View { .. } => EntityKind::View,
+            Self::Extension { .. } => EntityKind::Extension,
+            Self::Enum { .. } => EntityKind::Enum,
+        }
+    }
+
+    /// Returns the canonical identity extracted from the CREATE statement.
+    pub(crate) fn identity(&self) -> String {
+        match self {
+            Self::Index { value, .. } => value.name.clone(),
+            Self::Trigger { value, .. } => value.name.clone().unwrap_or_default(),
+            Self::Function { key, .. }
+            | Self::View { key, .. }
+            | Self::Extension { key, .. }
+            | Self::Enum { key, .. } => key.clone(),
+        }
+    }
+
+    /// Returns the canonical owner for a table-owned declaration.
+    pub(crate) fn owner(&self) -> Option<&str> {
+        match self {
+            Self::Index { table, .. } | Self::Trigger { table, .. } => Some(table),
+            _ => None,
+        }
+    }
 }
 
 /// Classifies one raw CREATE statement through the SQL parser's opaque fallback path.
@@ -39,6 +75,56 @@ pub(crate) fn parse_opaque_create(
     let segment = &segments[0];
     ensure_schema_segment(segment, dialect)?;
     opaque_declaration_from_segment(segment, dialect)
+}
+
+/// Validates dialect-less committed opaque metadata against every supported lexer profile.
+pub(crate) fn parse_opaque_create_portable(source: &str) -> Result<OpaqueDeclaration, String> {
+    let mut errors = Vec::new();
+    for dialect in [
+        Dialect::Postgres,
+        Dialect::Sqlite,
+        Dialect::Mysql,
+        Dialect::Mariadb,
+    ] {
+        match parse_opaque_create(source, dialect) {
+            Ok(declaration) => return Ok(declaration),
+            Err(error) => errors.push(opaque_parse_reason(&error)),
+        }
+    }
+    let reason = errors
+        .iter()
+        .find(|error| error.contains("Gaman owns"))
+        .cloned()
+        .or_else(|| errors.into_iter().next())
+        .unwrap_or_else(|| "opaque source could not be classified".to_string());
+    Err(reason)
+}
+
+/// Returns a concise stable reason without repeating the complete source statement.
+pub(crate) fn opaque_parse_reason(error: &ParseError) -> String {
+    match error {
+        ParseError::UnsupportedStatement { reason, .. } => reason.clone(),
+        _ => error.to_string(),
+    }
+}
+
+/// Extracts the authored function argument declaration used for opaque identity.
+pub(crate) fn extract_function_arguments(dialect: Dialect, source: &str) -> Option<String> {
+    let tokens = significant_tokens(dialect, source).ok()?;
+    let function = tokens
+        .iter()
+        .position(|token| token.canonical_word() == Some("FUNCTION"))?;
+    let open = tokens
+        .iter()
+        .enumerate()
+        .skip(function + 1)
+        .find_map(|(index, token)| {
+            matches!(token.kind, SqlTokenKind::LeftParen).then_some(index)
+        })?;
+    let close = matching_close(&tokens, open)?;
+    let start = tokens.get(open)?.span.end;
+    let end = tokens.get(close)?.span.start;
+    source.get(start..end).map(str::trim).map(str::to_string)
 }
 
 pub(crate) struct ParseContext {
@@ -67,13 +153,45 @@ impl ParseContext {
         self.pending_indexes.push(index);
     }
 
-    /// Preserves the authored source for an index that lowering classified as opaque.
-    fn preserve_opaque_index_source(&mut self, raw: &str) {
-        let Some((_, index)) = self.pending_indexes.last_mut() else {
-            return;
+    /// Rebuilds an AST-lowered opaque index through the shared declaration boundary.
+    fn preserve_opaque_index_source(
+        &mut self,
+        segment: &SqlSegment,
+        dialect: Dialect,
+    ) -> Result<(), ParseError> {
+        let Some((_, index)) = self.pending_indexes.last() else {
+            return Ok(());
         };
-        if index.is_opaque() {
-            *index = Index::from_raw(index.name.clone(), raw.to_string());
+        if !index.is_opaque() {
+            return Ok(());
+        }
+        let declaration = opaque_declaration_from_segment(segment, dialect)?;
+        self.replace_opaque_index(declaration, dialect, segment)
+    }
+
+    /// Replaces the provisional AST index while preserving its classified owner identity.
+    fn replace_opaque_index(
+        &mut self,
+        declaration: OpaqueDeclaration,
+        dialect: Dialect,
+        segment: &SqlSegment,
+    ) -> Result<(), ParseError> {
+        let Some((table, index)) = self.pending_indexes.last_mut() else {
+            return Ok(());
+        };
+        match declaration {
+            OpaqueDeclaration::Index {
+                table: parsed_table,
+                value,
+            } if parsed_table == *table => {
+                *index = value;
+                Ok(())
+            }
+            _ => Err(ParseError::unsupported(
+                dialect,
+                segment.sql.clone(),
+                "opaque index lowering changed its classified owner identity",
+            )),
         }
     }
 
@@ -135,7 +253,7 @@ pub(crate) fn parse_sql_raw(sql: &str, dialect: Dialect) -> Result<Schema, Parse
                 segment.kind,
                 Some(SqlStatementKind::Ddl(ref ddl)) if ddl.entity == EntityKind::Index
             ) {
-                ctx.preserve_opaque_index_source(&segment.sql);
+                ctx.preserve_opaque_index_source(&segment, dialect)?;
             }
         }
     }
@@ -268,6 +386,7 @@ fn opaque_declaration_from_segment(
             "raw fallback requires a recoverable object name",
         ));
     };
+    validate_plain_create(segment, dialect, name)?;
     match ddl.entity {
         EntityKind::Table => Err(ParseError::unsupported(
             dialect,
@@ -281,8 +400,8 @@ fn opaque_declaration_from_segment(
             let key = schema_qualified_key(&name, schema.as_deref());
             let mut function = FunctionDef::from_raw(name, segment.sql.clone());
             function.schema = schema;
-            function.arguments = crate::states::extract_function_arguments(dialect, &segment.sql)
-                .unwrap_or_default();
+            function.arguments =
+                extract_function_arguments(dialect, &segment.sql).unwrap_or_default();
             Ok(OpaqueDeclaration::Function {
                 key,
                 value: function,
@@ -454,6 +573,113 @@ fn opaque_object_parts(
     Ok(parts)
 }
 
+/// Rejects caller-owned lifecycle modifiers while ignoring protected body content.
+fn validate_plain_create(
+    segment: &SqlSegment,
+    dialect: Dialect,
+    name: &SqlObjectName,
+) -> Result<(), ParseError> {
+    let tokens = significant_tokens(dialect, &segment.sql)
+        .map_err(|error| ParseError::unsupported(dialect, &segment.sql, error.to_string()))?;
+    if tokens.first().and_then(SqlToken::canonical_word) != Some("CREATE") {
+        return Err(ParseError::unsupported(
+            dialect,
+            &segment.sql,
+            "opaque definition must begin with CREATE",
+        ));
+    }
+    let name_start = find_object_name(&tokens, &name.parts).ok_or_else(|| {
+        ParseError::unsupported(
+            dialect,
+            &segment.sql,
+            "cannot locate the opaque identity in the CREATE prefix",
+        )
+    })?;
+    reject_lifecycle_modifiers(&tokens[..name_start])
+        .map_err(|reason| ParseError::unsupported(dialect, &segment.sql, reason))
+}
+
+fn reject_lifecycle_modifiers(tokens: &[SqlToken]) -> Result<(), String> {
+    if tokens.windows(2).any(|window| {
+        window[0].canonical_word() == Some("OR") && window[1].canonical_word() == Some("REPLACE")
+    }) {
+        return Err("CREATE OR REPLACE is not accepted; Gaman owns replacement".to_string());
+    }
+    if tokens.windows(3).any(|window| {
+        window[0].canonical_word() == Some("IF")
+            && window[1].canonical_word() == Some("NOT")
+            && window[2].canonical_word() == Some("EXISTS")
+    }) {
+        return Err(
+            "CREATE IF NOT EXISTS is not accepted; Gaman owns existence handling".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn significant_tokens(
+    dialect: Dialect,
+    source: &str,
+) -> Result<Vec<SqlToken>, super::tokens::TokenizeError> {
+    dialect.tokenizer().tokenize(source).map(|tokens| {
+        tokens
+            .into_iter()
+            .filter(|token| !token.is_trivia())
+            .collect()
+    })
+}
+
+fn find_object_name(tokens: &[SqlToken], parts: &[String]) -> Option<usize> {
+    (!parts.is_empty()).then_some(())?;
+    (0..tokens.len()).find(|start| object_name_matches(tokens, *start, parts))
+}
+
+fn object_name_matches(tokens: &[SqlToken], start: usize, parts: &[String]) -> bool {
+    let mut index = start;
+    for (part_index, part) in parts.iter().enumerate() {
+        if tokens.get(index).and_then(identifier) != Some(part.as_str()) {
+            return false;
+        }
+        index += 1;
+        if part_index + 1 < parts.len() {
+            if !matches!(
+                tokens.get(index).map(|token| &token.kind),
+                Some(SqlTokenKind::Dot)
+            ) {
+                return false;
+            }
+            index += 1;
+        }
+    }
+    true
+}
+
+fn identifier(token: &SqlToken) -> Option<&str> {
+    match &token.kind {
+        SqlTokenKind::Word { value, .. } | SqlTokenKind::QuotedIdentifier { value, .. } => {
+            Some(value)
+        }
+        _ => None,
+    }
+}
+
+fn matching_close(tokens: &[SqlToken], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, token) in tokens.iter().enumerate().skip(open) {
+        match token.kind {
+            SqlTokenKind::LeftParen => depth += 1,
+            SqlTokenKind::RightParen => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn object_name_parts(name: &SqlObjectName) -> (String, Option<String>) {
     match name.parts.as_slice() {
         [schema, name] if schema != "public" => (name.clone(), Some(schema.clone())),
@@ -519,5 +745,71 @@ mod recovery_tests {
                 .iter()
                 .any(|index| index.name == "users_email_idx")
         );
+    }
+
+    /// Verifies every standalone opaque entity kind uses one shared declaration shape.
+    #[test]
+    fn opaque_create_classifies_every_supported_kind() {
+        let cases = [
+            (
+                "CREATE INDEX users_name_idx ON users ((lower(name)))",
+                EntityKind::Index,
+            ),
+            (
+                "CREATE TRIGGER users_touch BEFORE UPDATE ON users EXECUTE FUNCTION touch_user()",
+                EntityKind::Trigger,
+            ),
+            (
+                "CREATE FUNCTION score(value integer) RETURNS integer LANGUAGE SQL AS $$ SELECT value $$",
+                EntityKind::Function,
+            ),
+            ("CREATE VIEW active_users AS SELECT 1", EntityKind::View),
+            ("CREATE EXTENSION pg_trgm", EntityKind::Extension),
+            (
+                "CREATE TYPE user_state AS ENUM ('active')",
+                EntityKind::Enum,
+            ),
+        ];
+        for (source, expected) in cases {
+            let declaration =
+                parse_opaque_create(source, Dialect::Postgres).expect("plain CREATE must classify");
+            assert_eq!(declaration.kind(), expected);
+        }
+    }
+
+    /// Verifies opaque lifecycle modifiers are rejected only in the CREATE prefix.
+    #[test]
+    fn opaque_create_rejects_lifecycle_modifiers() {
+        for source in [
+            "CREATE OR REPLACE VIEW active_users AS SELECT 1",
+            "CREATE INDEX IF NOT EXISTS users_name_idx ON users ((lower(name)))",
+        ] {
+            let error = parse_opaque_create(source, Dialect::Postgres)
+                .expect_err("caller-owned lifecycle modifier must fail");
+            assert!(opaque_parse_reason(&error).contains("Gaman owns"));
+        }
+    }
+
+    /// Verifies comments, terminators, and protected modifier text remain valid source content.
+    #[test]
+    fn opaque_create_allows_safe_source_boundaries() {
+        for source in [
+            "-- managed by Gaman\nCREATE VIEW active_users AS SELECT 'CREATE IF NOT EXISTS';",
+            "CREATE FUNCTION message() RETURNS text LANGUAGE SQL AS $$ SELECT 'CREATE OR REPLACE' $$;",
+        ] {
+            parse_opaque_create(source, Dialect::Postgres)
+                .expect("protected lifecycle text must not affect CREATE policy");
+        }
+    }
+
+    /// Verifies opaque input cannot smuggle a second statement.
+    #[test]
+    fn opaque_create_rejects_multiple_statements() {
+        let error = parse_opaque_create(
+            "CREATE VIEW active_users AS SELECT 1; CREATE VIEW admins AS SELECT 1",
+            Dialect::Postgres,
+        )
+        .expect_err("multiple CREATE statements must fail");
+        assert!(opaque_parse_reason(&error).contains("exactly one"));
     }
 }

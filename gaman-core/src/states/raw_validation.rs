@@ -4,7 +4,7 @@ use crate::dialects::Dialect;
 use crate::parsers::tokens::{
     MYSQL_TOKENIZER, POSTGRES_TOKENIZER, SQLITE_TOKENIZER, SqlToken, SqlTokenKind, SqlTokenizer,
 };
-use crate::parsers::{SqlObjectName, SqlStatementKind, segment_sql};
+use crate::parsers::{extract_function_arguments, opaque_parse_reason, parse_opaque_create};
 
 use super::{EntityKind, Schema, SchemaBuilderIssue, schema_qualified_key};
 
@@ -141,25 +141,6 @@ pub(crate) fn validate_authored_raw(schema: &Schema, dialect: Dialect) -> Vec<Sc
     issues
 }
 
-/// Extracts the authored function argument declaration for opaque SQL fallback.
-pub(crate) fn extract_function_arguments(dialect: Dialect, source: &str) -> Option<String> {
-    let tokens = significant_tokens(dialect, source).ok()?;
-    let function = tokens
-        .iter()
-        .position(|token| token.canonical_word() == Some("FUNCTION"))?;
-    let open = tokens
-        .iter()
-        .enumerate()
-        .skip(function + 1)
-        .find_map(|(index, token)| {
-            matches!(token.kind, SqlTokenKind::LeftParen).then_some(index)
-        })?;
-    let close = matching_close(&tokens, open)?;
-    let start = tokens.get(open)?.span.end;
-    let end = tokens.get(close)?.span.start;
-    source.get(start..end).map(str::trim).map(str::to_string)
-}
-
 fn validate_top_level(
     issues: &mut Vec<SchemaBuilderIssue>,
     dialect: Dialect,
@@ -209,67 +190,25 @@ fn validate_create(
     owner: Option<&str>,
     source: &str,
 ) -> Result<(), String> {
-    let segments = segment_sql(source, dialect).map_err(|error| error.to_string())?;
-    if segments.len() != 1 {
-        return Err("definition must contain exactly one CREATE statement".to_string());
-    }
-    let segment = &segments[0];
-    let Some(SqlStatementKind::Ddl(ddl)) = &segment.kind else {
-        return Err("definition is not a classifiable CREATE statement".to_string());
-    };
-    if ddl.entity != kind {
+    let declaration =
+        parse_opaque_create(source, dialect).map_err(|error| opaque_parse_reason(&error))?;
+    if declaration.kind() != kind {
         return Err(format!(
             "statement creates {:?}, not {:?}",
-            ddl.entity, kind
+            declaration.kind(),
+            kind
         ));
     }
-    let actual = ddl
-        .name
-        .as_ref()
-        .and_then(canonical_object_name)
-        .ok_or_else(|| "object name is not a supported one- or two-part identity".to_string())?;
+    let actual = declaration.identity();
     if actual != canonical_expected(identity) {
         return Err(format!("statement identity is '{actual}'"));
     }
     if let Some(expected_owner) = owner {
-        let actual_owner = ddl
-            .owner
-            .as_ref()
-            .and_then(canonical_object_name)
+        let actual_owner = declaration
+            .owner()
             .ok_or_else(|| "statement does not expose a reliable table owner".to_string())?;
         if actual_owner != canonical_expected(expected_owner) {
             return Err(format!("statement owner is '{actual_owner}'"));
-        }
-    }
-    validate_plain_create(dialect, source, ddl.name.as_ref())
-}
-
-fn validate_plain_create(
-    dialect: Dialect,
-    source: &str,
-    name: Option<&SqlObjectName>,
-) -> Result<(), String> {
-    let tokens = significant_tokens(dialect, source).map_err(|error| error.to_string())?;
-    if tokens.first().and_then(|token| token.canonical_word()) != Some("CREATE") {
-        return Err("definition must begin with CREATE".to_string());
-    }
-    let name_start = name
-        .and_then(|value| find_object_name(&tokens, &value.parts))
-        .ok_or_else(|| "cannot locate the object identity in the CREATE prefix".to_string())?;
-    for window in tokens[..name_start].windows(2) {
-        if window[0].canonical_word() == Some("OR") && window[1].canonical_word() == Some("REPLACE")
-        {
-            return Err("CREATE OR REPLACE is not accepted; Gaman owns replacement".to_string());
-        }
-    }
-    for window in tokens[..name_start].windows(3) {
-        if window[0].canonical_word() == Some("IF")
-            && window[1].canonical_word() == Some("NOT")
-            && window[2].canonical_word() == Some("EXISTS")
-        {
-            return Err(
-                "CREATE IF NOT EXISTS is not accepted; Gaman owns existence handling".to_string(),
-            );
         }
     }
     Ok(())
@@ -436,14 +375,6 @@ fn tokenizer(dialect: Dialect) -> &'static dyn SqlTokenizer {
     }
 }
 
-fn canonical_object_name(name: &SqlObjectName) -> Option<String> {
-    match name.parts.as_slice() {
-        [name] => Some(schema_qualified_key(name, None)),
-        [schema, name] => Some(schema_qualified_key(name, Some(schema))),
-        _ => None,
-    }
-}
-
 fn canonical_expected(identity: &str) -> String {
     identity
         .strip_prefix("public.")
@@ -488,23 +419,6 @@ fn identifier(token: &SqlToken) -> Option<&str> {
         }
         _ => None,
     }
-}
-
-fn matching_close(tokens: &[SqlToken], open: usize) -> Option<usize> {
-    let mut depth = 0usize;
-    for (index, token) in tokens.iter().enumerate().skip(open) {
-        match token.kind {
-            SqlTokenKind::LeftParen => depth += 1,
-            SqlTokenKind::RightParen => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 fn balanced(tokens: &[SqlToken]) -> bool {
@@ -576,10 +490,12 @@ mod tests {
                     .build(),
             )
             .opaque("CREATE OR REPLACE VIEW recent_documents AS SELECT 1")
+            .opaque("CREATE INDEX IF NOT EXISTS documents_idx ON documents ((lower(id)))")
             .build()
             .expect_err("raw declarations must fail");
         let message = error.to_string();
         assert!(message.contains("CREATE OR REPLACE"));
+        assert!(message.contains("CREATE IF NOT EXISTS"));
         assert!(message.contains("statement terminator"));
     }
 

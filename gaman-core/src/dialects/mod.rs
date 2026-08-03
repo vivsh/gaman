@@ -5,12 +5,15 @@ use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::parsers::tokens::SqlTokenizer;
 use crate::states::types::EntityKind;
-use crate::states::{Column, Schema, SchemaValidationError};
+use crate::states::{Column, ReplayError, Schema, SchemaValidationError};
 
 #[derive(Debug, Error)]
 pub enum DialectError {
     #[error("unsupported operation '{0}': {1}")]
     Unsupported(String, String),
+    /// Migration canonicalization failed before dialect SQL rendering.
+    #[error("migration cannot be rendered: {0}")]
+    Migration(#[from] ReplayError),
 }
 
 /// Error returned when a database URL cannot be mapped to a supported dialect.
@@ -219,10 +222,8 @@ impl Dialect {
         migration: &Migration,
         _start: &Schema,
     ) -> Result<Vec<String>, DialectError> {
-        let migration = migration.canonicalized().map_err(|error| {
-            DialectError::Unsupported("migration".to_string(), error.to_string())
-        })?;
-        self.processor().migration_to_sql(&migration, _start)
+        migration.validate_opaque_declarations()?;
+        self.processor().migration_to_sql(migration, _start)
     }
 
     /// Reorders operations to satisfy database-specific execution constraints.

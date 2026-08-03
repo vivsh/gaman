@@ -2,10 +2,12 @@ use std::collections::HashSet;
 
 use crate::migrations::Migration;
 use crate::operations::Operation;
+use crate::parsers::parse_opaque_create_portable;
 use crate::states::{
-    Column, ColumnRef, Constraint, ForeignKey, ReplayError, Schema, Table,
+    Column, ColumnRef, Constraint, ForeignKey, ReplayError, Schema, Table, TriggerDef,
     canonical_foreign_key_action, names,
 };
+use crate::states::{EntityKind, schema_qualified_key};
 
 impl Migration {
     /// Returns a structurally canonical migration suitable for replay and rendering.
@@ -14,19 +16,11 @@ impl Migration {
     /// operations. Invalid identity collisions are rejected before lifecycle code can
     /// interpret the same migration in different ways.
     pub(crate) fn canonicalized(&self) -> Result<Self, ReplayError> {
+        self.validate_opaque_declarations()?;
         let mut operations = Vec::new();
         for (index, operation) in self.operations.iter().enumerate() {
-            let expanded =
-                canonicalize_operation(operation).map_err(|inner| ReplayError::WithContext {
-                    migration: self.id.clone(),
-                    op_num: index + 1,
-                    operation: format!(
-                        "{} {}",
-                        operation.type_name().replace('_', " "),
-                        operation.entity_name()
-                    ),
-                    inner: Box::new(inner),
-                })?;
+            let expanded = canonicalize_operation(operation)
+                .map_err(|inner| self.operation_error(index, operation, inner))?;
             operations.extend(expanded);
         }
         Ok(Self {
@@ -36,10 +30,39 @@ impl Migration {
             atomic: self.atomic,
         })
     }
+
+    /// Validates stored opaque definitions without changing modeled operation semantics.
+    pub(crate) fn validate_opaque_declarations(&self) -> Result<(), ReplayError> {
+        for (index, operation) in self.operations.iter().enumerate() {
+            validate_opaque_sources(operation)
+                .map_err(|inner| self.operation_error(index, operation, inner))?;
+        }
+        Ok(())
+    }
+
+    /// Adds stable migration and operation identity to a normalization failure.
+    fn operation_error(
+        &self,
+        index: usize,
+        operation: &Operation,
+        inner: ReplayError,
+    ) -> ReplayError {
+        ReplayError::WithContext {
+            migration: self.id.clone(),
+            op_num: index + 1,
+            operation: format!(
+                "{} {}",
+                operation.type_name().replace('_', " "),
+                operation.entity_name()
+            ),
+            inner: Box::new(inner),
+        }
+    }
 }
 
 /// Rejects authored shorthand at the dialect operation-rendering boundary.
 pub(crate) fn ensure_operation_is_canonical(operation: &Operation) -> Result<(), ReplayError> {
+    validate_opaque_sources(operation)?;
     match operation {
         Operation::CreateTable { table } | Operation::DropTable { table } => {
             for column in &table.columns {
@@ -54,6 +77,182 @@ pub(crate) fn ensure_operation_is_canonical(operation: &Operation) -> Result<(),
             ensure_column_is_canonical(new)?;
         }
         _ => {}
+    }
+    Ok(())
+}
+
+/// Validates every standalone opaque definition carried by one operation.
+fn validate_opaque_sources(operation: &Operation) -> Result<(), ReplayError> {
+    match operation {
+        Operation::CreateTable { table } | Operation::DropTable { table } => {
+            validate_table_opaque_sources(table)
+        }
+        Operation::AddIndex {
+            table_name, index, ..
+        }
+        | Operation::DropIndex {
+            table_name, index, ..
+        } => validate_opaque_source(
+            EntityKind::Index,
+            &index.name,
+            Some(table_name),
+            index.raw_sql(),
+        ),
+        Operation::CreateFunction { function } | Operation::DropFunction { function } => {
+            validate_top_level_source(
+                EntityKind::Function,
+                &function.name,
+                function.schema.as_deref(),
+                function.raw_sql(),
+            )
+        }
+        Operation::AlterFunction { old, new } => {
+            validate_top_level_source(
+                EntityKind::Function,
+                &old.name,
+                old.schema.as_deref(),
+                old.raw_sql(),
+            )?;
+            validate_top_level_source(
+                EntityKind::Function,
+                &new.name,
+                new.schema.as_deref(),
+                new.raw_sql(),
+            )
+        }
+        Operation::CreateTrigger {
+            table_name,
+            trigger,
+        }
+        | Operation::DropTrigger {
+            table_name,
+            trigger,
+        } => validate_trigger_source(table_name, trigger),
+        Operation::AlterTrigger {
+            table_name,
+            old,
+            new,
+            ..
+        } => {
+            validate_trigger_source(table_name, old)?;
+            validate_trigger_source(table_name, new)
+        }
+        Operation::CreateView { view } | Operation::DropView { view } => validate_top_level_source(
+            EntityKind::View,
+            &view.name,
+            view.schema.as_deref(),
+            view.raw_sql(),
+        ),
+        Operation::ReplaceView { old, new } => {
+            validate_top_level_source(
+                EntityKind::View,
+                &old.name,
+                old.schema.as_deref(),
+                old.raw_sql(),
+            )?;
+            validate_top_level_source(
+                EntityKind::View,
+                &new.name,
+                new.schema.as_deref(),
+                new.raw_sql(),
+            )
+        }
+        Operation::CreateExtension { extension } | Operation::DropExtension { extension } => {
+            validate_top_level_source(
+                EntityKind::Extension,
+                &extension.name,
+                extension.schema.as_deref(),
+                extension.raw_sql(),
+            )
+        }
+        Operation::CreateEnum { enum_def } | Operation::DropEnum { enum_def } => {
+            validate_top_level_source(
+                EntityKind::Enum,
+                &enum_def.name,
+                enum_def.schema.as_deref(),
+                enum_def.opaque.raw.as_deref(),
+            )
+        }
+        Operation::AlterEnum { old, new } => {
+            validate_top_level_source(
+                EntityKind::Enum,
+                &old.name,
+                old.schema.as_deref(),
+                old.opaque.raw.as_deref(),
+            )?;
+            validate_top_level_source(
+                EntityKind::Enum,
+                &new.name,
+                new.schema.as_deref(),
+                new.opaque.raw.as_deref(),
+            )
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_table_opaque_sources(table: &Table) -> Result<(), ReplayError> {
+    let owner = table.qualified_name();
+    for index in &table.indexes {
+        validate_opaque_source(
+            EntityKind::Index,
+            &index.name,
+            Some(&owner),
+            index.raw_sql(),
+        )?;
+    }
+    for trigger in &table.triggers {
+        validate_trigger_source(&owner, trigger)?;
+    }
+    Ok(())
+}
+
+fn validate_trigger_source(table: &str, trigger: &TriggerDef) -> Result<(), ReplayError> {
+    validate_opaque_source(
+        EntityKind::Trigger,
+        trigger.name.as_deref().unwrap_or_default(),
+        Some(table),
+        trigger.raw_sql(),
+    )
+}
+
+fn validate_top_level_source(
+    kind: EntityKind,
+    name: &str,
+    schema: Option<&str>,
+    raw: Option<&str>,
+) -> Result<(), ReplayError> {
+    let identity = if kind == EntityKind::Extension {
+        name.to_string()
+    } else {
+        schema_qualified_key(name, schema)
+    };
+    validate_opaque_source(kind, &identity, None, raw)
+}
+
+fn validate_opaque_source(
+    kind: EntityKind,
+    identity: &str,
+    owner: Option<&str>,
+    raw: Option<&str>,
+) -> Result<(), ReplayError> {
+    let Some(raw) = raw else {
+        return Ok(());
+    };
+    let declaration =
+        parse_opaque_create_portable(raw).map_err(|reason| ReplayError::InvalidOpaqueCreate {
+            entity: identity.to_string(),
+            reason,
+        })?;
+    if declaration.kind() != kind
+        || declaration.identity() != identity
+        || declaration.owner() != owner
+    {
+        return Err(ReplayError::InvalidOpaqueCreate {
+            entity: identity.to_string(),
+            reason: "stored source kind, identity, or owner does not match the operation"
+                .to_string(),
+        });
     }
     Ok(())
 }
@@ -329,6 +528,8 @@ fn normalize_action(action: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dialects::Dialect;
+    use crate::states::ViewDef;
 
     fn column(name: &str) -> Column {
         Column {
@@ -509,5 +710,90 @@ mod tests {
             ReplayError::WithContext { inner, .. }
                 if matches!(*inner, ReplayError::InvalidMigration(ref message) if message.contains("duplicate constraint"))
         ));
+    }
+
+    /// Committed opaque migration source cannot retain caller-owned lifecycle modifiers.
+    #[test]
+    fn migration_rejects_modified_opaque_create_source() {
+        for source in [
+            "CREATE OR REPLACE VIEW active_users AS SELECT 1",
+            "CREATE VIEW IF NOT EXISTS active_users AS SELECT 1",
+        ] {
+            let error = migration(Operation::CreateView {
+                view: ViewDef::from_raw("active_users", source),
+            })
+            .canonicalized()
+            .expect_err("legacy modified source must fail");
+            assert!(matches!(
+                error,
+                ReplayError::WithContext {
+                    migration,
+                    op_num: 1,
+                    inner,
+                    ..
+                } if migration == "0001_test"
+                    && matches!(*inner, ReplayError::InvalidOpaqueCreate { .. })
+            ));
+        }
+    }
+
+    /// Every dialect renders opaque replacement as DROP followed by stored plain CREATE.
+    #[test]
+    fn opaque_view_replacement_never_rewrites_create_source() {
+        let create = "CREATE VIEW active_users AS SELECT 2";
+        let old = ViewDef::from_raw("active_users", "CREATE VIEW active_users AS SELECT 1");
+        let mut start = Schema::default();
+        start.views.insert("active_users".to_string(), old.clone());
+        let mut migration = migration(Operation::ReplaceView {
+            old,
+            new: ViewDef::from_raw("active_users", create),
+        });
+        migration.atomic = false;
+        for dialect in [
+            Dialect::Postgres,
+            Dialect::Sqlite,
+            Dialect::Mysql,
+            Dialect::Mariadb,
+        ] {
+            let sql = dialect
+                .migration_to_sql(&migration, &start)
+                .expect("opaque replacement must render");
+            assert_eq!(sql.len(), 2);
+            assert!(sql[0].starts_with("DROP VIEW"));
+            assert_eq!(sql[1], create);
+        }
+    }
+
+    /// Direct rendering cannot bypass strict validation of opaque migration metadata.
+    #[test]
+    fn every_dialect_rejects_modified_opaque_render_source() {
+        let mut migration = migration(Operation::CreateView {
+            view: ViewDef::from_raw(
+                "active_users",
+                "CREATE OR REPLACE VIEW active_users AS SELECT 1",
+            ),
+        });
+        migration.atomic = false;
+        for dialect in [
+            Dialect::Postgres,
+            Dialect::Sqlite,
+            Dialect::Mysql,
+            Dialect::Mariadb,
+        ] {
+            let error = dialect
+                .migration_to_sql(&migration, &Schema::default())
+                .expect_err("modified opaque source must not render");
+            assert!(
+                matches!(
+                    error,
+                    crate::dialects::DialectError::Migration(ReplayError::WithContext {
+                        ref inner,
+                        ..
+                    }) if matches!(**inner, ReplayError::InvalidOpaqueCreate { ref reason, .. }
+                        if reason.contains("Gaman owns replacement"))
+                ),
+                "{dialect:?}: {error:?}"
+            );
+        }
     }
 }
