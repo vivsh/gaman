@@ -75,5 +75,7 @@ features:
     label: Quoted identifiers
   - id: unmanaged_table_options
     label: Unmanaged table options
+  - id: postgres_range_partitioning
+    label: PostgreSQL range partitioning
   - id: data_preservation
     label: Data preservation

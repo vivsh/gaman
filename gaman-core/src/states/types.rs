@@ -127,6 +127,9 @@ pub struct TableOptionsMeta {
     #[doc(hidden)]
     #[serde(default)]
     pub(crate) fingerprint: Option<String>,
+    /// Modeled PostgreSQL partition role retained in migration state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) postgres_partition: Option<PostgresPartitionMeta>,
 }
 
 impl TableOptionsMeta {
@@ -145,6 +148,7 @@ impl TableOptionsMeta {
             tail_raw,
             trusted: false,
             fingerprint,
+            postgres_partition: None,
         }
     }
 
@@ -154,7 +158,97 @@ impl TableOptionsMeta {
             && self.tail_raw.is_empty()
             && !self.trusted
             && self.fingerprint.is_none()
+            && self.postgres_partition.is_none()
     }
+}
+
+/// One PostgreSQL range-partition child definition.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PostgresRangePartition {
+    pub(crate) name: String,
+    pub(crate) start: String,
+    pub(crate) end: String,
+}
+
+impl PostgresRangePartition {
+    /// Creates a named partition with an inclusive start and exclusive end value.
+    pub fn new(name: impl Into<String>, start: impl Into<String>, end: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            start: start.into(),
+            end: end.into(),
+        }
+    }
+
+    /// Returns the stable child-table name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the inclusive lower bound rendered as a PostgreSQL literal.
+    pub fn start(&self) -> &str {
+        &self.start
+    }
+
+    /// Returns the exclusive upper bound rendered as a PostgreSQL literal.
+    pub fn end(&self) -> &str {
+        &self.end
+    }
+}
+
+/// PostgreSQL range-partition metadata registered against a modeled parent table.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PostgresRangePartitioning {
+    pub(crate) column: String,
+    #[serde(default)]
+    pub(crate) partitions: Vec<PostgresRangePartition>,
+}
+
+impl PostgresRangePartitioning {
+    /// Starts a range-partition definition for one modeled parent column.
+    pub fn new(column: impl Into<String>) -> Self {
+        Self {
+            column: column.into(),
+            partitions: Vec::new(),
+        }
+    }
+
+    /// Registers one child partition and returns the updated definition.
+    pub fn partition(
+        mut self,
+        name: impl Into<String>,
+        start: impl Into<String>,
+        end: impl Into<String>,
+    ) -> Self {
+        self.partitions
+            .push(PostgresRangePartition::new(name, start, end));
+        self
+    }
+
+    /// Returns the modeled range-key column.
+    pub fn column(&self) -> &str {
+        &self.column
+    }
+
+    /// Returns child partitions in registration order.
+    pub fn partitions(&self) -> &[PostgresRangePartition] {
+        &self.partitions
+    }
+}
+
+/// Internal parent/child role used by ordinary table operations and replay.
+#[doc(hidden)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PostgresPartitionMeta {
+    /// A range-partitioned parent table.
+    Parent { column: String },
+    /// A child table attached to a range-partitioned parent.
+    Child {
+        parent: String,
+        start: String,
+        end: String,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -543,6 +637,23 @@ impl Table {
     #[doc(hidden)]
     pub fn mark_options_trusted(&mut self) {
         self.options.trusted = true;
+    }
+
+    /// Returns the PostgreSQL range key when this table is a partitioned parent.
+    pub fn postgres_range_partition_column(&self) -> Option<&str> {
+        match &self.options.postgres_partition {
+            Some(PostgresPartitionMeta::Parent { column }) => Some(column),
+            _ => None,
+        }
+    }
+
+    /// Returns parent and bounds when this table is a PostgreSQL range partition.
+    #[doc(hidden)]
+    pub fn postgres_range_partition_child(&self) -> Option<(&str, &str, &str)> {
+        match &self.options.postgres_partition {
+            Some(PostgresPartitionMeta::Child { parent, start, end }) => Some((parent, start, end)),
+            _ => None,
+        }
     }
 }
 

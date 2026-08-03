@@ -964,6 +964,7 @@ const EXPECTED_ONLINE_FEATURES: &[&str] = &[
     "opaque_presence_verify",
     "quoted_identifiers",
     "unmanaged_table_options",
+    "postgres_range_partitioning",
     "schemas_namespaces",
     "extensions",
     "enums",

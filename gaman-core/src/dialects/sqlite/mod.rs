@@ -860,12 +860,19 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
         Operation::CreateTrigger {
             table_name,
             trigger,
-        }
-        | Operation::AlterTrigger {
+        } => Ok(vec![create_trigger_sql(table_name, trigger)?]),
+        Operation::AlterTrigger {
             table_name,
+            old,
             new: trigger,
             ..
-        } => Ok(vec![create_trigger_sql(table_name, trigger)?]),
+        } => Ok(vec![
+            format!(
+                "DROP TRIGGER {}",
+                quote_ident(old.name.as_deref().unwrap_or(""))
+            ),
+            create_trigger_sql(table_name, trigger)?,
+        ]),
         Operation::DropTrigger {
             table_name,
             trigger,
@@ -1037,6 +1044,7 @@ pub fn canonical_type(t: &str) -> String {
 }
 
 pub fn validate_schema(schema: &Schema) -> Result<(), SchemaValidationError> {
+    crate::states::reject_postgres_range_partitioning(schema, "SQLite")?;
     crate::states::reject_family_column_options(schema, "SQLite")?;
     if !schema.extensions.is_empty() {
         let names = schema

@@ -41,6 +41,7 @@ impl Schema {
                 table.name = new_name.clone();
                 self.tables.insert(new_name.clone(), table);
                 rename_fk_table_references(self, old_name, new_name);
+                rename_partition_parent_references(self, old_name, new_name);
             }
 
             Operation::AcknowledgeTableOptions {
@@ -445,6 +446,19 @@ fn rename_fk_table_references(schema: &mut Schema, old_name: &str, new_name: &st
             if fk.to_table == old_name {
                 fk.to_table = new_name.to_string();
             }
+        }
+    }
+}
+
+fn rename_partition_parent_references(schema: &mut Schema, old_name: &str, new_name: &str) {
+    for table in schema.tables.values_mut() {
+        let Some(PostgresPartitionMeta::Child { parent, .. }) =
+            &mut table.options.postgres_partition
+        else {
+            continue;
+        };
+        if parent == old_name {
+            *parent = new_name.to_string();
         }
     }
 }

@@ -2702,6 +2702,38 @@ rows:
       evidence:
         online: []
         offline: []
+- id: postgres_range_partitioning
+  label: PostgreSQL range partitioning
+  dialects:
+    postgres:
+      status: supported
+      note: Gaman models single-column RANGE parents and named bounded child partitions; converting an existing plain table requires explicit raw SQL.
+      evidence:
+        online:
+        - case: postgres_range_partitioning
+          checks:
+          - migrate
+          - verify
+          - data
+        offline: []
+    sqlite:
+      status: unsupported
+      note: PostgreSQL range-partition metadata is rejected by SQLite validation.
+      evidence:
+        online: []
+        offline: []
+    mysql:
+      status: unsupported
+      note: MySQL partition syntax is not modeled by this PostgreSQL-specific metadata.
+      evidence:
+        online: []
+        offline: []
+    mariadb:
+      status: unsupported
+      note: MariaDB partition syntax is not modeled by this PostgreSQL-specific metadata.
+      evidence:
+        online: []
+        offline: []
 - id: concurrent_indexes
   label: Concurrent indexes
   dialects:

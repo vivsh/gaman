@@ -648,6 +648,9 @@ impl Operation {
                 for col in &table.columns {
                     deps.push(Dep::new(EntityKind::Enum, &col.col_type));
                 }
+                if let Some((parent, _, _)) = table.postgres_range_partition_child() {
+                    deps.push(Dep::new(EntityKind::Table, parent));
+                }
                 deps
             }
             Self::AddColumn { table_name, column }

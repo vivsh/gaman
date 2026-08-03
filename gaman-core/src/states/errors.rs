@@ -1,9 +1,85 @@
 use thiserror::Error;
 
+/// One deterministic problem found while compiling fluent schema-builder input.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum SchemaBuilderIssue {
+    /// An extension targeted a table that is not present in the schema.
+    #[error("table '{table}' cannot be extended because it does not exist")]
+    MissingTable { table: String },
+    /// An extension closure attempted to change the identity of its table.
+    #[error("table extension changed identity from '{expected}' to '{observed}'")]
+    TableIdentityChanged { expected: String, observed: String },
+    /// An opaque declaration collided with an entity already registered under that identity.
+    #[error("duplicate {kind} identity '{entity}' in schema builder")]
+    DuplicateEntity { kind: String, entity: String },
+    /// A builder identity was not an unambiguous one- or two-part SQL name.
+    #[error("invalid qualified identity '{name}': {reason}")]
+    InvalidQualifiedName { name: String, reason: String },
+    /// An opaque definition could not prove the identity required for safe lifecycle operations.
+    #[error("invalid opaque {kind} '{entity}': {reason}")]
+    InvalidOpaqueDefinition {
+        kind: String,
+        entity: String,
+        reason: String,
+    },
+    /// An unmanaged table fragment could escape or corrupt its CREATE TABLE position.
+    #[error("invalid unmanaged {placement} on table '{table}': {reason}")]
+    InvalidUnmanagedClause {
+        table: String,
+        placement: String,
+        reason: String,
+    },
+}
+
+/// Ordered builder failures returned together from the terminal build operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaBuilderErrors {
+    issues: Vec<SchemaBuilderIssue>,
+}
+
+impl SchemaBuilderErrors {
+    /// Creates an ordered error collection from all builder validation failures.
+    pub fn new(issues: Vec<SchemaBuilderIssue>) -> Self {
+        Self { issues }
+    }
+
+    /// Returns the individual failures in deterministic schema order.
+    pub fn issues(&self) -> &[SchemaBuilderIssue] {
+        &self.issues
+    }
+}
+
+impl std::fmt::Display for SchemaBuilderErrors {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (index, issue) in self.issues.iter().enumerate() {
+            if index > 0 {
+                formatter.write_str("; ")?;
+            }
+            write!(formatter, "{issue}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for SchemaBuilderErrors {}
+
 #[derive(Debug, Error, PartialEq)]
 pub enum SchemaValidationError {
     #[error("{0}")]
     Invalid(String),
+    /// A schema uses modeled metadata that the selected dialect cannot represent.
+    #[error("{dialect} does not support {feature} on table '{table}'")]
+    UnsupportedDialectFeature {
+        /// Selected database dialect.
+        dialect: String,
+        /// Unsupported modeled capability.
+        feature: String,
+        /// Table carrying the unsupported metadata.
+        table: String,
+    },
+    /// Fluent builder declarations failed before schema preparation.
+    #[error("schema builder validation failed: {0}")]
+    Builder(#[from] SchemaBuilderErrors),
 }
 
 impl From<String> for SchemaValidationError {

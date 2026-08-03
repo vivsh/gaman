@@ -97,9 +97,28 @@ comments do not create authored migration churn. Live verification is more
 conservative: opaque definitions are generally verified by owned presence and
 stable modeled metadata, not body-text equivalence.
 
+SQL input and `SchemaBuilder::opaque` may introduce untrusted opaque
+definitions. They use the same statement classifier and raw fallback lowerer,
+then converge into the same validation, fingerprinting, clarification,
+migration, and replay lifecycle. YAML and JSON remain structured-only authored
+formats.
+
 Tables are always modeled. Dialect-specific table clauses that Gaman cannot
 manage granularly may be preserved as unmanaged options, but the table body and
 its core entities must remain understandable.
+
+Rust table builders may append unmanaged prefixes and suffixes around that
+modeled body. These clauses are preserved for table creation; changing them on
+an existing table records an acknowledged state change but requires explicit
+raw migration SQL for the physical database alteration.
+
+PostgreSQL range partitioning is modeled table metadata. A partitioned parent
+names its range key, and each child partition is a table identity with explicit
+inclusive start and exclusive end bounds. Child creation depends on its parent,
+so migration ordering is deterministic in both directions. Gaman can create or
+remove a modeled partition hierarchy, but it never converts an existing plain
+table into a partitioned table automatically; that data-moving transition
+requires an explicit raw SQL migration.
 
 ## Deterministic Migration Planning
 

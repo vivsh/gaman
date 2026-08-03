@@ -17,6 +17,19 @@ impl Schema {
     /// Rust builder input. It normalizes model shape, canonicalizes
     /// dialect-specific names/types, and validates the result exactly once.
     pub fn prepare_loaded(self, dialect: Dialect) -> Result<Self, SchemaLoadError> {
+        self.prepare_loaded_with_issues(dialect, Vec::new())
+    }
+
+    /// Completes the shared authored-input boundary with accumulated builder failures.
+    pub(crate) fn prepare_loaded_with_issues(
+        self,
+        dialect: Dialect,
+        mut issues: Vec<SchemaBuilderIssue>,
+    ) -> Result<Self, SchemaLoadError> {
+        issues.extend(validate_authored_raw(&self, dialect));
+        if !issues.is_empty() {
+            return Err(SchemaValidationError::Builder(SchemaBuilderErrors::new(issues)).into());
+        }
         Ok(self.prepare(dialect)?)
     }
 

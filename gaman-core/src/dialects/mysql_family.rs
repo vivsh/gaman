@@ -47,6 +47,7 @@ pub(super) fn validate_schema(
     schema: &Schema,
     flavor: FamilyFlavor,
 ) -> Result<(), SchemaValidationError> {
+    crate::states::reject_postgres_range_partitioning(schema, flavor.name())?;
     if !schema.extensions.is_empty() || !schema.enums.is_empty() {
         return Err(SchemaValidationError::Invalid(format!(
             "{} does not support top-level extensions or enums",
@@ -805,9 +806,12 @@ fn operation_sql(operation: &Operation, flavor: FamilyFlavor) -> Result<Vec<Stri
             "DROP VIEW {}",
             quote_name(&view.qualified_name())
         )]),
-        Operation::ReplaceView { new, .. } => {
+        Operation::ReplaceView { old, new } => {
             if let Some(raw) = new.raw_sql() {
-                Ok(vec![trim_sql(raw).to_string()])
+                Ok(vec![
+                    format!("DROP VIEW {}", quote_name(&old.qualified_name())),
+                    trim_sql(raw).to_string(),
+                ])
             } else {
                 Ok(vec![format!(
                     "CREATE OR REPLACE VIEW {} AS {}",

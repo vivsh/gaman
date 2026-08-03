@@ -1,10 +1,11 @@
 use super::{
     Column, ColumnRef, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index,
-    OpaqueMeta, PrimaryKey, Schema, SchemaLoadError, Table, TableOptionsMeta, TriggerDef, ViewDef,
-    names, schema_qualified_key,
+    OpaqueMeta, PrimaryKey, Schema, SchemaBuilderIssue, SchemaLoadError, Table, TableOptionsMeta,
+    TriggerDef, ViewDef, names, parse_qualified_name, schema_qualified_key,
 };
 use crate::column_type::ColumnType;
 use crate::dialects::Dialect;
+use crate::parsers::{OpaqueDeclaration, ParseError, parse_opaque_create};
 
 /// Map a Rust type to a table definition.
 pub trait IntoTable {
@@ -138,6 +139,11 @@ pub struct TableBuilder {
 }
 
 impl TableBuilder {
+    /// Continues fluent construction from an existing modeled table.
+    fn from_table(table: Table) -> Self {
+        Self { table }
+    }
+
     fn push_foreign_key(
         mut self,
         name: String,
@@ -467,6 +473,41 @@ impl TableBuilder {
         this
     }
 
+    /// Adds an unsupported named table constraint as an untrusted definition clause.
+    pub fn opaque_constraint(
+        mut self,
+        name: impl Into<String>,
+        definition_clause: impl Into<String>,
+    ) -> Self {
+        self.table
+            .constraints
+            .push(Constraint::from_raw(name, definition_clause));
+        self
+    }
+
+    /// Adds raw syntax rendered between CREATE and TABLE while keeping the table body modeled.
+    pub fn unmanaged_prefix(mut self, clause: impl Into<String>) -> Self {
+        let mut header = self.table.options.header_raw.clone();
+        header.push(clause.into());
+        self.replace_unmanaged_options(header, self.table.options.tail_raw.clone());
+        self
+    }
+
+    /// Adds raw syntax rendered after the modeled CREATE TABLE body.
+    pub fn unmanaged_suffix(mut self, clause: impl Into<String>) -> Self {
+        let mut tail = self.table.options.tail_raw.clone();
+        tail.push(clause.into());
+        self.replace_unmanaged_options(self.table.options.header_raw.clone(), tail);
+        self
+    }
+
+    /// Recomputes unmanaged-option trust and fingerprint without losing modeled partition metadata.
+    fn replace_unmanaged_options(&mut self, header: Vec<String>, tail: Vec<String>) {
+        let partition = self.table.options.postgres_partition.clone();
+        self.table.options = TableOptionsMeta::from_parts(header, tail);
+        self.table.options.postgres_partition = partition;
+    }
+
     pub fn build(mut self) -> Table {
         if self.table.primary_key.is_none() {
             let columns: Vec<String> = self
@@ -498,6 +539,8 @@ impl TableBuilder {
 pub struct SchemaBuilder {
     dialect: Dialect,
     state: Schema,
+    issues: Vec<SchemaBuilderIssue>,
+    opaque_declarations: Vec<OpaqueDeclaration>,
 }
 
 impl SchemaBuilder {
@@ -519,7 +562,35 @@ impl SchemaBuilder {
         Self {
             dialect,
             state: Schema::default(),
+            issues: Vec::new(),
+            opaque_declarations: Vec::new(),
         }
+    }
+
+    /// Continues fluent schema construction from an existing modeled schema.
+    pub fn from_schema(dialect: Dialect, state: Schema) -> Self {
+        Self {
+            dialect,
+            state,
+            issues: Vec::new(),
+            opaque_declarations: Vec::new(),
+        }
+    }
+
+    /// Adds one opaque CREATE statement through the same fallback used by SQL ingestion.
+    pub fn opaque(mut self, create_sql: impl Into<String>) -> Self {
+        let create_sql = create_sql.into();
+        match parse_opaque_create(&create_sql, self.dialect) {
+            Ok(declaration) => self.opaque_declarations.push(declaration),
+            Err(error) => self
+                .issues
+                .push(SchemaBuilderIssue::InvalidOpaqueDefinition {
+                    kind: "entity".to_string(),
+                    entity: "CREATE statement".to_string(),
+                    reason: opaque_parse_reason(&error),
+                }),
+        }
+        self
     }
 
     /// Add a table from any type that implements [`IntoTable`].
@@ -566,6 +637,56 @@ impl SchemaBuilder {
         self
     }
 
+    /// Additively extends an existing table without permitting identity changes.
+    pub fn extend_table(
+        mut self,
+        name: impl Into<String>,
+        configure: impl FnOnce(TableBuilder) -> TableBuilder,
+    ) -> Self {
+        let Some((name, schema)) = self.qualified_name(name.into()) else {
+            return self;
+        };
+        self.extend_table_key(schema_qualified_key(&name, schema.as_deref()), configure)
+    }
+
+    /// Parses one public builder identity while accumulating malformed input.
+    fn qualified_name(&mut self, source: String) -> Option<(String, Option<String>)> {
+        match parse_qualified_name(self.dialect, &source) {
+            Ok(identity) => Some(identity),
+            Err(reason) => {
+                self.issues.push(SchemaBuilderIssue::InvalidQualifiedName {
+                    name: source,
+                    reason,
+                });
+                None
+            }
+        }
+    }
+
+    /// Applies one table extension while retaining deterministic builder failures.
+    fn extend_table_key(
+        mut self,
+        key: String,
+        configure: impl FnOnce(TableBuilder) -> TableBuilder,
+    ) -> Self {
+        let Some(table) = self.state.tables.remove(&key) else {
+            self.issues
+                .push(SchemaBuilderIssue::MissingTable { table: key });
+            return self;
+        };
+        let expected = schema_qualified_key(&table.name, table.schema.as_deref());
+        let table = configure(TableBuilder::from_table(table)).build();
+        let observed = schema_qualified_key(&table.name, table.schema.as_deref());
+        if expected != observed {
+            self.issues.push(SchemaBuilderIssue::TableIdentityChanged {
+                expected: expected.clone(),
+                observed,
+            });
+        }
+        self.state.tables.insert(expected, table);
+        self
+    }
+
     /// Add a fully constructed view definition.
     pub fn view_def(mut self, view: ViewDef) -> Self {
         let key = schema_qualified_key(&view.name, view.schema.as_deref());
@@ -603,16 +724,127 @@ impl SchemaBuilder {
     /// Build a schema through the same normalize and prepare lifecycle as file
     /// and SQL ingestion.
     pub fn build(self) -> Result<Schema, SchemaLoadError> {
-        let dialect = self.dialect;
-        self.build_raw().prepare_loaded(dialect)
+        let Self {
+            dialect,
+            mut state,
+            mut issues,
+            opaque_declarations,
+        } = self;
+        apply_opaque_declarations(&mut state, &mut issues, opaque_declarations);
+        state.prepare_loaded_with_issues(dialect, issues)
     }
+}
 
-    /// Build a raw normalized schema without dialect preparation.
-    ///
-    /// This is intended for internal tests and low-level tooling that need to
-    /// inspect pre-validation model state. User-facing builder paths should use
-    /// [`SchemaBuilder::build`].
-    pub(crate) fn build_raw(self) -> Schema {
-        self.state
+/// Merges parser-classified opaque declarations after all modeled tables are available.
+fn apply_opaque_declarations(
+    state: &mut Schema,
+    issues: &mut Vec<SchemaBuilderIssue>,
+    declarations: Vec<OpaqueDeclaration>,
+) {
+    for declaration in declarations {
+        apply_opaque_declaration(state, issues, declaration);
+    }
+}
+
+fn apply_opaque_declaration(
+    state: &mut Schema,
+    issues: &mut Vec<SchemaBuilderIssue>,
+    declaration: OpaqueDeclaration,
+) {
+    match declaration {
+        OpaqueDeclaration::Index { table, value } => {
+            let Some(owner) = state.tables.get_mut(&table) else {
+                issues.push(SchemaBuilderIssue::MissingTable { table });
+                return;
+            };
+            insert_owned_index(owner, issues, &table, value);
+        }
+        OpaqueDeclaration::Trigger { table, value } => {
+            let Some(owner) = state.tables.get_mut(&table) else {
+                issues.push(SchemaBuilderIssue::MissingTable { table });
+                return;
+            };
+            insert_owned_trigger(owner, issues, &table, value);
+        }
+        OpaqueDeclaration::Function { key, value } => {
+            insert_root(&mut state.functions, issues, "function", key, value)
+        }
+        OpaqueDeclaration::View { key, value } => {
+            insert_root(&mut state.views, issues, "view", key, value)
+        }
+        OpaqueDeclaration::Extension { key, value } => {
+            insert_root(&mut state.extensions, issues, "extension", key, value)
+        }
+        OpaqueDeclaration::Enum { key, value } => {
+            insert_root(&mut state.enums, issues, "enum", key, value)
+        }
+    }
+}
+
+fn insert_root<T>(
+    entities: &mut std::collections::BTreeMap<String, T>,
+    issues: &mut Vec<SchemaBuilderIssue>,
+    kind: &str,
+    key: String,
+    value: T,
+) {
+    match entities.entry(key) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(value);
+        }
+        std::collections::btree_map::Entry::Occupied(entry) => {
+            issues.push(SchemaBuilderIssue::DuplicateEntity {
+                kind: kind.to_string(),
+                entity: entry.key().clone(),
+            });
+        }
+    }
+}
+
+fn insert_owned_index(
+    table: &mut Table,
+    issues: &mut Vec<SchemaBuilderIssue>,
+    table_key: &str,
+    index: Index,
+) {
+    if table
+        .indexes
+        .iter()
+        .any(|current| current.name == index.name)
+    {
+        issues.push(SchemaBuilderIssue::DuplicateEntity {
+            kind: "index".to_string(),
+            entity: format!("{table_key}.{}", index.name),
+        });
+    } else {
+        table.indexes.push(index);
+    }
+}
+
+fn insert_owned_trigger(
+    table: &mut Table,
+    issues: &mut Vec<SchemaBuilderIssue>,
+    table_key: &str,
+    trigger: TriggerDef,
+) {
+    let name = trigger.name.clone().unwrap_or_default();
+    if table
+        .triggers
+        .iter()
+        .any(|current| current.name == trigger.name)
+    {
+        issues.push(SchemaBuilderIssue::DuplicateEntity {
+            kind: "trigger".to_string(),
+            entity: format!("{table_key}.{name}"),
+        });
+    } else {
+        table.triggers.push(trigger);
+    }
+}
+
+fn opaque_parse_reason(error: &ParseError) -> String {
+    match error {
+        ParseError::UnsupportedStatement { reason, .. } => reason.clone(),
+        _ => error.to_string(),
     }
 }

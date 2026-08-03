@@ -1,0 +1,45 @@
+description: PostgreSQL creates routes and verifies monthly range partitions.
+features: [live_migration_application, live_inspect_verify, tables_columns, postgres_range_partitioning, data_preservation]
+migrations:
+  - id: 0001_partitioned_ledger
+    operations:
+      - type: create_table
+        table:
+          name: partition_ledger
+          columns:
+            - {name: url, type: text}
+            - {name: purge_at, type: timestamp with time zone}
+          options:
+            postgres_partition:
+              kind: parent
+              column: purge_at
+      - type: create_table
+        table:
+          name: partition_ledger_2026_01
+          columns: []
+          options:
+            postgres_partition:
+              kind: child
+              parent: partition_ledger
+              start: "2026-01-01 00:00:00+00"
+              end: "2026-02-01 00:00:00+00"
+      - type: create_table
+        table:
+          name: partition_ledger_2026_02
+          columns: []
+          options:
+            postgres_partition:
+              kind: child
+              parent: partition_ledger
+              start: "2026-02-01 00:00:00+00"
+              end: "2026-03-01 00:00:00+00"
+dialects:
+  postgres:
+    checks: [migrate, verify, data]
+    expect_verification:
+      findings: []
+      operations: []
+    data:
+      - sql: "INSERT INTO partition_ledger (url, purge_at) VALUES ('jan', '2026-01-15 00:00:00+00'), ('feb', '2026-02-15 00:00:00+00')"
+      - sql: "SELECT tableoid::regclass::text FROM partition_ledger ORDER BY url"
+        expect: [partition_ledger_2026_02, partition_ledger_2026_01]

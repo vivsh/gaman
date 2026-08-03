@@ -1,6 +1,6 @@
 # Support Evidence
 
-Evidence generation: `20260802T110657Z-42232`.
+Evidence generation: `20260803T143148Z-53550`.
 
 This is Gaman's authoritative compatibility reference. It expands the README lifecycle summary with the full feature matrix, limitations, and accepted fixture evidence for parsing, inspection, and `verify` drift detection.
 
@@ -39,6 +39,7 @@ Legend: ✅ accepted evidence, ◐ bounded support, 🚧 planned or not evidence
 | Check constraints | ✅ | ✅ | ✅ | 🚧 |
 | Indexes | ✅ | ✅ | ✅ | 🚧 |
 | Partial indexes | ✅ | ◐ | ❌ | 🚧 |
+| PostgreSQL range partitioning | ✅ | ❌ | ❌ | ❌ |
 | Concurrent indexes | ✅ | ❌ | 🚧 | 🚧 |
 | Schemas / namespaces | ✅ | ❌ | ❌ | ❌ |
 | Extensions as opaque schema objects | ✅ | ❌ | ❌ | ❌ |
@@ -63,6 +64,9 @@ Legend: ✅ accepted evidence, ◐ bounded support, 🚧 planned or not evidence
 - Automatic primary-key mutation generation (postgres/sqlite/mysql/mariadb): Primary-key surgery is intentionally manual/raw SQL for every dialect.
 - Partial indexes (mysql): MySQL does not support predicate-based partial indexes; prefix and advanced indexes use Gaman's opaque index lifecycle.
 - Partial indexes (sqlite): SQLite partial-index SQL rendering is proven offline; live predicate introspection/verify is not yet accepted evidence.
+- PostgreSQL range partitioning (mariadb): MariaDB partition syntax is not modeled by this PostgreSQL-specific metadata.
+- PostgreSQL range partitioning (mysql): MySQL partition syntax is not modeled by this PostgreSQL-specific metadata.
+- PostgreSQL range partitioning (sqlite): PostgreSQL range-partition metadata is rejected by SQLite validation.
 - Concurrent indexes (sqlite): SQLite has no CREATE INDEX CONCURRENTLY syntax.
 - Schemas / namespaces (mariadb): MariaDB does not use PostgreSQL-style schemas/namespaces in Gaman.
 - Schemas / namespaces (mysql): MySQL does not use PostgreSQL-style schemas/namespaces in Gaman.
@@ -560,6 +564,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`postgres_default_canonical_forms`](tests/cases/online/postgres_default_canonical_forms.yaml): PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift. (`migrate, verify`)
 - [`postgres_opaque_index_with_modeled_drift`](tests/cases/online/postgres_opaque_index_with_modeled_drift.yaml): PostgreSQL modeled column drift remains visible beside an owned opaque index. (`verify`)
 - [`postgres_pgcrypto_uuid`](tests/cases/online/postgres_pgcrypto_uuid.yaml): PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type (`migrate, inspect, verify, data`)
+- [`postgres_range_partitioning`](tests/cases/online/postgres_range_partitioning.yaml): PostgreSQL creates routes and verifies monthly range partitions. (`migrate, verify, data`)
 - [`postgres_verify_enum_drift`](tests/cases/online/postgres_verify_enum_drift.yaml): PostgreSQL verify reports owned enum label order drift (`verify`)
 - [`postgres_verify_fk_on_delete_drift`](tests/cases/online/postgres_verify_fk_on_delete_drift.yaml): PostgreSQL verify reports foreign key on_delete drift (`verify`)
 - [`postgres_verify_function_body_ignored`](tests/cases/online/postgres_verify_function_body_ignored.yaml): PostgreSQL verify ignores body-only function drift (`verify`)
@@ -685,6 +690,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 ##### PostgreSQL
 
 - [`postgres_pgcrypto_uuid`](tests/cases/online/postgres_pgcrypto_uuid.yaml): PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type (`migrate, inspect, verify, data`)
+- [`postgres_range_partitioning`](tests/cases/online/postgres_range_partitioning.yaml): PostgreSQL creates routes and verifies monthly range partitions. (`migrate, verify, data`)
 - [`quoted_identifiers_shared`](tests/cases/online/quoted_identifiers_shared.yaml): PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers. (`migrate, inspect, verify, data`)
 - [`verify_detects_changed_column_metadata`](tests/cases/online/verify_detects_changed_column_metadata.yaml): verify reports changed metadata for owned columns (`verify`)
 - [`verify_ignores_untracked_column`](tests/cases/online/verify_ignores_untracked_column.yaml): verify ignores a live-only column on an owned table (`verify`)

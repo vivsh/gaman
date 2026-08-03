@@ -1,4 +1,4 @@
-generation: 20260802T110657Z-42232
+generation: 20260803T143148Z-53550
 features:
   check_constraints:
     mariadb:
@@ -407,6 +407,12 @@ features:
         checks:
         - migrate
         - inspect
+        - data
+      - case: postgres_range_partitioning
+        description: PostgreSQL creates routes and verifies monthly range partitions.
+        checks:
+        - migrate
+        - verify
         - data
       - case: quoted_identifiers_shared
         description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
@@ -1146,6 +1152,12 @@ features:
         - inspect
         - verify
         - data
+      - case: postgres_range_partitioning
+        description: PostgreSQL creates routes and verifies monthly range partitions.
+        checks:
+        - migrate
+        - verify
+        - data
       - case: postgres_verify_enum_drift
         description: PostgreSQL verify reports owned enum label order drift
         checks:
@@ -1656,6 +1668,12 @@ features:
         checks:
         - migrate
         - inspect
+        - verify
+        - data
+      - case: postgres_range_partitioning
+        description: PostgreSQL creates routes and verifies monthly range partitions.
+        checks:
+        - migrate
         - verify
         - data
       - case: postgres_view_replace
@@ -2347,6 +2365,25 @@ features:
         - migrate
         - verify
         - data
+  postgres_range_partitioning:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: postgres_range_partitioning
+        description: PostgreSQL creates routes and verifies monthly range partitions.
+        checks:
+        - migrate
+        - verify
+        - data
+    sqlite:
+      status: unimplemented
+      reason: dialect section missing
   quoted_identifiers:
     mariadb:
       status: unimplemented
@@ -2861,6 +2898,12 @@ features:
         checks:
         - migrate
         - inspect
+        - verify
+        - data
+      - case: postgres_range_partitioning
+        description: PostgreSQL creates routes and verifies monthly range partitions.
+        checks:
+        - migrate
         - verify
         - data
       - case: quoted_identifiers_shared

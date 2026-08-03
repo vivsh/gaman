@@ -9,8 +9,37 @@ use super::{postgres, sqlite};
 use crate::dialects::Dialect;
 use crate::states::types::EntityKind;
 use crate::states::{
-    ExtensionDef, FunctionDef, Index, Schema, Table, TriggerDef, ViewDef, schema_qualified_key,
+    EnumDef, ExtensionDef, FunctionDef, Index, OpaqueMeta, Schema, Table, TriggerDef, ViewDef,
+    schema_qualified_key,
 };
+
+/// One classifiable opaque CREATE declaration shared by SQL and Rust ingestion.
+pub(crate) enum OpaqueDeclaration {
+    Index { table: String, value: Index },
+    Trigger { table: String, value: TriggerDef },
+    Function { key: String, value: FunctionDef },
+    View { key: String, value: ViewDef },
+    Extension { key: String, value: ExtensionDef },
+    Enum { key: String, value: EnumDef },
+}
+
+/// Classifies one raw CREATE statement through the SQL parser's opaque fallback path.
+pub(crate) fn parse_opaque_create(
+    source: &str,
+    dialect: Dialect,
+) -> Result<OpaqueDeclaration, ParseError> {
+    let segments = segment_sql(source, dialect)?;
+    if segments.len() != 1 {
+        return Err(ParseError::unsupported(
+            dialect,
+            source,
+            "opaque input must contain exactly one CREATE statement",
+        ));
+    }
+    let segment = &segments[0];
+    ensure_schema_segment(segment, dialect)?;
+    opaque_declaration_from_segment(segment, dialect)
+}
 
 pub(crate) struct ParseContext {
     pub(crate) schema: Schema,
@@ -216,6 +245,15 @@ fn lower_raw_segment(
     ctx: &mut ParseContext,
     dialect: Dialect,
 ) -> Result<(), ParseError> {
+    let declaration = opaque_declaration_from_segment(segment, dialect)?;
+    apply_opaque_declaration(ctx, declaration)
+}
+
+/// Produces the sole raw declaration shape used by every opaque ingestion frontend.
+fn opaque_declaration_from_segment(
+    segment: &SqlSegment,
+    dialect: Dialect,
+) -> Result<OpaqueDeclaration, ParseError> {
     let Some(SqlStatementKind::Ddl(ddl)) = &segment.kind else {
         return Err(ParseError::unsupported(
             dialect,
@@ -236,33 +274,57 @@ fn lower_raw_segment(
             segment.sql.clone(),
             "CREATE TABLE must parse into a modeled table; opaque tables are not supported",
         )),
-        EntityKind::Index => lower_raw_index(segment, ctx, dialect, name, ddl.owner.as_ref()),
-        EntityKind::Trigger => lower_raw_trigger(segment, ctx, dialect, name, ddl.owner.as_ref()),
+        EntityKind::Index => opaque_index(segment, dialect, name, ddl.owner.as_ref()),
+        EntityKind::Trigger => opaque_trigger(segment, dialect, name, ddl.owner.as_ref()),
         EntityKind::Function => {
-            let (name, schema) = object_name_parts(name);
+            let (name, schema) = opaque_object_parts(segment, dialect, name)?;
             let key = schema_qualified_key(&name, schema.as_deref());
             let mut function = FunctionDef::from_raw(name, segment.sql.clone());
             function.schema = schema;
-            ctx.schema.functions.insert(key, function);
-            Ok(())
+            function.arguments = crate::states::extract_function_arguments(dialect, &segment.sql)
+                .unwrap_or_default();
+            Ok(OpaqueDeclaration::Function {
+                key,
+                value: function,
+            })
         }
         EntityKind::View => {
-            let (name, schema) = object_name_parts(name);
+            let (name, schema) = opaque_object_parts(segment, dialect, name)?;
             let key = schema_qualified_key(&name, schema.as_deref());
             let mut view = ViewDef::from_raw(name, segment.sql.clone());
             view.schema = schema;
-            ctx.schema.views.insert(key, view);
-            Ok(())
+            Ok(OpaqueDeclaration::View { key, value: view })
         }
         EntityKind::Extension => {
-            let (name, schema) = object_name_parts(name);
-            let key = schema_qualified_key(&name, schema.as_deref());
-            let mut extension = ExtensionDef::from_raw(name, segment.sql.clone());
-            extension.schema = schema;
-            ctx.schema.extensions.insert(key, extension);
-            Ok(())
+            let (name, schema) = opaque_object_parts(segment, dialect, name)?;
+            if schema.is_some() {
+                return Err(ParseError::unsupported(
+                    dialect,
+                    segment.sql.clone(),
+                    "extension identity cannot be schema-qualified",
+                ));
+            }
+            let extension = ExtensionDef::from_raw(name, segment.sql.clone());
+            let key = extension.name.clone();
+            Ok(OpaqueDeclaration::Extension {
+                key,
+                value: extension,
+            })
         }
-        EntityKind::Enum | EntityKind::Column | EntityKind::ForeignKey | EntityKind::Constraint => {
+        EntityKind::Enum => {
+            let (name, schema) = opaque_object_parts(segment, dialect, name)?;
+            let key = schema_qualified_key(&name, schema.as_deref());
+            Ok(OpaqueDeclaration::Enum {
+                key,
+                value: EnumDef {
+                    name,
+                    schema,
+                    values: Vec::new(),
+                    opaque: OpaqueMeta::from_raw(segment.sql.clone()),
+                },
+            })
+        }
+        EntityKind::Column | EntityKind::ForeignKey | EntityKind::Constraint => {
             Err(ParseError::unsupported(
                 dialect,
                 segment.sql.clone(),
@@ -272,13 +334,12 @@ fn lower_raw_segment(
     }
 }
 
-fn lower_raw_index(
+fn opaque_index(
     segment: &SqlSegment,
-    ctx: &mut ParseContext,
     dialect: Dialect,
     name: &SqlObjectName,
     owner: Option<&SqlObjectName>,
-) -> Result<(), ParseError> {
+) -> Result<OpaqueDeclaration, ParseError> {
     let Some(owner) = owner else {
         return Err(ParseError::unsupported(
             dialect,
@@ -286,20 +347,28 @@ fn lower_raw_index(
             "opaque index fallback requires a recoverable target table after ON",
         ));
     };
-    let (table, schema) = object_name_parts(owner);
+    let (table, schema) = opaque_object_parts(segment, dialect, owner)?;
     let table_name = schema_qualified_key(&table, schema.as_deref());
-    let (index_name, _) = object_name_parts(name);
-    ctx.push_index((table_name, Index::from_raw(index_name, segment.sql.clone())));
-    Ok(())
+    let (index_name, index_schema) = opaque_object_parts(segment, dialect, name)?;
+    if index_schema.is_some() && index_schema != schema {
+        return Err(ParseError::unsupported(
+            dialect,
+            segment.sql.clone(),
+            "opaque index schema must match its target table schema",
+        ));
+    }
+    Ok(OpaqueDeclaration::Index {
+        table: table_name,
+        value: Index::from_raw(index_name, segment.sql.clone()),
+    })
 }
 
-fn lower_raw_trigger(
+fn opaque_trigger(
     segment: &SqlSegment,
-    ctx: &mut ParseContext,
     dialect: Dialect,
     name: &SqlObjectName,
     owner: Option<&SqlObjectName>,
-) -> Result<(), ParseError> {
+) -> Result<OpaqueDeclaration, ParseError> {
     let Some(owner) = owner else {
         return Err(ParseError::unsupported(
             dialect,
@@ -307,20 +376,82 @@ fn lower_raw_trigger(
             "opaque trigger fallback requires a recoverable target table after ON",
         ));
     };
-    let (table, schema) = object_name_parts(owner);
+    let (table, schema) = opaque_object_parts(segment, dialect, owner)?;
     let table_name = schema_qualified_key(&table, schema.as_deref());
-    let table =
-        ctx.schema
+    let (trigger_name, trigger_schema) = opaque_object_parts(segment, dialect, name)?;
+    if trigger_schema.is_some() {
+        return Err(ParseError::unsupported(
+            dialect,
+            segment.sql.clone(),
+            "trigger identity must be table-scoped and unqualified",
+        ));
+    }
+    Ok(OpaqueDeclaration::Trigger {
+        table: table_name,
+        value: TriggerDef::from_raw(trigger_name, segment.sql.clone()),
+    })
+}
+
+/// Applies a classified raw declaration to SQL parser state without reclassification.
+fn apply_opaque_declaration(
+    ctx: &mut ParseContext,
+    declaration: OpaqueDeclaration,
+) -> Result<(), ParseError> {
+    match declaration {
+        OpaqueDeclaration::Index { table, value } => ctx.push_index((table, value)),
+        OpaqueDeclaration::Trigger { table, value } => ctx
+            .schema
             .tables
-            .get_mut(&table_name)
+            .get_mut(&table)
             .ok_or_else(|| ParseError::UnknownTriggerTable {
-                table: table_name.clone(),
-            })?;
-    let (trigger_name, _) = object_name_parts(name);
-    table
-        .triggers
-        .push(TriggerDef::from_raw(trigger_name, segment.sql.clone()));
+                table: table.clone(),
+            })?
+            .triggers
+            .push(value),
+        OpaqueDeclaration::Function { key, value } => {
+            ctx.schema.functions.insert(key, value);
+        }
+        OpaqueDeclaration::View { key, value } => {
+            ctx.schema.views.insert(key, value);
+        }
+        OpaqueDeclaration::Extension { key, value } => {
+            ctx.schema.extensions.insert(key, value);
+        }
+        OpaqueDeclaration::Enum { key, value } => {
+            ctx.schema.enums.insert(key, value);
+        }
+    }
     Ok(())
+}
+
+fn opaque_object_parts(
+    segment: &SqlSegment,
+    dialect: Dialect,
+    name: &SqlObjectName,
+) -> Result<(String, Option<String>), ParseError> {
+    let parts = match name.parts.as_slice() {
+        [schema, name] if schema != "public" => Ok((name.clone(), Some(schema.clone()))),
+        [_, name] => Ok((name.clone(), None)),
+        [name] => Ok((name.clone(), None)),
+        _ => Err(ParseError::unsupported(
+            dialect,
+            segment.sql.clone(),
+            "opaque identity must be an unambiguous one- or two-part name",
+        )),
+    }?;
+    if parts.0.contains('.')
+        || parts
+            .1
+            .as_deref()
+            .is_some_and(|schema| schema.contains('.'))
+    {
+        return Err(ParseError::unsupported(
+            dialect,
+            segment.sql.clone(),
+            "opaque identity components containing dots are not supported",
+        ));
+    }
+    Ok(parts)
 }
 
 fn object_name_parts(name: &SqlObjectName) -> (String, Option<String>) {

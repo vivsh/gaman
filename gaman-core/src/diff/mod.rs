@@ -19,6 +19,10 @@ pub enum DiffError {
         "primary key changes on existing table '{0}' are not generated automatically; use an explicit SQL statement migration"
     )]
     PrimaryKeyMutation(String),
+    #[error(
+        "PostgreSQL partition metadata on existing table '{0}' cannot be changed automatically; use an explicit raw SQL migration"
+    )]
+    PostgresPartitionMutation(String),
 }
 
 // Walk the schema maps directly. The BTreeMap keys are the canonical identity
@@ -1017,6 +1021,7 @@ impl DiffEngine {
         let mut previous = previous.clone();
         current.canonicalize(dialect);
         previous.canonicalize(dialect);
+        reject_postgres_partition_mutations(&current, &previous)?;
         reject_primary_key_mutations(&current, &previous)?;
 
         let raw_ops = generate_diff_for_dialect(&current, &previous, dialect);
@@ -1026,6 +1031,21 @@ impl DiffEngine {
         let ops = sort_operations(ops)?;
         Ok(merge_operations(ops, dialect))
     }
+}
+
+fn reject_postgres_partition_mutations(
+    current: &Schema,
+    previous: &Schema,
+) -> Result<(), DiffError> {
+    for (name, current_table) in &current.tables {
+        let Some(previous_table) = previous.tables.get(name) else {
+            continue;
+        };
+        if current_table.options.postgres_partition != previous_table.options.postgres_partition {
+            return Err(DiffError::PostgresPartitionMutation(name.clone()));
+        }
+    }
+    Ok(())
 }
 
 fn generate_diff_for_dialect(

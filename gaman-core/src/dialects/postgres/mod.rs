@@ -276,7 +276,8 @@ pub fn canonical_type(t: &str) -> String {
 }
 
 pub fn validate_schema(schema: &Schema) -> Result<(), SchemaValidationError> {
-    crate::states::reject_family_column_options(schema, "PostgreSQL")
+    crate::states::reject_family_column_options(schema, "PostgreSQL")?;
+    crate::states::validate_postgres_range_partitioning(schema)
 }
 
 pub fn is_catalog_type(t: &str) -> bool {
@@ -513,6 +514,15 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
     })?;
     let stmts = match op {
         Operation::CreateTable { table } => {
+            if let Some((parent, start, end)) = table.postgres_range_partition_child() {
+                return Ok(vec![format!(
+                    "CREATE TABLE {} PARTITION OF {} FOR VALUES FROM ({}) TO ({})",
+                    qualified_table(table),
+                    quote_table_name(parent),
+                    quote_literal(start),
+                    quote_literal(end)
+                )]);
+            }
             let render_inline_pk = table.primary_key.is_none();
             let mut parts: Vec<String> = table
                 .columns
@@ -530,8 +540,12 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             }
             let header = table_options_prefix(table);
             let tail = table_options_suffix(table);
+            let partitioning = table
+                .postgres_range_partition_column()
+                .map(|column| format!(" PARTITION BY RANGE ({})", quote_ident(column)))
+                .unwrap_or_default();
             let mut stmts = vec![format!(
-                "CREATE {header}TABLE {} ({}){tail}",
+                "CREATE {header}TABLE {} ({}){partitioning}{tail}",
                 qualified_table(table),
                 parts.join(", ")
             )];
@@ -671,7 +685,7 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             )]
         }
         Operation::AlterFunction { old, new } => {
-            if old.arguments == new.arguments {
+            if old.arguments == new.arguments && !old.is_opaque() && !new.is_opaque() {
                 vec![create_function_sql(new)?]
             } else {
                 vec![
@@ -694,6 +708,16 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             new,
             ..
         } => {
+            if old.is_opaque() || new.is_opaque() {
+                let name = old.name.as_deref().unwrap_or("");
+                let mut statements = vec![format!(
+                    "DROP TRIGGER {} ON {}",
+                    quote_ident(name),
+                    quote_table_name(table_name)
+                )];
+                statements.extend(create_trigger_statements(table_name, new)?);
+                return Ok(statements);
+            }
             let mut statements = create_trigger_statements(table_name, new)?;
             if old.query.is_some() && new.query.is_none() {
                 statements.push(drop_generated_trigger_function_sql(old));
@@ -729,9 +753,12 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
         Operation::DropView { view } => {
             vec![format!("DROP VIEW {}", qualified_view(view))]
         }
-        Operation::ReplaceView { new, .. } => {
+        Operation::ReplaceView { old, new } => {
             if let Some(raw) = new.raw_sql() {
-                vec![trim_sql_terminator(raw).to_string()]
+                vec![
+                    format!("DROP VIEW {}", qualified_view(old)),
+                    trim_sql_terminator(raw).to_string(),
+                ]
             } else {
                 vec![format!(
                     "CREATE OR REPLACE VIEW {} AS {}",

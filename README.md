@@ -168,7 +168,7 @@ Legend: ✅ accepted evidence, ◐ bounded support, 🚧 planned or not evidence
 yet, ❌ unsupported by design or by the database engine.
 
 <!-- gaman:support-matrix:start -->
-<!-- evidence-generation: 20260802T110657Z-42232 -->
+<!-- evidence-generation: 20260803T143148Z-53550 -->
 | Feature | PostgreSQL | SQLite | MySQL | MariaDB |
 | --- | --- | --- | --- | --- |
 | Offline replay, diff, and migration generation | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |

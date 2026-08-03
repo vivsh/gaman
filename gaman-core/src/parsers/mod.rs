@@ -40,4 +40,4 @@ pub use segments::{
     DdlStatementKind, DmlStatementKind, SqlObjectName, SqlSegment, SqlStatementKind, segment_sql,
 };
 pub use sql::parse_sql;
-pub(crate) use sql::parse_sql_raw;
+pub(crate) use sql::{OpaqueDeclaration, parse_opaque_create, parse_sql_raw};
