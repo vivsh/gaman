@@ -1,4 +1,4 @@
-generation: 20260803T143148Z-53550
+generation: 20260806T083520Z-11686
 features:
   check_constraints:
     mariadb:
@@ -309,6 +309,32 @@ features:
     mysql:
       status: success
       evidence:
+      - case: managed_rows_fake_verified
+        description: verified fake application adopts matching existing managed rows and records the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - migration_records
+        - data
+      - case: managed_rows_fake_verified_refusal
+        description: verified fake application refuses mismatching managed rows without recording the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - error
+        - migration_records
+        - data
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
+        - migration_records
+        - data
+      - case: managed_rows_repair
+        description: managed-row repair restores owned values without touching unmanaged rows or columns
+        checks:
+        - repair
+        - data
       - case: mysql_rename_table_column
         description: MySQL renames tables and columns while preserving stored data.
         checks:
@@ -401,6 +427,32 @@ features:
         description: linear migration chains apply in dependency order
         checks:
         - migrate
+        - data
+      - case: managed_rows_fake_verified
+        description: verified fake application adopts matching existing managed rows and records the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - migration_records
+        - data
+      - case: managed_rows_fake_verified_refusal
+        description: verified fake application refuses mismatching managed rows without recording the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - error
+        - migration_records
+        - data
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
+        - migration_records
+        - data
+      - case: managed_rows_repair
+        description: managed-row repair restores owned values without touching unmanaged rows or columns
+        checks:
+        - repair
         - data
       - case: postgres_function_name_trigger
         description: PostgreSQL function-name triggers execute and inspect stable wiring
@@ -512,6 +564,32 @@ features:
         description: linear migration chains apply in dependency order
         checks:
         - migrate
+        - data
+      - case: managed_rows_fake_verified
+        description: verified fake application adopts matching existing managed rows and records the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - migration_records
+        - data
+      - case: managed_rows_fake_verified_refusal
+        description: verified fake application refuses mismatching managed rows without recording the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - error
+        - migration_records
+        - data
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
+        - migration_records
+        - data
+      - case: managed_rows_repair
+        description: managed-row repair restores owned values without touching unmanaged rows or columns
+        checks:
+        - repair
         - data
       - case: quoted_identifiers_shared
         description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
@@ -1017,6 +1095,26 @@ features:
         - migrate
         - verify
         - data
+      - case: managed_rows_fake_verified
+        description: verified fake application adopts matching existing managed rows and records the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - migration_records
+        - data
+      - case: managed_rows_fake_verified_refusal
+        description: verified fake application refuses mismatching managed rows without recording the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - error
+        - migration_records
+        - data
+      - case: managed_rows_repair
+        description: managed-row repair restores owned values without touching unmanaged rows or columns
+        checks:
+        - repair
+        - data
       - case: mysql_advanced_indexes
         description: MySQL advanced index forms remain opaque and never block live verification.
         checks:
@@ -1099,6 +1197,26 @@ features:
         description: linear migration chains apply in dependency order
         checks:
         - migrate
+        - data
+      - case: managed_rows_fake_verified
+        description: verified fake application adopts matching existing managed rows and records the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - migration_records
+        - data
+      - case: managed_rows_fake_verified_refusal
+        description: verified fake application refuses mismatching managed rows without recording the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - error
+        - migration_records
+        - data
+      - case: managed_rows_repair
+        description: managed-row repair restores owned values without touching unmanaged rows or columns
+        checks:
+        - repair
         - data
       - case: postgres_advanced_index_metadata_inspect
         description: PostgreSQL inspect rejects advanced opaque indexes from authored YAML export
@@ -1334,6 +1452,26 @@ features:
         checks:
         - migrate
         - data
+      - case: managed_rows_fake_verified
+        description: verified fake application adopts matching existing managed rows and records the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - migration_records
+        - data
+      - case: managed_rows_fake_verified_refusal
+        description: verified fake application refuses mismatching managed rows without recording the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - error
+        - migration_records
+        - data
+      - case: managed_rows_repair
+        description: managed-row repair restores owned values without touching unmanaged rows or columns
+        checks:
+        - repair
+        - data
       - case: quoted_identifiers_shared
         description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
         checks:
@@ -1439,6 +1577,12 @@ features:
         checks:
         - migrate
         - verify
+        - data
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
+        - migration_records
         - data
       - case: mysql_advanced_indexes
         description: MySQL advanced index forms remain opaque and never block live verification.
@@ -1625,6 +1769,12 @@ features:
         description: linear migration chains apply in dependency order
         checks:
         - migrate
+        - data
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
+        - migration_records
         - data
       - case: postgres_default_canonical_forms
         description: PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift.
@@ -1841,6 +1991,12 @@ features:
         checks:
         - migrate
         - data
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
+        - migration_records
+        - data
       - case: quoted_identifiers_shared
         description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
         checks:
@@ -1941,6 +2097,97 @@ features:
     sqlite:
       status: unimplemented
       reason: dialect section missing
+  managed_rows:
+    mariadb:
+      status: unimplemented
+      reason: MARIADB_DATABASE_URL is not set
+    mysql:
+      status: success
+      evidence:
+      - case: managed_rows_fake_verified
+        description: verified fake application adopts matching existing managed rows and records the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - migration_records
+        - data
+      - case: managed_rows_fake_verified_refusal
+        description: verified fake application refuses mismatching managed rows without recording the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - error
+        - migration_records
+        - data
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
+        - migration_records
+        - data
+      - case: managed_rows_repair
+        description: managed-row repair restores owned values without touching unmanaged rows or columns
+        checks:
+        - repair
+        - data
+    postgres:
+      status: success
+      evidence:
+      - case: managed_rows_fake_verified
+        description: verified fake application adopts matching existing managed rows and records the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - migration_records
+        - data
+      - case: managed_rows_fake_verified_refusal
+        description: verified fake application refuses mismatching managed rows without recording the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - error
+        - migration_records
+        - data
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
+        - migration_records
+        - data
+      - case: managed_rows_repair
+        description: managed-row repair restores owned values without touching unmanaged rows or columns
+        checks:
+        - repair
+        - data
+    sqlite:
+      status: success
+      evidence:
+      - case: managed_rows_fake_verified
+        description: verified fake application adopts matching existing managed rows and records the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - migration_records
+        - data
+      - case: managed_rows_fake_verified_refusal
+        description: verified fake application refuses mismatching managed rows without recording the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - error
+        - migration_records
+        - data
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
+        - migration_records
+        - data
+      - case: managed_rows_repair
+        description: managed-row repair restores owned values without touching unmanaged rows or columns
+        checks:
+        - repair
+        - data
   migration_tracking:
     mariadb:
       status: unimplemented
@@ -1948,6 +2195,27 @@ features:
     mysql:
       status: success
       evidence:
+      - case: managed_rows_fake_verified
+        description: verified fake application adopts matching existing managed rows and records the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - migration_records
+        - data
+      - case: managed_rows_fake_verified_refusal
+        description: verified fake application refuses mismatching managed rows without recording the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - error
+        - migration_records
+        - data
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
+        - migration_records
+        - data
       - case: mysql_lifecycle_tracking
         description: MySQL repeatedly applies migrations idempotently and preserves tracking records.
         checks:
@@ -2021,6 +2289,27 @@ features:
         - migrate_to
         - migration_records
         - data
+      - case: managed_rows_fake_verified
+        description: verified fake application adopts matching existing managed rows and records the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - migration_records
+        - data
+      - case: managed_rows_fake_verified_refusal
+        description: verified fake application refuses mismatching managed rows without recording the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - error
+        - migration_records
+        - data
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
+        - migration_records
+        - data
     sqlite:
       status: success
       evidence:
@@ -2062,6 +2351,27 @@ features:
         description: target migrate applies only migrations through the requested target
         checks:
         - migrate_to
+        - migration_records
+        - data
+      - case: managed_rows_fake_verified
+        description: verified fake application adopts matching existing managed rows and records the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - migration_records
+        - data
+      - case: managed_rows_fake_verified_refusal
+        description: verified fake application refuses mismatching managed rows without recording the migration
+        checks:
+        - migrate_to
+        - fake_verified
+        - error
+        - migration_records
+        - data
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
         - migration_records
         - data
   non_transactional_failure_reporting:
@@ -2451,6 +2761,12 @@ features:
     mysql:
       status: success
       evidence:
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
+        - migration_records
+        - data
       - case: mysql_rollback_tracking
         description: MySQL rollback reverses later migrations and removes their tracking records.
         checks:
@@ -2467,6 +2783,12 @@ features:
         - migration_records
         - inspect
         - data
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
+        - migration_records
+        - data
     sqlite:
       status: success
       evidence:
@@ -2476,6 +2798,12 @@ features:
         - rollback
         - migration_records
         - inspect
+        - data
+      - case: managed_rows_lifecycle
+        description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+        checks:
+        - rollback
+        - migration_records
         - data
   schemas_namespaces:
     mariadb:

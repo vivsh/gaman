@@ -6,6 +6,7 @@ use super::{
 use crate::column_type::ColumnType;
 use crate::dialects::Dialect;
 use crate::parsers::{OpaqueDeclaration, opaque_parse_reason, parse_opaque_create};
+use serde::Serialize;
 
 /// Map a Rust type to a table definition.
 pub trait IntoTable {
@@ -605,6 +606,34 @@ impl SchemaBuilder {
     pub fn table_def(mut self, table: Table) -> Self {
         let key = schema_qualified_key(&table.name, table.schema.as_deref());
         self.state.tables.insert(key, table);
+        self
+    }
+
+    /// Adds top-level managed rows independently from their target table declaration order.
+    pub fn managed_rows<T: Serialize>(
+        mut self,
+        table: impl Into<String>,
+        rows: impl IntoIterator<Item = T>,
+    ) -> Self {
+        let table = table.into();
+        match crate::managed_rows::ManagedRows::from_serializable(rows) {
+            Ok(incoming) => match self.state.managed_rows.get_mut(&table) {
+                Some(existing) => {
+                    if let Err(reason) =
+                        crate::managed_rows::merge_declaration(&table, existing, incoming)
+                    {
+                        self.issues
+                            .push(SchemaBuilderIssue::InvalidManagedRows { table, reason });
+                    }
+                }
+                None => {
+                    self.state.managed_rows.insert(table, incoming);
+                }
+            },
+            Err(reason) => self
+                .issues
+                .push(SchemaBuilderIssue::InvalidManagedRows { table, reason }),
+        }
         self
     }
 

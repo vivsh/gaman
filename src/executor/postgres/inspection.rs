@@ -154,6 +154,7 @@ async fn inspect_postgres_schema(
         functions: fetch_functions(conn, &schema_list).await?,
         extensions: fetch_extensions(conn, &schema_list).await?,
         enums: fetch_enums(conn, &schema_list).await?,
+        managed_rows: BTreeMap::new(),
     })
 }
 

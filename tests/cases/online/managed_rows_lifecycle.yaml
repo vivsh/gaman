@@ -1,0 +1,64 @@
+description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
+features:
+  - managed_rows
+  - live_migration_application
+  - rollback_migrations
+  - migration_tracking
+  - data_preservation
+
+migrations:
+  - id: 0001_create_items
+    atomic: false
+    operations:
+      - type: create_table
+        table:
+          name: items
+          columns:
+            - name: id
+              type: varchar(64)
+              primary_key: true
+            - name: name
+              type: varchar(128)
+            - name: external_note
+              type: varchar(128)
+              nullable: true
+      - type: statement
+        up: "INSERT INTO items (id, name, external_note) VALUES ('external', 'outside', 'keep-external')"
+  - id: 0002_insert_managed
+    dependencies: [0001_create_items]
+    operations:
+      - type: insert_row
+        table_name: items
+        key: [id]
+        row: {id: managed, name: first}
+  - id: 0003_update_managed
+    dependencies: [0002_insert_managed]
+    operations:
+      - type: update_row
+        table_name: items
+        key: [id]
+        old: {id: managed, name: first}
+        new: {id: managed, name: second}
+  - id: 0004_delete_managed
+    dependencies: [0003_update_managed]
+    operations:
+      - type: delete_row
+        table_name: items
+        key: [id]
+        row: {id: managed, name: second}
+
+dialects:
+  postgres: &lifecycle
+    checks: [rollback, migration_records, data]
+    target: 0003_update_managed
+    expect_records: [0001_create_items, 0002_insert_managed, 0003_update_managed]
+    data:
+      - sql: "SELECT id FROM items ORDER BY id"
+        expect: [external, managed]
+      - sql: "SELECT name FROM items ORDER BY id"
+        expect: [outside, second]
+      - sql: "SELECT COALESCE(external_note, '') FROM items ORDER BY id"
+        expect: [keep-external, ""]
+  sqlite: *lifecycle
+  mysql: *lifecycle
+  mariadb: *lifecycle

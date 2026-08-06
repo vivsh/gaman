@@ -7,9 +7,9 @@ use std::task::{Context, Poll, Wake, Waker};
 
 use gaman_core::schema::{Schema, SchemaBuilder, TableBuilder};
 use gaman_core::{
-    BoxFuture, Command, CommandResult, Dialect, Executor, ExecutorError, InspectionError,
-    MakeCommand, MakeResult, Migration, MigrationRunner, MigrationStore, SchemaInspector,
-    StoreError, TrackingError, TrackingStore,
+    BoxFuture, Command, CommandResult, Dialect, EntityFilter, Executor, ExecutorError,
+    InspectionError, MakeCommand, MakeResult, Migration, MigrationEngine, MigrationRunner,
+    MigrationStore, SchemaInspector, StoreError, TrackingError, TrackingStore,
 };
 
 #[derive(Default)]
@@ -132,6 +132,7 @@ fn public_builder_and_runner_contract_is_directly_embeddable() {
         name: Some("users".to_string()),
         dry_run: true,
         decisions: Vec::new(),
+        filters: Vec::new(),
     })
     .with_decisions(Vec::new())
     .expect("make command accepts clarification decisions");
@@ -147,4 +148,42 @@ fn public_builder_and_runner_contract_is_directly_embeddable() {
         result,
         CommandResult::Make(MakeResult::Preview(_))
     ));
+}
+
+/// Verifies external hosts can preview and persist non-empty filtered requests
+/// through additive engine APIs, then generate the remaining roots normally.
+#[test]
+fn filtered_engine_contract_is_directly_embeddable() {
+    let schema = Schema::from_sql_str(
+        "CREATE TABLE users (id bigint PRIMARY KEY); CREATE TABLE projects (id bigint PRIMARY KEY);",
+        Dialect::Postgres,
+    )
+    .expect("embedding schema");
+    let filters = [EntityFilter::parse("table:users").expect("users filter")];
+    let mut engine = MigrationEngine::new(
+        Dialect::Postgres,
+        MemoryStore::default(),
+        MemoryTracking,
+        NoopExecutor,
+    );
+
+    let preview =
+        block_on(engine.make_dry_run_named_filtered(schema.clone(), Some("users"), &[], &filters))
+            .expect("filtered preview")
+            .expect("preview migration");
+    let persisted =
+        block_on(engine.make_named_filtered(schema.clone(), Some("users"), &[], &filters))
+            .expect("filtered persistence")
+            .expect("persisted migration");
+    assert_eq!(preview.id, persisted.id);
+    assert_eq!(preview.operations, persisted.operations);
+
+    let remaining = block_on(engine.make_named(schema, Some("remaining"), &[]))
+        .expect("remaining generation")
+        .expect("remaining migration");
+    assert!(remaining.operations.iter().all(|operation| {
+        operation
+            .table_name()
+            .is_none_or(|table| table == "projects")
+    }));
 }

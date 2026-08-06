@@ -1,0 +1,64 @@
+description: A table filter includes its managed-row insertion and excludes an independent table change.
+group: diff
+features:
+  - filtered_migrations
+  - managed_rows
+  - group.diff
+  - kind.schema_to_migration
+  - operation.insert_row
+kind: schema_to_migration
+dialect: postgres
+name: task_lanes
+migrations:
+  - id: 0001_tables
+    operations:
+      - type: create_table
+        table:
+          name: task_lanes
+          columns:
+            - name: id
+              type: text
+              primary_key: true
+            - name: name
+              type: text
+      - type: create_table
+        table:
+          name: audit_log
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+current:
+  tables:
+    task_lanes:
+      name: task_lanes
+      columns:
+        - name: id
+          type: text
+          primary_key: true
+        - name: name
+          type: text
+    audit_log:
+      name: audit_log
+      columns:
+        - name: id
+          type: integer
+          primary_key: true
+        - name: detail
+          type: text
+          nullable: true
+  managed_rows:
+    task_lanes:
+      rows:
+        - id: approval
+          name: manager_review
+filters:
+  - kind: table
+    pattern: task_lanes
+expect_operations:
+  - type: insert_row
+    table_name: task_lanes
+    key: [id]
+    row:
+      id: approval
+      name: manager_review

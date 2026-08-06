@@ -23,6 +23,7 @@ impl Schema {
     }
 
     pub fn validate_checked(&self) -> Result<(), SchemaValidationError> {
+        crate::managed_rows::validate_schema(self)?;
         for table in self.tables.values() {
             for column in &table.columns {
                 if column.dialect_options.mysql.is_some()

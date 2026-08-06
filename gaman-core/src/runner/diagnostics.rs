@@ -467,7 +467,7 @@ fn command_diagnostic(
 mod tests {
     use super::*;
 
-    /// Verifies protocol mismatches use the frozen protocol-v2 diagnostic contract.
+    /// Verifies protocol mismatches use the current protocol-v4 diagnostic contract.
     #[test]
     fn protocol_mismatch_is_structured() {
         let failure = CommandError::UnsupportedProtocolVersion {
@@ -476,7 +476,7 @@ mod tests {
         }
         .failure();
 
-        assert_eq!(failure.protocol_version, 2);
+        assert_eq!(failure.protocol_version, 4);
         assert_eq!(
             failure.diagnostic.code,
             DiagnosticCode::UnsupportedProtocolVersion

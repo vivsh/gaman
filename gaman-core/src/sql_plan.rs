@@ -128,13 +128,16 @@ impl SqlPlanRenderer {
 
     /// Renders untracked operations against the complete committed migration replay baseline.
     pub fn render_operations(&self, operations: &[Operation]) -> Result<Vec<String>, SqlPlanError> {
-        let state = self.replay_ids(&self.ordered_ids)?;
+        let mut state = self.replay_ids(&self.ordered_ids)?;
         let migration = Migration {
             id: "9999_repair".to_string(),
             dependencies: Vec::new(),
             operations: operations.to_vec(),
             atomic: self.dialect.supports_transactional_ddl(),
         };
+        if let Some(rollback) = rollback_migrations(std::slice::from_ref(&migration))?.first() {
+            apply_migration_to_state(&mut state, rollback)?;
+        }
         render_migration_sql(self.dialect, &migration, &state)
     }
 

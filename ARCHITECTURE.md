@@ -70,13 +70,17 @@ Supported desired state can include:
 - enums and extensions where the dialect supports them;
 - functions, triggers, and views.
 
-`ALTER`, `DROP`, DML, transaction control, and arbitrary utility statements do
-not become desired schema state. Structural changes are derived by comparing
-two states. Intentional data work and unsupported database surgery remain
-explicit migration SQL.
+`ALTER`, `DROP`, transaction control, and arbitrary utility statements do not
+become desired schema state. The one bounded data exception is a top-level
+managed-row declaration: a finite set of keyed configuration/reference rows
+whose table is present in the final composed schema. Structural and managed-row
+changes are derived by comparing desired and replayed state. Arbitrary data
+transformations and unsupported database surgery remain explicit migration SQL.
 
-This boundary is fundamental: it keeps replay deterministic and prevents a
-schema declaration from being confused with migration history.
+Managed rows preserve this boundary by using stable unique keys, structured
+values, deterministic replay, and explicit insert/update/delete migration
+operations. They never claim unrelated rows or turn authored SQL into desired
+DML.
 
 ## Modeled and Opaque Objects
 
@@ -136,6 +140,13 @@ Planning includes normalization, dialect-aware comparison, clarification, and
 SQL rendering, but none of these steps need a live database. Rollback planning
 uses the same history and fails before emitting a partial plan when a safe
 inverse is unavailable.
+
+Migration generation may apply invocation-scoped root-entity filters after the
+semantic diff is known. Filtering is not persisted staging: it selects complete
+owned operation groups, adds the minimum changed dependency closure, limits
+clarification to that candidate, and validates the result by replaying it from
+the committed baseline. An unfiltered invocation retains the normal global
+planning path and exposes any changes left for later migrations.
 
 Raw SQL remains an escape hatch inside migration history. It is executed as
 authored, but it does not silently mutate Gaman's modeled replayed schema.

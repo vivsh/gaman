@@ -14,6 +14,7 @@ pub use model::{
     Answer, Clarification, ClarificationKind, ClarifyError, ClarifyResult, Decision, PromptEngine,
     PromptError, Severity,
 };
+pub(crate) use type_resolution::resolve_unknown_types_for_tables;
 #[doc(hidden)]
 pub use type_resolution::{TypeResolution, non_type_decisions, resolve_unknown_types};
 
@@ -30,6 +31,18 @@ impl Clarifier {
     ) -> Result<ClarifyResult, ClarifyError> {
         ClarifyPlan::new(ops).process(ops, decisions)
     }
+}
+
+pub(crate) fn table_rename_candidates(ops: &[Operation]) -> Vec<(String, Vec<String>)> {
+    analyze::all_clarifications_raw(ops)
+        .into_iter()
+        .filter_map(|clarification| match clarification.kind {
+            ClarificationKind::RenameTable {
+                old, candidates, ..
+            } => Some((old, candidates)),
+            _ => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]

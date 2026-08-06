@@ -2,21 +2,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
-
 use crate::dialects::Dialect;
 use crate::states::{EntityKind, Schema};
 
 use super::CommandError;
-
-/// A root entity kind and glob used to select inspected schema state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EntityFilter {
-    /// Root entity kind selected by this filter.
-    pub kind: EntityKind,
-    /// Glob matched against canonical qualified identities.
-    pub pattern: String,
-}
+pub use crate::entity_filter::EntityFilter;
 
 impl EntityFilter {
     /// Parses one `[kind:]glob` selector, defaulting to table roots.
@@ -27,13 +17,18 @@ impl EntityFilter {
         };
         if pattern.trim().is_empty() {
             return Err(CommandError::Invalid(
-                "inspection filter pattern is empty".to_string(),
+                "entity filter pattern is empty".to_string(),
             ));
         }
         Ok(Self {
             kind,
             pattern: pattern.to_string(),
         })
+    }
+
+    /// Reports whether this filter selects one canonical root identity.
+    pub fn matches(&self, kind: EntityKind, identity: &str) -> bool {
+        self.kind == kind && matches_identity(&self.pattern, identity)
     }
 }
 
@@ -83,13 +78,22 @@ fn select_schema_with_match_requirement(
     let mut selected = Schema::default();
     for filter in filters {
         match filter.kind {
-            EntityKind::Table => copy_matches(
-                &schema.tables,
-                &mut selected.tables,
-                filter,
-                |table| table.qualified_name(),
-                require_match,
-            )?,
+            EntityKind::Table => {
+                copy_matches(
+                    &schema.tables,
+                    &mut selected.tables,
+                    filter,
+                    |table| table.qualified_name(),
+                    require_match,
+                )?;
+                selected.managed_rows.extend(
+                    schema
+                        .managed_rows
+                        .iter()
+                        .filter(|(table, _)| matches_identity(&filter.pattern, table))
+                        .map(|(table, rows)| (table.clone(), rows.clone())),
+                );
+            }
             EntityKind::Function => copy_matches(
                 &schema.functions,
                 &mut selected.functions,
@@ -234,7 +238,7 @@ fn parse_kind(value: &str) -> Result<EntityKind, CommandError> {
         "enum" => Ok(EntityKind::Enum),
         "extension" => Ok(EntityKind::Extension),
         _ => Err(CommandError::Invalid(format!(
-            "unknown inspection filter kind '{value}'; use table, function, view, enum, or extension"
+            "unknown entity filter kind '{value}'; use table, function, view, enum, or extension"
         ))),
     }
 }
@@ -298,7 +302,7 @@ mod tests {
     #[test]
     fn unsupported_filter_kind_is_rejected() {
         let error = EntityFilter::parse("index:users_name").expect_err("reject index filter");
-        assert!(error.to_string().contains("unknown inspection filter kind"));
+        assert!(error.to_string().contains("unknown entity filter kind"));
     }
 
     /// Verifies exported inspection excludes no selected modeled table data.

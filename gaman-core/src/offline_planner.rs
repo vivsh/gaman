@@ -75,7 +75,17 @@ impl OfflinePlanner {
         desired_schema: Schema,
         decisions: &[Decision],
     ) -> Result<Option<Migration>, OfflineError> {
-        self.make_named_migration(desired_schema, None, decisions)
+        self.make_named_migration_filtered(desired_schema, None, decisions, &[])
+    }
+
+    /// Generates one migration containing only roots selected by invocation-scoped filters.
+    pub fn make_migration_filtered(
+        &self,
+        desired_schema: Schema,
+        decisions: &[Decision],
+        filters: &[crate::EntityFilter],
+    ) -> Result<Option<Migration>, OfflineError> {
+        self.make_named_migration_filtered(desired_schema, None, decisions, filters)
     }
 
     /// Generates one migration using an optional caller-selected descriptive suffix.
@@ -85,6 +95,17 @@ impl OfflinePlanner {
         name: Option<&str>,
         decisions: &[Decision],
     ) -> Result<Option<Migration>, OfflineError> {
+        self.make_named_migration_filtered(desired_schema, name, decisions, &[])
+    }
+
+    /// Generates one optionally named migration for selected root entities and dependencies.
+    pub fn make_named_migration_filtered(
+        &self,
+        desired_schema: Schema,
+        name: Option<&str>,
+        decisions: &[Decision],
+        filters: &[crate::EntityFilter],
+    ) -> Result<Option<Migration>, OfflineError> {
         let replay = self.replay_with_sources()?;
         let previous = replay
             .schema
@@ -93,16 +114,53 @@ impl OfflinePlanner {
         let desired_schema = desired_schema
             .prepare(self.dialect)
             .map_err(|err| OfflineError::Schema(err.to_string()))?;
-        let desired_schema =
-            match resolve_unknown_types(self.dialect, desired_schema, &previous, decisions)? {
-                TypeResolution::Resolved(schema) => schema,
-                TypeResolution::NeedsInput(clarifications) => {
-                    return Err(OfflineError::NeedsInput(clarifications));
-                }
+        let selected_tables = if filters.is_empty() {
+            None
+        } else {
+            let preliminary = DiffEngine::new().diff(&desired_schema, &previous, &self.dialect)?;
+            let selected = crate::migration_filter::filter_operations(
+                &preliminary,
+                filters,
+                &desired_schema,
+                &previous,
+            )
+            .map_err(OfflineError::Schema)?;
+            if selected.operations.is_empty() {
+                return Ok(None);
             }
-            .prepare(self.dialect)
-            .map_err(|err| OfflineError::Schema(err.to_string()))?;
+            Some(selected.table_roots)
+        };
+        let type_resolution = match &selected_tables {
+            Some(tables) => crate::clarifier::resolve_unknown_types_for_tables(
+                self.dialect,
+                desired_schema,
+                &previous,
+                decisions,
+                tables,
+            )?,
+            None => resolve_unknown_types(self.dialect, desired_schema, &previous, decisions)?,
+        };
+        let desired_schema = match type_resolution {
+            TypeResolution::Resolved(schema) => schema,
+            TypeResolution::NeedsInput(clarifications) => {
+                return Err(OfflineError::NeedsInput(clarifications));
+            }
+        }
+        .prepare(self.dialect)
+        .map_err(|err| OfflineError::Schema(err.to_string()))?;
         let raw_ops = DiffEngine::new().diff(&desired_schema, &previous, &self.dialect)?;
+        let raw_ops = if filters.is_empty() {
+            raw_ops
+        } else {
+            crate::migration_filter::filter_operations(
+                &raw_ops,
+                filters,
+                &desired_schema,
+                &previous,
+            )
+            .map_err(OfflineError::Schema)?
+            .operations
+        };
         if raw_ops.is_empty() {
             return Ok(None);
         }
@@ -126,7 +184,12 @@ impl OfflinePlanner {
             operations: ops,
             atomic: self.dialect.supports_transactional_ddl(),
         };
-        Ok(Some(migration.canonicalized()?))
+        let migration = migration.canonicalized()?;
+        if !filters.is_empty() {
+            let mut candidate = previous.clone();
+            crate::replay::ReplayEngine::apply_migration(&mut candidate, &migration)?;
+        }
+        Ok(Some(migration))
     }
 
     pub fn sql_migrate(&self, migrations: &[Migration]) -> Result<Vec<String>, OfflineError> {

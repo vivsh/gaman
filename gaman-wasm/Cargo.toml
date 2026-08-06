@@ -1,6 +1,6 @@
 [package]
 name = "gaman-wasm"
-version = "0.3.30"
+version = "0.3.31"
 edition = "2024"
 description = "Browser bindings for the Gaman migration engine"
 license = "MIT"
@@ -10,7 +10,7 @@ repository = "https://github.com/vivsh/gaman"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-gaman-core = { path = "../gaman-core", version = "0.3.30", features = ["command-args"] }
+gaman-core = { path = "../gaman-core", version = "0.3.31", features = ["command-args"] }
 js-sys = "0.3"
 send_wrapper = "0.6"
 serde = { version = "1", features = ["derive"] }

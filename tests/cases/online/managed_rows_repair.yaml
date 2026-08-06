@@ -1,0 +1,52 @@
+description: managed-row repair restores owned values without touching unmanaged rows or columns
+features:
+  - managed_rows
+  - live_inspect_verify
+  - data_preservation
+
+migrations:
+  - id: 0001_create_items
+    atomic: false
+    operations:
+      - type: create_table
+        table:
+          name: items
+          columns:
+            - name: id
+              type: varchar(64)
+              primary_key: true
+            - name: name
+              type: varchar(128)
+            - name: external_note
+              type: varchar(128)
+              nullable: true
+  - id: 0002_insert_managed
+    dependencies: [0001_create_items]
+    operations:
+      - type: insert_row
+        table_name: items
+        key: [id]
+        row: {id: managed, name: review}
+
+mutate_sql: |
+  UPDATE items SET name = 'tampered', external_note = 'preserve-me' WHERE id = 'managed';
+  INSERT INTO items (id, name, external_note) VALUES ('external', 'outside', 'keep-external');
+
+dialects:
+  postgres: &repair
+    checks: [repair, data]
+    repair_apply: true
+    expect_repair_operations:
+      - type: update_row
+        table_name: items
+        key: [id]
+        old: {id: managed, name: tampered}
+        new: {id: managed, name: review}
+    data:
+      - sql: "SELECT name FROM items ORDER BY id"
+        expect: [outside, review]
+      - sql: "SELECT external_note FROM items ORDER BY id"
+        expect: [keep-external, preserve-me]
+  sqlite: *repair
+  mysql: *repair
+  mariadb: *repair

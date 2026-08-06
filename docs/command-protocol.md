@@ -23,12 +23,12 @@ adapters.
 ## Versioning
 
 `COMMAND_PROTOCOL_VERSION` identifies the request and response shape. Protocol
-version 2 is Gaman's frozen host boundary. Hosts must reject versions they do
+version 4 is Gaman's current host boundary. Hosts must reject versions they do
 not support before executing a command.
 
 ```json
 {
-  "protocol_version": 2,
+  "protocol_version": 4,
   "command": {
     "command": "status",
     "arguments": {
@@ -40,9 +40,17 @@ not support before executing a command.
 ```
 
 Schema and low-level engine APIs may still change before Gaman 0.5. The version
-2 command envelope, response, failure, diagnostic codes, and clarification
+4 command envelope, response, failure, diagnostic codes, and clarification
 contract are stable: an incompatible transport change requires a new protocol
 version.
+
+Version 3 adds managed-row migration operations, row entity identities,
+destructive row-deletion clarification, and row verification/repair findings.
+Older hosts must reject these envelopes rather than silently ignoring variants.
+
+Version 4 adds invocation-scoped entity filters to migration generation. Older
+hosts must reject version 4 because silently ignoring filters could create a
+dangerously broader migration than the caller requested.
 
 ## Results
 

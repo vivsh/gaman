@@ -84,6 +84,9 @@ pub struct MakeCmd {
     /// fail instead of prompting when clarifications are required
     #[argh(switch)]
     pub non_interactive: bool,
+    /// select changed root entities using repeatable [kind:]glob filters
+    #[argh(option, short = 'f')]
+    pub filter: Vec<String>,
 }
 
 /// List migrations with applied and pending markers.
@@ -533,5 +536,27 @@ mod tests {
             panic!("expected inspect command");
         };
         assert_eq!(command.filter, ["users*", "function:public.audit_*"]);
+    }
+
+    /// Verifies make accepts repeatable short and long entity filters without
+    /// introducing a separate staging grammar.
+    #[test]
+    fn make_accepts_repeated_filters() {
+        let parsed = CommandArgs::parse(
+            &["gaman"],
+            &[
+                "make",
+                "roles",
+                "-f",
+                "enum:user_*",
+                "--filter",
+                "table:users",
+            ],
+        )
+        .expect("parse make filters");
+        let Command::Make(command) = parsed.command else {
+            panic!("expected make command");
+        };
+        assert_eq!(command.filter, ["enum:user_*", "table:users"]);
     }
 }

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use super::adapters::{Executor, MigrationStore, TrackingStore};
+use super::adapters::{Executor, ExecutorError, MigrationStore, TrackingStore};
 use super::catalog::{
     CatalogMigrationStore, EngineError, MigrationArtifact, MigrationCatalog, MigrationMovement,
 };
@@ -93,7 +93,18 @@ where
         name: Option<&str>,
         decisions: &[Decision],
     ) -> Result<Option<Migration>, EngineError> {
-        match self.plan_make(schema, name, decisions).await? {
+        self.make_named_filtered(schema, name, decisions, &[]).await
+    }
+
+    /// Generates and saves a migration limited to selected root entities and dependencies.
+    pub async fn make_named_filtered(
+        &mut self,
+        schema: Schema,
+        name: Option<&str>,
+        decisions: &[Decision],
+        filters: &[crate::EntityFilter],
+    ) -> Result<Option<Migration>, EngineError> {
+        match self.plan_make(schema, name, decisions, filters).await? {
             Some(migration) => {
                 self.migrations.save(&migration).await?;
                 Ok(Some(migration))
@@ -118,7 +129,19 @@ where
         name: Option<&str>,
         decisions: &[Decision],
     ) -> Result<Option<Migration>, EngineError> {
-        self.plan_make(schema, name, decisions).await
+        self.make_dry_run_named_filtered(schema, name, decisions, &[])
+            .await
+    }
+
+    /// Previews a migration limited to selected root entities and dependencies.
+    pub async fn make_dry_run_named_filtered(
+        &mut self,
+        schema: Schema,
+        name: Option<&str>,
+        decisions: &[Decision],
+        filters: &[crate::EntityFilter],
+    ) -> Result<Option<Migration>, EngineError> {
+        self.plan_make(schema, name, decisions, filters).await
     }
 
     /// Fails when prepared schema state differs from committed migration history.
@@ -127,7 +150,7 @@ where
         schema: Schema,
         decisions: &[Decision],
     ) -> Result<(), EngineError> {
-        match self.plan_make(schema, None, decisions).await? {
+        match self.plan_make(schema, None, decisions, &[]).await? {
             Some(_) => Err(EngineError::Config(
                 "schema has changes not yet in a migration".to_string(),
             )),
@@ -140,10 +163,11 @@ where
         schema: Schema,
         name: Option<&str>,
         decisions: &[Decision],
+        filters: &[crate::EntityFilter],
     ) -> Result<Option<Migration>, EngineError> {
         let planner =
             OfflinePlanner::new(self.dialect).from_migrations(self.migration_snapshot().await?);
-        match planner.make_named_migration(schema, name, decisions) {
+        match planner.make_named_migration_filtered(schema, name, decisions, filters) {
             Ok(Some(migration)) => Ok(Some(migration)),
             Ok(None) => Ok(None),
             Err(OfflineError::NeedsInput(clarifications)) => {
@@ -177,7 +201,9 @@ where
     /// Applies untracked repair SQL while retaining normal lock and transaction guarantees.
     pub async fn execute_untracked(&mut self, sql: &[String]) -> Result<(), EngineError> {
         self.executor.acquire_lock().await?;
-        let result = self.execute_untracked_locked(sql).await;
+        let result = self
+            .execute_untracked_locked(sql, &mut std::collections::HashMap::new())
+            .await;
         let release = self.executor.release_lock().await;
         match (result, release) {
             (Ok(()), Ok(())) => Ok(()),
@@ -186,13 +212,34 @@ where
         }
     }
 
-    async fn execute_untracked_locked(&mut self, sql: &[String]) -> Result<(), EngineError> {
+    /// Renders and applies untracked operations with managed-row precondition enforcement.
+    pub async fn execute_operations_untracked(
+        &mut self,
+        operations: &[Operation],
+    ) -> Result<Vec<String>, EngineError> {
+        let sql = self.render_operations(operations).await?;
+        let mut checked = checked_row_statements(self.dialect, operations)?;
+        self.executor.acquire_lock().await?;
+        let result = self.execute_untracked_locked(&sql, &mut checked).await;
+        let release = self.executor.release_lock().await;
+        match (result, release) {
+            (Ok(()), Ok(())) => Ok(sql),
+            (Err(error), _) => Err(error),
+            (Ok(()), Err(error)) => Err(error.into()),
+        }
+    }
+
+    async fn execute_untracked_locked(
+        &mut self,
+        sql: &[String],
+        checked: &mut std::collections::HashMap<String, usize>,
+    ) -> Result<(), EngineError> {
         let atomic = self.dialect.supports_transactional_ddl();
         if atomic {
             self.executor.begin().await?;
         }
         for statement in sql {
-            if let Err(error) = self.executor.execute(statement).await {
+            if let Err(error) = execute_statement(&mut self.executor, statement, checked).await {
                 if atomic {
                     let _ = self.executor.rollback().await;
                 }
@@ -428,12 +475,15 @@ where
         let sql = (!fake)
             .then(|| renderer.render_migrations(std::slice::from_ref(migration)))
             .transpose()?;
+        let mut checked = checked_row_statements(self.dialect, &migration.operations)?;
         if migration.atomic {
             self.executor.begin().await?;
         }
         if let Some(statements) = sql {
             for (statement_ordinal, statement) in statements.iter().enumerate() {
-                if let Err(error) = self.executor.execute(statement).await {
+                if let Err(error) =
+                    execute_statement(&mut self.executor, statement, &mut checked).await
+                {
                     if migration.atomic {
                         let _ = self.executor.rollback().await;
                     }
@@ -511,12 +561,21 @@ where
         let sql = (!fake)
             .then(|| renderer.render_rollback_migrations(std::slice::from_ref(migration)))
             .transpose()?;
+        let inverse = migration
+            .operations
+            .iter()
+            .rev()
+            .filter_map(Operation::inverse)
+            .collect::<Vec<_>>();
+        let mut checked = checked_row_statements(self.dialect, &inverse)?;
         if migration.atomic {
             self.executor.begin().await?;
         }
         if let Some(statements) = sql {
             for (statement_ordinal, statement) in statements.iter().enumerate() {
-                if let Err(error) = self.executor.execute(statement).await {
+                if let Err(error) =
+                    execute_statement(&mut self.executor, statement, &mut checked).await
+                {
                     if migration.atomic {
                         let _ = self.executor.rollback().await;
                     }
@@ -549,6 +608,46 @@ where
     async fn graph(&mut self) -> Result<(MigrationGraph, Vec<String>), EngineError> {
         Ok(graph_from(&self.migration_snapshot().await?)?)
     }
+}
+
+fn checked_row_statements(
+    dialect: Dialect,
+    operations: &[Operation],
+) -> Result<std::collections::HashMap<String, usize>, EngineError> {
+    let mut checked = std::collections::HashMap::new();
+    for operation in operations {
+        if !matches!(
+            operation,
+            Operation::InsertRow { .. } | Operation::UpdateRow { .. } | Operation::DeleteRow { .. }
+        ) {
+            continue;
+        }
+        let statements = crate::managed_rows::sql::render(dialect, operation)
+            .map_err(|error| EngineError::Config(error.to_string()))?;
+        for statement in statements {
+            *checked.entry(statement).or_insert(0) += 1;
+        }
+    }
+    Ok(checked)
+}
+
+async fn execute_statement<E: Executor>(
+    executor: &mut E,
+    statement: &str,
+    checked: &mut std::collections::HashMap<String, usize>,
+) -> Result<(), ExecutorError> {
+    let managed = checked.get_mut(statement).is_some_and(|remaining| {
+        if *remaining == 0 {
+            false
+        } else {
+            *remaining -= 1;
+            true
+        }
+    });
+    if !managed {
+        return executor.execute(statement).await;
+    }
+    crate::managed_rows::ensure_one_affected(executor.execute_affected(statement).await?)
 }
 
 /// Preserves migration and bounded statement context when a live executor rejects rendered SQL.

@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
+use crate::managed_rows::ManagedRow;
 use crate::states::types::{Dep, EntityKind};
 use crate::states::{
     Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, Table,
@@ -76,6 +77,22 @@ pub enum Operation {
     AddConstraint {
         table_name: String,
         constraint: Constraint,
+    },
+    InsertRow {
+        table_name: String,
+        key: Vec<String>,
+        row: ManagedRow,
+    },
+    UpdateRow {
+        table_name: String,
+        key: Vec<String>,
+        old: ManagedRow,
+        new: ManagedRow,
+    },
+    DeleteRow {
+        table_name: String,
+        key: Vec<String>,
+        row: ManagedRow,
     },
     DropConstraint {
         table_name: String,
@@ -177,6 +194,35 @@ impl Operation {
 
     pub fn inverse(&self) -> Option<Operation> {
         match self {
+            Self::InsertRow {
+                table_name,
+                key,
+                row,
+            } => Some(Self::DeleteRow {
+                table_name: table_name.clone(),
+                key: key.clone(),
+                row: row.clone(),
+            }),
+            Self::UpdateRow {
+                table_name,
+                key,
+                old,
+                new,
+            } => Some(Self::UpdateRow {
+                table_name: table_name.clone(),
+                key: key.clone(),
+                old: new.clone(),
+                new: old.clone(),
+            }),
+            Self::DeleteRow {
+                table_name,
+                key,
+                row,
+            } => Some(Self::InsertRow {
+                table_name: table_name.clone(),
+                key: key.clone(),
+                row: row.clone(),
+            }),
             Self::CreateTable { .. }
             | Self::DropTable { .. }
             | Self::RenameTable { .. }
@@ -439,7 +485,10 @@ impl Operation {
             | Self::DropConstraint { table_name, .. }
             | Self::CreateTrigger { table_name, .. }
             | Self::AlterTrigger { table_name, .. }
-            | Self::DropTrigger { table_name, .. } => Some(table_name),
+            | Self::DropTrigger { table_name, .. }
+            | Self::InsertRow { table_name, .. }
+            | Self::UpdateRow { table_name, .. }
+            | Self::DeleteRow { table_name, .. } => Some(table_name),
             _ => None,
         }
     }
@@ -531,6 +580,30 @@ impl Operation {
                     Cow::Borrowed(&old.name)
                 }
             }
+            Self::InsertRow {
+                table_name,
+                key,
+                row,
+            }
+            | Self::DeleteRow {
+                table_name,
+                key,
+                row,
+            } => Cow::Owned(format!(
+                "{table_name}[{}]",
+                row.identity(key)
+                    .unwrap_or_else(|error| format!("invalid:{error}"))
+            )),
+            Self::UpdateRow {
+                table_name,
+                key,
+                old,
+                ..
+            } => Cow::Owned(format!(
+                "{table_name}[{}]",
+                old.identity(key)
+                    .unwrap_or_else(|error| format!("invalid:{error}"))
+            )),
             Self::Statement { up, .. } => Cow::Borrowed(up),
         }
     }
@@ -567,6 +640,9 @@ impl Operation {
             Self::DropEnum { .. } => "drop_enum",
             Self::RenameEnumValue { .. } => "rename_enum_value",
             Self::AlterEnum { .. } => "alter_enum",
+            Self::InsertRow { .. } => "insert_row",
+            Self::UpdateRow { .. } => "update_row",
+            Self::DeleteRow { .. } => "delete_row",
         }
     }
 
@@ -602,6 +678,9 @@ impl Operation {
             Self::CreateTrigger { .. } | Self::AlterTrigger { .. } | Self::DropTrigger { .. } => {
                 Some(EntityKind::Trigger)
             }
+            Self::InsertRow { .. } | Self::UpdateRow { .. } | Self::DeleteRow { .. } => {
+                Some(EntityKind::Row)
+            }
             Self::RenameTable { .. } | Self::Statement { .. } => None,
         }
     }
@@ -622,6 +701,7 @@ impl Operation {
                 | Self::AddIndex { .. }
                 | Self::AddConstraint { .. }
                 | Self::AcknowledgeTableOptions { .. }
+                | Self::InsertRow { .. }
         )
     }
 
@@ -638,6 +718,7 @@ impl Operation {
                 | Self::DropForeignKey { .. }
                 | Self::DropIndex { .. }
                 | Self::DropConstraint { .. }
+                | Self::DeleteRow { .. }
         )
     }
 
@@ -734,6 +815,11 @@ impl Operation {
             Self::AcknowledgeTableOptions { table_name, .. } => {
                 vec![Dep::new(EntityKind::Table, table_name)]
             }
+            Self::InsertRow { table_name, .. }
+            | Self::UpdateRow { table_name, .. }
+            | Self::DeleteRow { table_name, .. } => {
+                vec![Dep::new(EntityKind::Table, table_name)]
+            }
             Self::RenameTable { .. } | Self::RenameColumn { .. } | Self::Statement { .. } => vec![],
         }
     }
@@ -770,7 +856,10 @@ impl Operation {
             | Self::DropConstraint { table_name, .. }
             | Self::CreateTrigger { table_name, .. }
             | Self::AlterTrigger { table_name, .. }
-            | Self::DropTrigger { table_name, .. } => Some(table_name),
+            | Self::DropTrigger { table_name, .. }
+            | Self::InsertRow { table_name, .. }
+            | Self::UpdateRow { table_name, .. }
+            | Self::DeleteRow { table_name, .. } => Some(table_name),
             Self::CreateFunction { function } | Self::DropFunction { function } => {
                 Some(&function.name)
             }

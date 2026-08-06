@@ -19,6 +19,9 @@ pub struct InputSchema {
     /// Authored table definitions keyed by table name.
     #[serde(default)]
     pub tables: BTreeMap<String, TableInput>,
+    /// Managed rows keyed by their target table identity.
+    #[serde(default)]
+    pub managed_rows: BTreeMap<String, crate::managed_rows::ManagedRows>,
     /// Authored view definitions keyed by view name.
     #[serde(default)]
     pub views: BTreeMap<String, ViewInput>,
@@ -43,6 +46,7 @@ impl InputSchema {
                 .into_iter()
                 .map(|(key, table)| (key, table.into_table()))
                 .collect(),
+            managed_rows: self.managed_rows,
             views: self
                 .views
                 .into_iter()

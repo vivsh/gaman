@@ -103,6 +103,20 @@ impl Executor for MysqlFamilyExecutor {
                 })
         })
     }
+    fn execute_affected<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> BoxFuture<'a, Result<u64, ExecutorError>> {
+        Box::pin(async move {
+            sqlx::query(sql)
+                .execute(&mut self.conn)
+                .await
+                .map(|result| result.rows_affected())
+                .map_err(|error| {
+                    ExecutorError::ExecuteDatabase(DatabaseFailure::message(error.to_string()))
+                })
+        })
+    }
     fn fetch_strings<'a>(
         &'a mut self,
         sql: &'a str,
@@ -116,8 +130,7 @@ impl Executor for MysqlFamilyExecutor {
     }
     fn begin<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async move {
-            sqlx::query("START TRANSACTION")
-                .execute(&mut self.conn)
+            sqlx::Executor::execute(&mut self.conn, "START TRANSACTION")
                 .await
                 .map(|_| ())
                 .map_err(|error| ExecutorError::Transaction(error.to_string()))
@@ -125,8 +138,7 @@ impl Executor for MysqlFamilyExecutor {
     }
     fn commit<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async move {
-            sqlx::query("COMMIT")
-                .execute(&mut self.conn)
+            sqlx::Executor::execute(&mut self.conn, "COMMIT")
                 .await
                 .map(|_| ())
                 .map_err(|error| ExecutorError::Transaction(error.to_string()))
@@ -134,8 +146,7 @@ impl Executor for MysqlFamilyExecutor {
     }
     fn rollback<'a>(&'a mut self) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async move {
-            sqlx::query("ROLLBACK")
-                .execute(&mut self.conn)
+            sqlx::Executor::execute(&mut self.conn, "ROLLBACK")
                 .await
                 .map(|_| ())
                 .map_err(|error| ExecutorError::Transaction(error.to_string()))

@@ -18,6 +18,7 @@ impl Schema {
             normalize_table_primary_key(table);
         }
         self.normalize_schemas(dialect);
+        crate::managed_rows::canonicalize_schema(self);
     }
 
     fn normalize_schemas(&mut self, dialect: &Dialect) {

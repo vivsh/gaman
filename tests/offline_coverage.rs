@@ -976,4 +976,5 @@ const EXPECTED_ONLINE_FEATURES: &[&str] = &[
     "unsupported_feature_errors",
     "ownership_scoped_verify",
     "data_preservation",
+    "managed_rows",
 ];

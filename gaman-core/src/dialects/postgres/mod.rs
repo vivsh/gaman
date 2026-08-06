@@ -668,6 +668,9 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
         Operation::Statement { up, .. } => {
             vec![up.clone()]
         }
+        Operation::InsertRow { .. } | Operation::UpdateRow { .. } | Operation::DeleteRow { .. } => {
+            return crate::managed_rows::sql::render(crate::dialects::Dialect::Postgres, op);
+        }
         Operation::CreateFunction { function } => {
             vec![create_function_sql(function)?]
         }

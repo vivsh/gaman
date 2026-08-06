@@ -1,4 +1,4 @@
-generation: 20260803T143148Z-53550
+generation: 20260806T083520Z-11686
 cases:
   check_constraint:
     description: PostgreSQL CHECK constraint lowers into Constraint::Check.
@@ -352,6 +352,12 @@ cases:
     observed_entities: []
   non_create_drop_table:
     description: PostgreSQL DROP TABLE is rejected because parser input is CREATE-only.
+    dialect: postgres
+    status: success
+    expected_entities: []
+    observed_entities: []
+  opaque_index_if_not_exists_rejected:
+    description: PostgreSQL opaque indexes reject caller-owned existence handling.
     dialect: postgres
     status: success
     expected_entities: []

@@ -9,6 +9,7 @@ pub enum EntityKind {
     Enum,
     Function,
     Table,
+    Row,
     Column,
     ForeignKey,
     Index,
@@ -254,6 +255,8 @@ pub enum PostgresPartitionMeta {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Schema {
     pub tables: BTreeMap<String, Table>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub managed_rows: BTreeMap<String, crate::managed_rows::ManagedRows>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub views: BTreeMap<String, ViewDef>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

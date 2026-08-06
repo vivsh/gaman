@@ -15,6 +15,15 @@ features:
 - id: canonical_values
   label: Canonical defaults and expressions
   category: lifecycle
+- id: filtered_migrations
+  label: Filtered migration generation
+  category: lifecycle
+- id: managed_rows
+  label: Managed rows
+  category: lifecycle
+- id: operation.insert_row
+  label: operation / insert row
+  category: operation
 - id: answer.keep_type
   label: answer / keep type
   category: answer

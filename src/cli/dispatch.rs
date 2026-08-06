@@ -101,6 +101,16 @@ fn resolve_make(
     config: &Config,
     command: MakeCmd,
 ) -> Result<(Command, bool, Option<String>), CommandError> {
+    if !command.filter.is_empty() && (command.empty || command.merge || command.check) {
+        return Err(CommandError::from_runner(RunnerError::Invalid(
+            "make filters are supported only for normal and dry-run generation".to_string(),
+        )));
+    }
+    let filters = command
+        .filter
+        .iter()
+        .map(|filter| EntityFilter::parse(filter).map_err(CommandError::from_runner))
+        .collect::<Result<Vec<_>, _>>()?;
     if command.empty {
         return Ok((
             Command::Make(MakeCommand::Empty {
@@ -132,6 +142,7 @@ fn resolve_make(
             name: command.name,
             dry_run: command.dry_run,
             decisions: Vec::new(),
+            filters,
         }
     };
     Ok((Command::Make(make), !command.non_interactive, None))
@@ -321,6 +332,7 @@ where
             name: Some(command.name.clone()),
             dry_run: true,
             decisions: Vec::new(),
+            filters: Vec::new(),
         }),
         !command.non_interactive,
     )
@@ -354,6 +366,7 @@ where
             name: Some(command.name.clone()),
             dry_run: false,
             decisions: Vec::new(),
+            filters: Vec::new(),
         }),
         !command.non_interactive,
     )

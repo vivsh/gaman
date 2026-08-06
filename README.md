@@ -5,18 +5,21 @@ _Pronounced guh-MUN (गमन, /ɡəˈmən/) — Sanskrit for "movement" or "go
 [![Crates.io](https://img.shields.io/crates/v/gaman)](https://crates.io/crates/gaman)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Gaman is a standalone, schema-first migration CLI for teams that want a
-Django-like migration workflow without coupling database evolution to a web
-framework.
+Gaman is a standalone, schema-first migration engine and CLI for teams that
+want a Django-like migration workflow without coupling database evolution to a
+web framework.
 
-Describe the schema you want. Gaman replays committed migration history,
-calculates the change offline, writes a reviewable migration, renders dialect
-SQL, and can verify the deployed database for drift.
+Describe the database you want, including the small set of application-owned
+rows that should evolve with its schema. Gaman replays committed migration
+history, calculates the change offline, writes a reviewable migration, renders
+dialect SQL, and can verify the deployed database for drift.
 
-Schema tracking is deliberately **DDL `CREATE`-only**. Gaman tracks desired
-definitions for tables, columns, keys, constraints, indexes, enums, extensions,
-functions, triggers, and views. It does not treat `ALTER`, `DROP`, DML, or
-arbitrary SQL files as desired schema state.
+Schema tracking is deliberately **DDL `CREATE`-only**, with one bounded
+exception: top-level managed rows. Gaman tracks desired definitions for tables,
+columns, keys, constraints, indexes, enums, extensions, functions, triggers,
+and views. Managed rows let applications own a small, explicitly identified
+set of data records. Arbitrary DML, transformations, `ALTER`, and `DROP` remain
+migration operations rather than desired schema input.
 
 > **Project status:** Early-stage and usable, but public APIs and file formats
 > may still change before 1.0.
@@ -40,6 +43,11 @@ question before writing the migration:
   2 - No, it was dropped
 ```
 
+For focused changes, `gaman make task-lanes --filter table:vyuh_task_lanes`
+generates only the selected root and required changed dependencies. Filters are
+temporary selectors for one invocation, not persistent staging; the next
+unfiltered `make` still sees every remaining schema change.
+
 Clarification covers possible table, column, and enum-value renames, new
 non-null data requirements, type casts, unfamiliar database types, and coarse
 opaque-object changes. The answer becomes part of committed migration history,
@@ -61,6 +69,8 @@ waiting for input.
   reports expected and observed properties, and `repair` plans bounded fixes.
 - **Track more than tables.** Keys, constraints, indexes, enums, extensions,
   functions, triggers, and views participate in migration ownership.
+- **Version application-owned rows.** Declare stable records by a primary or
+  non-null unique key without claiming ownership of unrelated table data.
 - **Choose the input that fits.** SQL DDL, YAML, JSON, and live inspection
   converge on the same schema lifecycle.
 - **Keep an escape hatch.** Advanced objects can use preserved raw SQL when a
@@ -108,6 +118,31 @@ cargo install gaman --no-default-features --features cli,sqlite
 
 Gaman does not load `.env` automatically. Use `gaman --env .env <command>` when
 you want dotenv-style configuration.
+
+## Managed Rows
+
+Managed rows version a bounded set of application data alongside the schema.
+They are declared separately from tables, so a table in SQL can be paired with
+rows in YAML or JSON:
+
+```yaml
+managed_rows:
+  vyuh_task_lanes:
+    rows:
+      - id: approval
+        name: manager_review
+        properties:
+          requires_manager: true
+```
+
+The table must exist in the composed schema. Each row must include its primary
+key or an eligible non-null unique key, which Gaman infers from the table. A row
+may manage only a subset of columns; other rows and columns remain outside
+Gaman ownership.
+
+Treat declared values like schema: change them through schema files and
+generated migrations, not application code or manual SQL. External changes are
+reported as drift, and checked writes refuse to overwrite unexpected values.
 
 ## How It Works
 
@@ -168,7 +203,7 @@ Legend: ✅ accepted evidence, ◐ bounded support, 🚧 planned or not evidence
 yet, ❌ unsupported by design or by the database engine.
 
 <!-- gaman:support-matrix:start -->
-<!-- evidence-generation: 20260803T143148Z-53550 -->
+<!-- evidence-generation: 20260806T083520Z-11686 -->
 | Feature | PostgreSQL | SQLite | MySQL | MariaDB |
 | --- | --- | --- | --- | --- |
 | Offline replay, diff, and migration generation | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |

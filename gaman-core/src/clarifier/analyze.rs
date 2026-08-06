@@ -62,6 +62,31 @@ pub(crate) fn all_clarifications_raw(ops: &[Operation]) -> Vec<Clarification> {
     ));
     result.extend(risky_change_clarifications(ops));
     result.extend(opaque_and_unmanaged_clarifications(ops));
+    for operation in ops {
+        if let Operation::DeleteRow {
+            table_name,
+            key,
+            row,
+        } = operation
+        {
+            if dropped_tables
+                .iter()
+                .any(|(_, table)| table.qualified_name() == *table_name)
+            {
+                continue;
+            }
+            let identity = row.identity(key).unwrap_or_else(|_| "unknown".to_string());
+            let kind = ClarificationKind::DeleteManagedRow {
+                table: table_name.clone(),
+                identity,
+            };
+            result.push(Clarification {
+                id: clarification_id(&kind),
+                severity: Severity::Warning,
+                kind,
+            });
+        }
+    }
 
     result.sort_by(|a, b| a.id.cmp(&b.id));
     result.dedup_by(|left, right| left.id == right.id);

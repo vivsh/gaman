@@ -289,7 +289,7 @@ pub(super) fn validate_migration(
         && migration
             .operations
             .iter()
-            .any(|operation| !matches!(operation, Operation::Statement { .. }))
+            .any(is_implicit_commit_operation)
     {
         return Err(DialectError::Unsupported(flavor.name().to_string(), "schema DDL implicitly commits; migrations containing modeled schema operations must set atomic: false".to_string()));
     }
@@ -343,6 +343,18 @@ pub(super) fn validate_migration(
         }
     }
     Ok(())
+}
+
+/// Reports whether a modeled operation invokes MySQL-family implicit-commit DDL.
+fn is_implicit_commit_operation(operation: &Operation) -> bool {
+    !matches!(
+        operation,
+        Operation::Statement { .. }
+            | Operation::InsertRow { .. }
+            | Operation::UpdateRow { .. }
+            | Operation::DeleteRow { .. }
+            | Operation::AcknowledgeTableOptions { .. }
+    )
 }
 
 /// Validates migration policy and the modeled target schema before rendering SQL.
@@ -765,6 +777,15 @@ fn operation_sql(operation: &Operation, flavor: FamilyFlavor) -> Result<Vec<Stri
             }
         )]),
         Operation::Statement { up, .. } => Ok(vec![up.clone()]),
+        Operation::InsertRow { .. } | Operation::UpdateRow { .. } | Operation::DeleteRow { .. } => {
+            crate::managed_rows::sql::render(
+                match flavor {
+                    FamilyFlavor::Mysql => crate::dialects::Dialect::Mysql,
+                    FamilyFlavor::Mariadb => crate::dialects::Dialect::Mariadb,
+                },
+                operation,
+            )
+        }
         Operation::CreateFunction { function } => raw_create(function.raw_sql(), "function"),
         Operation::DropFunction { function } => Ok(vec![format!(
             "DROP FUNCTION {}",
@@ -900,6 +921,26 @@ mod tests {
         let error = validate_migration(&migration, FamilyFlavor::Mysql)
             .expect_err("atomic family DDL must fail");
         assert!(error.to_string().contains("implicitly commits"));
+    }
+
+    /// Verifies checked managed-row DML remains eligible for atomic family migrations.
+    #[test]
+    fn family_managed_row_migration_accepts_atomic_true() {
+        let migration = Migration {
+            id: "0002_rows".to_string(),
+            dependencies: Vec::new(),
+            operations: vec![Operation::InsertRow {
+                table_name: "items".to_string(),
+                key: vec!["id".to_string()],
+                row: crate::managed_rows::ManagedRow {
+                    values: Default::default(),
+                },
+            }],
+            atomic: true,
+        };
+
+        validate_migration(&migration, FamilyFlavor::Mysql)
+            .expect("atomic managed-row DML must be accepted");
     }
 
     /// Verifies every unbounded text and binary family type is rejected in modeled indexes.

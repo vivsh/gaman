@@ -69,6 +69,17 @@ impl Schema {
             }
             self.tables.insert(name, table);
         }
+        for (table, incoming) in other.managed_rows {
+            match self.managed_rows.get_mut(&table) {
+                Some(existing) => {
+                    crate::managed_rows::merge_declaration(&table, existing, incoming)
+                        .map_err(SchemaValidationError::Invalid)?
+                }
+                None => {
+                    self.managed_rows.insert(table, incoming);
+                }
+            }
+        }
         self.views.extend(other.views);
         self.functions.extend(other.functions);
         self.extensions.extend(other.extensions);

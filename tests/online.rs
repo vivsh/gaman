@@ -205,13 +205,16 @@ enum ExpectedErrorAction {
     Rollback,
     Inspect,
     Verify,
+    FakeVerified,
 }
 
 fn expected_error_action(section: &support::OnlineDialectCase) -> Option<ExpectedErrorAction> {
     if !section.checks.contains(&OnlineCheck::Error) {
         return None;
     }
-    if section.checks.contains(&OnlineCheck::Migrate) {
+    if section.checks.contains(&OnlineCheck::FakeVerified) {
+        Some(ExpectedErrorAction::FakeVerified)
+    } else if section.checks.contains(&OnlineCheck::Migrate) {
         Some(ExpectedErrorAction::Migrate)
     } else if section.checks.contains(&OnlineCheck::MigrateTo) {
         Some(ExpectedErrorAction::MigrateTo)
@@ -235,6 +238,17 @@ fn required_target<'a>(
         .target
         .as_deref()
         .ok_or_else(|| TestSupportError::message(format!("{name}: {check} check requires target")))
+}
+
+fn required_fake_verified_target<'a>(
+    name: &str,
+    section: &'a support::OnlineDialectCase,
+) -> Result<&'a str, TestSupportError> {
+    section.fake_verified_target.as_deref().ok_or_else(|| {
+        TestSupportError::message(format!(
+            "{name}: fake_verified check requires fake_verified_target"
+        ))
+    })
 }
 
 fn expected_error<'a>(
@@ -321,6 +335,22 @@ fn validate_online_case(
                 dialect.as_str()
             )));
         }
+        if section.checks.contains(&OnlineCheck::Repair)
+            && section.expect_repair_operations.is_empty()
+        {
+            return Err(TestSupportError::message(format!(
+                "{name}: {} repair checks require expect_repair_operations",
+                dialect.as_str()
+            )));
+        }
+        if section.checks.contains(&OnlineCheck::FakeVerified)
+            && section.fake_verified_target.is_none()
+        {
+            return Err(TestSupportError::message(format!(
+                "{name}: {} fake_verified checks require fake_verified_target",
+                dialect.as_str()
+            )));
+        }
         if section.checks.contains(&OnlineCheck::Error) && section.expect_error.is_none() {
             return Err(TestSupportError::message(format!(
                 "{name}: {} error checks require expect_error",
@@ -330,7 +360,7 @@ fn validate_online_case(
         if section.checks.contains(&OnlineCheck::Error) && expected_error_action(section).is_none()
         {
             return Err(TestSupportError::message(format!(
-                "{name}: {} error checks must pair with migrate, migrate_to, rollback, inspect, or verify",
+                "{name}: {} error checks must pair with migrate, migrate_to, rollback, inspect, verify, or fake_verified",
                 dialect.as_str()
             )));
         }
@@ -602,6 +632,54 @@ async fn run_family_checks(
     if section.checks.contains(&OnlineCheck::LockBehavior) {
         harness.assert_lock_released().await?;
     }
+    if section.checks.contains(&OnlineCheck::Repair) {
+        if !migrated && !migration_attempted && !migrations.is_empty() {
+            support::apply_runner(&mut runner, None)
+                .await
+                .map_err(|error| TestSupportError::message(error.to_string()))?;
+            migration_attempted = true;
+            migrated = true;
+        }
+        if let Some(sql) = section.mutate_sql(case) {
+            harness.batch_execute(sql).await?;
+        }
+        let report = support::repair_runner(&mut runner, Vec::new(), section.repair_apply)
+            .await
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
+        support::assert_repair_operations(
+            name,
+            &report.operations,
+            &section.expect_repair_operations,
+        )?;
+        if report.applied != section.repair_apply {
+            return Err(TestSupportError::message(format!(
+                "{name}: repair applied flag mismatch"
+            )));
+        }
+        if section.repair_apply && !report.verification.findings.is_empty() {
+            return Err(TestSupportError::message(format!(
+                "{name}: applied repair left verification findings"
+            )));
+        }
+    }
+    if section.checks.contains(&OnlineCheck::FakeVerified) {
+        if let Some(sql) = section.mutate_sql(case) {
+            harness.batch_execute(sql).await?;
+        }
+        let result = support::fake_verified_runner(
+            &mut runner,
+            required_fake_verified_target(name, section)?,
+            Vec::new(),
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| TestSupportError::message(error.to_string()));
+        if error_action == Some(ExpectedErrorAction::FakeVerified) {
+            assert_error_contains(name, result, expected_error(name, section)?)?;
+        } else {
+            result?;
+        }
+    }
     if section.checks.contains(&OnlineCheck::MigrationRecords) {
         assert_records_match(
             name,
@@ -795,6 +873,60 @@ async fn run_postgres_checks(
         if section.checks.contains(&OnlineCheck::LockBehavior) {
             harness.assert_lock_released().await?;
         }
+        if section.checks.contains(&OnlineCheck::Repair) {
+            if !migrated && !migration_attempted && !migrations.is_empty() {
+                support::apply_runner(&mut runner, None)
+                    .await
+                    .map_err(|error| TestSupportError::message(error.to_string()))?;
+                migration_attempted = true;
+                migrated = true;
+            }
+            if let Some(sql) = section.mutate_sql(case) {
+                let sql = support::postgres_placeholder_text(sql, harness.schema_name());
+                harness.batch_execute(&sql).await?;
+            }
+            let report = support::repair_runner(
+                &mut runner,
+                vec![harness.schema_name().to_string()],
+                section.repair_apply,
+            )
+            .await
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
+            support::assert_repair_operations(
+                name,
+                &report.operations,
+                &section.expect_repair_operations,
+            )?;
+            if report.applied != section.repair_apply {
+                return Err(TestSupportError::message(format!(
+                    "{name}: repair applied flag mismatch"
+                )));
+            }
+            if section.repair_apply && !report.verification.findings.is_empty() {
+                return Err(TestSupportError::message(format!(
+                    "{name}: applied repair left verification findings"
+                )));
+            }
+        }
+        if section.checks.contains(&OnlineCheck::FakeVerified) {
+            if let Some(sql) = section.mutate_sql(case) {
+                let sql = support::postgres_placeholder_text(sql, harness.schema_name());
+                harness.batch_execute(&sql).await?;
+            }
+            let result = support::fake_verified_runner(
+                &mut runner,
+                required_fake_verified_target(name, section)?,
+                vec![harness.schema_name().to_string()],
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| TestSupportError::message(error.to_string()));
+            if error_action == Some(ExpectedErrorAction::FakeVerified) {
+                assert_error_contains(name, result, expected_error(name, section)?)?;
+            } else {
+                result?;
+            }
+        }
         if section.checks.contains(&OnlineCheck::MigrationRecords) {
             let actual = harness.migration_records().await?;
             assert_records_match(name, actual, &section.expect_records)?;
@@ -976,6 +1108,54 @@ async fn run_sqlite_online_case(
         }
         if section.checks.contains(&OnlineCheck::LockBehavior) {
             harness.assert_lock_released().await?;
+        }
+        if section.checks.contains(&OnlineCheck::Repair) {
+            if !migrated && !migration_attempted && !migrations.is_empty() {
+                support::apply_runner(&mut runner, None)
+                    .await
+                    .map_err(|error| TestSupportError::message(error.to_string()))?;
+                migration_attempted = true;
+                migrated = true;
+            }
+            if let Some(sql) = section.mutate_sql(case) {
+                harness.batch_execute(sql).await?;
+            }
+            let report = support::repair_runner(&mut runner, Vec::new(), section.repair_apply)
+                .await
+                .map_err(|error| TestSupportError::message(error.to_string()))?;
+            support::assert_repair_operations(
+                name,
+                &report.operations,
+                &section.expect_repair_operations,
+            )?;
+            if report.applied != section.repair_apply {
+                return Err(TestSupportError::message(format!(
+                    "{name}: repair applied flag mismatch"
+                )));
+            }
+            if section.repair_apply && !report.verification.findings.is_empty() {
+                return Err(TestSupportError::message(format!(
+                    "{name}: applied repair left verification findings"
+                )));
+            }
+        }
+        if section.checks.contains(&OnlineCheck::FakeVerified) {
+            if let Some(sql) = section.mutate_sql(case) {
+                harness.batch_execute(sql).await?;
+            }
+            let result = support::fake_verified_runner(
+                &mut runner,
+                required_fake_verified_target(name, section)?,
+                Vec::new(),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| TestSupportError::message(error.to_string()));
+            if error_action == Some(ExpectedErrorAction::FakeVerified) {
+                assert_error_contains(name, result, expected_error(name, section)?)?;
+            } else {
+                result?;
+            }
         }
         if section.checks.contains(&OnlineCheck::MigrationRecords) {
             let actual = harness.migration_records().await?;

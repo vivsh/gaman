@@ -29,6 +29,9 @@ pub enum SchemaBuilderIssue {
         placement: String,
         reason: String,
     },
+    /// A managed-row declaration could not be serialized or merged safely.
+    #[error("invalid managed rows for '{table}': {reason}")]
+    InvalidManagedRows { table: String, reason: String },
 }
 
 /// Ordered builder failures returned together from the terminal build operation.

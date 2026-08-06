@@ -210,6 +210,18 @@ pub trait Executor: Send {
     /// Executes one SQL statement.
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>>;
 
+    /// Executes one checked DML statement and returns its affected-row count.
+    fn execute_affected<'a>(
+        &'a mut self,
+        _sql: &'a str,
+    ) -> BoxFuture<'a, Result<u64, ExecutorError>> {
+        Box::pin(async {
+            Err(ExecutorError::Unsupported(
+                "affected-row execution is not supported by this executor".to_string(),
+            ))
+        })
+    }
+
     /// Returns the first text column from each result row for tracking adapters.
     fn fetch_strings<'a>(
         &'a mut self,
@@ -252,6 +264,13 @@ where
 
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
         (**self).execute(sql)
+    }
+
+    fn execute_affected<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> BoxFuture<'a, Result<u64, ExecutorError>> {
+        (**self).execute_affected(sql)
     }
 
     fn fetch_strings<'a>(

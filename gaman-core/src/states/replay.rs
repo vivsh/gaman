@@ -8,6 +8,9 @@ impl Schema {
     /// `Statement` is a no-op: it carries raw SQL that cannot
     /// be reflected into the in-memory schema model.
     pub fn apply(&mut self, op: &Operation) -> Result<(), ReplayError> {
+        if crate::managed_rows::apply_operation(self, op)? {
+            return Ok(());
+        }
         match op {
             Operation::CreateTable { table } => {
                 let key = table.qualified_name();
@@ -24,6 +27,7 @@ impl Schema {
                 if self.tables.remove(&key).is_none() {
                     return Err(ReplayError::TableNotFound(key));
                 }
+                self.managed_rows.remove(&table.qualified_name());
             }
 
             Operation::RenameTable { old_name, new_name } => {
@@ -40,6 +44,9 @@ impl Schema {
                 let mut table = table;
                 table.name = new_name.clone();
                 self.tables.insert(new_name.clone(), table);
+                if let Some(rows) = self.managed_rows.remove(old_name) {
+                    self.managed_rows.insert(new_name.clone(), rows);
+                }
                 rename_fk_table_references(self, old_name, new_name);
                 rename_partition_parent_references(self, old_name, new_name);
             }
@@ -91,6 +98,11 @@ impl Schema {
                     return Err(ReplayError::PrimaryKeyMutation(table_name.clone()));
                 }
                 table.columns.remove(pos);
+                if let Some(rows) = self.managed_rows.get_mut(table_name) {
+                    for row in &mut rows.rows {
+                        row.values.remove(&column.name);
+                    }
+                }
                 normalize_table_primary_key(table);
             }
 
@@ -115,6 +127,13 @@ impl Schema {
                         column: old_name.clone(),
                     })?;
                 col.name = new_name.clone();
+                if let Some(rows) = self.managed_rows.get_mut(table_name) {
+                    for row in &mut rows.rows {
+                        if let Some(value) = row.values.remove(old_name) {
+                            row.values.insert(new_name.clone(), value);
+                        }
+                    }
+                }
                 rename_fk_source_columns(table, old_name, new_name);
                 normalize_table_primary_key(table);
                 rename_fk_target_columns(self, table_name, old_name, new_name);
@@ -435,6 +454,9 @@ impl Schema {
                 let new_key = new.qualified_name();
                 self.enums.insert(new_key, new.clone());
             }
+            Operation::InsertRow { .. }
+            | Operation::UpdateRow { .. }
+            | Operation::DeleteRow { .. } => {}
         }
         Ok(())
     }

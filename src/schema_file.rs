@@ -356,6 +356,21 @@ fn merge_fragment(
         }
         merged.tables.insert(name, table);
     }
+    for (table, incoming) in fragment.managed_rows {
+        match merged.managed_rows.get_mut(&table) {
+            Some(existing) => gaman_core::managed_rows::merge_declaration(
+                &table, existing, incoming,
+            )
+            .map_err(|reason| {
+                SchemaLoadError::Validation(gaman_core::states::SchemaValidationError::Invalid(
+                    reason,
+                ))
+            })?,
+            None => {
+                merged.managed_rows.insert(table, incoming);
+            }
+        }
+    }
     merged.views.extend(fragment.views);
     merged.functions.extend(fragment.functions);
     merged.extensions.extend(fragment.extensions);
@@ -408,6 +423,26 @@ mod tests {
         assert!(schema.tables.contains_key("categories"));
         assert!(schema.tables.contains_key("labels"));
         assert!(schema.tables.contains_key("tags"));
+    }
+
+    /// Verifies managed rows may target a table declared in a separate SQL fragment.
+    #[test]
+    fn load_schema_dir_composes_sql_table_with_yaml_managed_rows() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("a.sql"),
+            "CREATE TABLE task_lanes (id text PRIMARY KEY, name text NOT NULL);",
+        )
+        .expect("write SQL schema");
+        fs::write(
+            dir.path().join("b.yaml"),
+            "managed_rows:\n  task_lanes:\n    rows:\n      - id: approval\n        name: manager_review\n",
+        )
+        .expect("write managed rows");
+
+        let schema = load_schema_dir(dir.path(), Dialect::Postgres).expect("load schema dir");
+
+        assert_eq!(schema.managed_rows["task_lanes"].rows.len(), 1);
     }
 
     /// Verifies that directory merging rejects duplicate table definitions across files.

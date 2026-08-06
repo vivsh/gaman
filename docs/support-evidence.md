@@ -1,6 +1,6 @@
 # Support Evidence
 
-Evidence generation: `20260803T143148Z-53550`.
+Evidence generation: `20260806T083520Z-11686`.
 
 This is Gaman's authoritative compatibility reference. It expands the README lifecycle summary with the full feature matrix, limitations, and accepted fixture evidence for parsing, inspection, and `verify` drift detection.
 
@@ -91,7 +91,7 @@ Parser evidence records SQL accepted or deliberately rejected by `gaman::parsers
 
 | Capability | Evidence |
 | --- | --- |
-| expected rejection / unsupported boundary | [`event_trigger_parse_error`](tests/cases/parser/postgres/event_trigger_parse_error.yaml)<br>[`materialized_view_tail_parse_error`](tests/cases/parser/postgres/materialized_view_tail_parse_error.yaml)<br>[`non_create_alter_table`](tests/cases/parser/postgres/non_create_alter_table.yaml)<br>[`non_create_delete`](tests/cases/parser/postgres/non_create_delete.yaml)<br>[`non_create_drop_table`](tests/cases/parser/postgres/non_create_drop_table.yaml)<br>[`unsupported_grant`](tests/cases/parser/postgres/unsupported_grant.yaml)<br>[`unsupported_policy`](tests/cases/parser/postgres/unsupported_policy.yaml) |
+| expected rejection / unsupported boundary | [`event_trigger_parse_error`](tests/cases/parser/postgres/event_trigger_parse_error.yaml)<br>[`materialized_view_tail_parse_error`](tests/cases/parser/postgres/materialized_view_tail_parse_error.yaml)<br>[`non_create_alter_table`](tests/cases/parser/postgres/non_create_alter_table.yaml)<br>[`non_create_delete`](tests/cases/parser/postgres/non_create_delete.yaml)<br>[`non_create_drop_table`](tests/cases/parser/postgres/non_create_drop_table.yaml)<br>[`opaque_index_if_not_exists_rejected`](tests/cases/parser/postgres/opaque_index_if_not_exists_rejected.yaml)<br>[`unsupported_grant`](tests/cases/parser/postgres/unsupported_grant.yaml)<br>[`unsupported_policy`](tests/cases/parser/postgres/unsupported_policy.yaml) |
 | supported lowering: column, constraint, foreign_key, table | [`column_foreign_key`](tests/cases/parser/postgres/column_foreign_key.yaml)<br>[`table_foreign_key`](tests/cases/parser/postgres/table_foreign_key.yaml) |
 | supported lowering: column, constraint, function, table, trigger | [`function_trigger`](tests/cases/parser/postgres/function_trigger.yaml) |
 | supported lowering: column, constraint, table | [`check_constraint`](tests/cases/parser/postgres/check_constraint.yaml)<br>[`primary_key`](tests/cases/parser/postgres/primary_key.yaml)<br>[`unique_constraint`](tests/cases/parser/postgres/unique_constraint.yaml) |

@@ -883,6 +883,7 @@ fn tiebreak_priority(op: &Operation) -> (u8, u8) {
         Operation::DropTable { .. } => (4, 0),
         Operation::CreateFunction { .. } | Operation::AlterFunction { .. } => (5, 0),
         Operation::CreateTable { .. } => (6, 0),
+        Operation::DeleteRow { .. } => (7, 0),
         Operation::DropTrigger { .. } => (8, 0),
         Operation::DropConstraint { .. } => (8, 1),
         Operation::DropIndex { .. } => (8, 2),
@@ -902,6 +903,8 @@ fn tiebreak_priority(op: &Operation) -> (u8, u8) {
         | Operation::AcknowledgeTableOptions { .. }
         | Operation::RenameTable { .. }
         | Operation::RenameColumn { .. } => (8, 5),
+        Operation::InsertRow { .. } => (9, 0),
+        Operation::UpdateRow { .. } => (9, 1),
     }
 }
 
@@ -934,10 +937,7 @@ fn build_dependency_edges(ops: &[Operation], adj: &mut [Vec<usize>], in_deg: &mu
 
     let resolve_create = |dep: &Dep| -> Vec<usize> {
         match &dep.name {
-            Some(name) => create_idx
-                .get(&(dep.kind, name.as_str()))
-                .cloned()
-                .unwrap_or_default(),
+            Some(name) => resolve_named_dependency(&create_idx, dep.kind, name),
             None => create_idx
                 .iter()
                 .filter(|((k, _), _)| *k == dep.kind)
@@ -948,10 +948,7 @@ fn build_dependency_edges(ops: &[Operation], adj: &mut [Vec<usize>], in_deg: &mu
 
     let resolve_drop = |dep: &Dep| -> Vec<usize> {
         match &dep.name {
-            Some(name) => drop_idx
-                .get(&(dep.kind, name.as_str()))
-                .cloned()
-                .unwrap_or_default(),
+            Some(name) => resolve_named_dependency(&drop_idx, dep.kind, name),
             None => drop_idx
                 .iter()
                 .filter(|((k, _), _)| *k == dep.kind)
@@ -973,6 +970,19 @@ fn build_dependency_edges(ops: &[Operation], adj: &mut [Vec<usize>], in_deg: &mu
                 for k in resolve_drop(&dep) {
                     add_edge(i, k);
                 }
+            }
+        }
+    }
+
+    for (child_index, operation) in ops.iter().enumerate() {
+        let Operation::DropTable { table } = operation else {
+            continue;
+        };
+        for foreign_key in &table.foreign_keys {
+            for parent_index in
+                resolve_named_dependency(&drop_idx, EntityKind::Table, &foreign_key.to_table)
+            {
+                add_edge(child_index, parent_index);
             }
         }
     }
@@ -1002,6 +1012,62 @@ fn build_dependency_edges(ops: &[Operation], adj: &mut [Vec<usize>], in_deg: &mu
     }
 }
 
+/// Resolves exact entity identities and the canonical zero-argument function
+/// signature used by function operations.
+fn resolve_named_dependency(
+    index: &HashMap<(EntityKind, &str), Vec<usize>>,
+    kind: EntityKind,
+    name: &str,
+) -> Vec<usize> {
+    if let Some(matches) = index.get(&(kind, name)) {
+        return matches.clone();
+    }
+    if !matches!(kind, EntityKind::Function | EntityKind::Table) {
+        return Vec::new();
+    }
+    let normalized = normalize_dependency_identity(kind, name);
+    index
+        .iter()
+        .filter(|((candidate_kind, candidate), _)| {
+            *candidate_kind == kind && normalize_dependency_identity(kind, candidate) == normalized
+        })
+        .flat_map(|(_, matches)| matches.iter().copied())
+        .collect()
+}
+
+fn normalize_dependency_identity(kind: EntityKind, identity: &str) -> &str {
+    match kind {
+        EntityKind::Function => identity.strip_suffix("()").unwrap_or(identity),
+        EntityKind::Table => identity.strip_prefix("public.").unwrap_or(identity),
+        _ => identity,
+    }
+}
+
+pub(crate) fn dependency_closure(
+    operations: &[Operation],
+    seeds: &HashSet<usize>,
+) -> HashSet<usize> {
+    let mut adjacency = vec![Vec::new(); operations.len()];
+    let mut incoming = vec![0; operations.len()];
+    build_dependency_edges(operations, &mut adjacency, &mut incoming);
+    let mut reverse = vec![Vec::new(); operations.len()];
+    for (prerequisite, dependents) in adjacency.iter().enumerate() {
+        for dependent in dependents {
+            reverse[*dependent].push(prerequisite);
+        }
+    }
+    let mut selected = seeds.clone();
+    let mut pending = seeds.iter().copied().collect::<Vec<_>>();
+    while let Some(index) = pending.pop() {
+        for prerequisite in &reverse[index] {
+            if selected.insert(*prerequisite) {
+                pending.push(*prerequisite);
+            }
+        }
+    }
+    selected
+}
+
 // Public entry point for diff generation.
 
 pub struct DiffEngine;
@@ -1025,10 +1091,13 @@ impl DiffEngine {
         reject_primary_key_mutations(&current, &previous)?;
 
         let raw_ops = generate_diff_for_dialect(&current, &previous, dialect);
+        let mut raw_ops = raw_ops;
+        raw_ops.extend(crate::managed_rows::diff_schemas(&current, &previous));
         let ops = inject_orphan_triggers(raw_ops, &previous);
         let ops = inject_enum_column_casts(ops, &previous);
         let ops = decompose(ops);
         let ops = sort_operations(ops)?;
+        let ops = crate::managed_rows::order_operations(ops, &current, &previous)?;
         Ok(merge_operations(ops, dialect))
     }
 }

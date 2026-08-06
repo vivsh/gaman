@@ -79,3 +79,5 @@ features:
     label: PostgreSQL range partitioning
   - id: data_preservation
     label: Data preservation
+  - id: managed_rows
+    label: Managed rows

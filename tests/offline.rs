@@ -394,6 +394,7 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
             migrations,
             current,
             decisions,
+            filters,
             expect_no_changes,
             expect_clarifications,
             expect_pending_clarifications,
@@ -408,12 +409,21 @@ fn run_offline_case(name: &str, case: &OfflineCase) -> Result<(), TestSupportErr
             }
 
             let migrator = build_fixture_planner(name, case.dialect, migrations)?;
-            let result = migrator.make_migrations(
-                Some(migration_name.clone()),
-                current.clone(),
-                true,
-                decisions,
-            );
+            let result = if filters.is_empty() {
+                migrator.make_migrations(
+                    Some(migration_name.clone()),
+                    current.clone(),
+                    true,
+                    decisions,
+                )
+            } else {
+                migrator.make_filtered_migrations(
+                    Some(migration_name.clone()),
+                    current.clone(),
+                    decisions,
+                    filters,
+                )
+            };
             if let Some(expected) = expect_clarifications
                 .as_ref()
                 .or(expect_pending_clarifications.as_ref())

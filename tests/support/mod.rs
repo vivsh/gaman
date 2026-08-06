@@ -125,6 +125,13 @@ impl gaman::Executor for TestLiveExecutor {
         self.inner.execute(sql)
     }
 
+    fn execute_affected<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> BoxFuture<'a, Result<u64, gaman::ExecutorError>> {
+        self.inner.execute_affected(sql)
+    }
+
     fn fetch_strings<'a>(
         &'a mut self,
         sql: &'a str,
@@ -214,6 +221,19 @@ impl FixturePlanner {
             .make_named_migration(schema, name.as_deref(), decisions)
     }
 
+    /// Generates one fixture migration with invocation-scoped root filters.
+    pub fn make_filtered_migrations(
+        &self,
+        name: Option<String>,
+        schema: Schema,
+        decisions: &[Decision],
+        filters: &[gaman_core::EntityFilter],
+    ) -> Result<Option<Migration>, OfflineError> {
+        OfflinePlanner::new(self.dialect)
+            .from_migrations(self.migrations.clone())
+            .make_named_migration_filtered(schema, name.as_deref(), decisions, filters)
+    }
+
     /// Renders selected forward migrations against fixture history.
     pub fn sql_migrate(&self, migrations: &[Migration]) -> Result<Vec<String>, SqlPlanError> {
         SqlPlanRenderer::new(self.dialect, self.migrations.clone())?.render_migrations(migrations)
@@ -271,6 +291,8 @@ pub enum OnlineCheck {
     LockBehavior,
     Inspect,
     Verify,
+    Repair,
+    FakeVerified,
     Data,
     Error,
 }
@@ -312,9 +334,15 @@ pub struct OnlineDialectCase {
     #[serde(default)]
     pub expect_verification: Option<ExpectedVerification>,
     #[serde(default)]
+    pub expect_repair_operations: Vec<Operation>,
+    #[serde(default)]
+    pub repair_apply: bool,
+    #[serde(default)]
     pub expect_error: Option<String>,
     #[serde(default)]
     pub target: Option<String>,
+    #[serde(default)]
+    pub fake_verified_target: Option<String>,
     #[serde(default)]
     pub expect_records: Vec<String>,
     #[serde(default)]
@@ -745,6 +773,8 @@ pub enum OfflineSpec {
         current: Schema,
         #[serde(default)]
         decisions: Vec<Decision>,
+        #[serde(default)]
+        filters: Vec<gaman_core::EntityFilter>,
         #[serde(default)]
         expect_no_changes: bool,
         expect_clarifications: Option<Vec<Clarification>>,
@@ -1514,6 +1544,64 @@ pub async fn verify_runner(
             "verify runner returned an unexpected result",
         )),
     }
+}
+
+/// Runs one repair command through the shared typed runner lifecycle.
+pub async fn repair_runner(
+    runner: &mut TestRunner,
+    schemas: Vec<String>,
+    apply: bool,
+) -> Result<gaman::RepairReport, TestSupportError> {
+    match runner
+        .run_command(&RunnerCommand::Repair {
+            schemas,
+            options: gaman::RepairOptions {
+                apply,
+                allow_pending: false,
+                allow_partial: false,
+                sql_only: false,
+            },
+        })
+        .await
+        .map_err(|error| TestSupportError::message(error.to_string()))?
+    {
+        RunnerResult::Repair(report) => Ok(report),
+        _ => Err(TestSupportError::message(
+            "repair runner returned an unexpected result",
+        )),
+    }
+}
+
+/// Records the next pending migration only after verified fake application.
+pub async fn fake_verified_runner(
+    runner: &mut TestRunner,
+    target: &str,
+    schemas: Vec<String>,
+) -> Result<gaman::MigrationMovement, TestSupportError> {
+    match runner
+        .run_command(&RunnerCommand::Apply(ApplyCommand::Execute {
+            target: Some(target.to_string()),
+            fake: false,
+            fake_verified: true,
+            schemas,
+        }))
+        .await
+        .map_err(|error| TestSupportError::message(error.to_string()))?
+    {
+        RunnerResult::Movement(movement) => Ok(movement),
+        _ => Err(TestSupportError::message(
+            "verified fake runner returned an unexpected result",
+        )),
+    }
+}
+
+/// Compares repair operations without discarding order or expected old values.
+pub fn assert_repair_operations(
+    case_name: &str,
+    actual: &[Operation],
+    expected: &[Operation],
+) -> Result<(), TestSupportError> {
+    assert_ops_match(case_name, "repair operations", actual, expected)
 }
 
 /// Compares every deterministic drift finding and repair operation.

@@ -837,6 +837,9 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             index, concurrent, ..
         } => Ok(vec![drop_index_sql(index, *concurrent)?]),
         Operation::Statement { up, .. } => Ok(vec![up.clone()]),
+        Operation::InsertRow { .. } | Operation::UpdateRow { .. } | Operation::DeleteRow { .. } => {
+            crate::managed_rows::sql::render(crate::dialects::Dialect::Sqlite, op)
+        }
         Operation::CreateView { view } => {
             if let Some(raw) = view.raw_sql() {
                 Ok(vec![trim_sql_terminator(raw).to_string()])

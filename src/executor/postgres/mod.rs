@@ -38,6 +38,18 @@ impl Executor for PostgresExecutor {
                 .map_err(|error| ExecutorError::ExecuteDatabase(postgres_failure(error)))
         })
     }
+    fn execute_affected<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> BoxFuture<'a, Result<u64, ExecutorError>> {
+        Box::pin(async move {
+            sqlx::query(sql)
+                .execute(&mut self.conn)
+                .await
+                .map(|result| result.rows_affected())
+                .map_err(|error| ExecutorError::ExecuteDatabase(postgres_failure(error)))
+        })
+    }
 
     fn fetch_strings<'a>(
         &'a mut self,

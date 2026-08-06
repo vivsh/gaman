@@ -1,4 +1,4 @@
-generation: 20260803T143148Z-53550
+generation: 20260806T083520Z-11686
 features:
   answer.keep_type:
     mariadb:
@@ -1087,6 +1087,29 @@ features:
     sqlite:
       status: skipped
       reason: no offline evidence recorded
+  filtered_migrations:
+    mariadb:
+      status: skipped
+      reason: no offline evidence recorded
+    mysql:
+      status: skipped
+      reason: no offline evidence recorded
+    postgres:
+      status: success
+      evidence:
+      - case: filtered_managed_rows
+        description: A table filter includes its managed-row insertion and excludes an independent table change.
+        group: diff
+        kind: schema_to_migration
+        dialect: postgres
+        assertions:
+        - schema_to_migration
+        - operations
+        - replayed_schema
+        - sql
+    sqlite:
+      status: skipped
+      reason: no offline evidence recorded
   foreign_key_actions:
     mariadb:
       status: skipped
@@ -1533,6 +1556,16 @@ features:
         - sql
       - case: enum_append
         description: Diff appends enum labels through AlterEnum.
+        group: diff
+        kind: schema_to_migration
+        dialect: postgres
+        assertions:
+        - schema_to_migration
+        - operations
+        - replayed_schema
+        - sql
+      - case: filtered_managed_rows
+        description: A table filter includes its managed-row insertion and excludes an independent table change.
         group: diff
         kind: schema_to_migration
         dialect: postgres
@@ -3872,6 +3905,16 @@ features:
         - operations
         - replayed_schema
         - sql
+      - case: filtered_managed_rows
+        description: A table filter includes its managed-row insertion and excludes an independent table change.
+        group: diff
+        kind: schema_to_migration
+        dialect: postgres
+        assertions:
+        - schema_to_migration
+        - operations
+        - replayed_schema
+        - sql
       - case: fk_on_update_change
         description: Changing only a foreign key on_update action replaces the foreign key.
         group: diff
@@ -4284,6 +4327,29 @@ features:
         assertions:
         - sql_to_schema
         - schema_or_error
+    sqlite:
+      status: skipped
+      reason: no offline evidence recorded
+  managed_rows:
+    mariadb:
+      status: skipped
+      reason: no offline evidence recorded
+    mysql:
+      status: skipped
+      reason: no offline evidence recorded
+    postgres:
+      status: success
+      evidence:
+      - case: filtered_managed_rows
+        description: A table filter includes its managed-row insertion and excludes an independent table change.
+        group: diff
+        kind: schema_to_migration
+        dialect: postgres
+        assertions:
+        - schema_to_migration
+        - operations
+        - replayed_schema
+        - sql
     sqlite:
       status: skipped
       reason: no offline evidence recorded
@@ -4987,6 +5053,29 @@ features:
         dialect: postgres
         assertions:
         - migration_to_sql
+        - sql
+    sqlite:
+      status: skipped
+      reason: no offline evidence recorded
+  operation.insert_row:
+    mariadb:
+      status: skipped
+      reason: no offline evidence recorded
+    mysql:
+      status: skipped
+      reason: no offline evidence recorded
+    postgres:
+      status: success
+      evidence:
+      - case: filtered_managed_rows
+        description: A table filter includes its managed-row insertion and excludes an independent table change.
+        group: diff
+        kind: schema_to_migration
+        dialect: postgres
+        assertions:
+        - schema_to_migration
+        - operations
+        - replayed_schema
         - sql
     sqlite:
       status: skipped

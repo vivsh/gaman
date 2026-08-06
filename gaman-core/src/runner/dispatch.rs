@@ -7,6 +7,7 @@ use super::protocol::{
 };
 use super::selector::{EntityFilter, select_authored_schema, select_schema_for_drift};
 use crate::drift::{self, VerificationReport};
+use crate::managed_rows;
 use crate::migration_engine::{
     EngineError, Executor, MigrationCatalog, MigrationEngine, MigrationStore, TrackingStore,
 };
@@ -111,9 +112,10 @@ where
                 name,
                 decisions,
                 dry_run,
+                filters,
             } if *dry_run => match self
                 .engine
-                .make_dry_run_named(schema.clone(), name.as_deref(), decisions)
+                .make_dry_run_named_filtered(schema.clone(), name.as_deref(), decisions, filters)
                 .await?
             {
                 Some(migration) => MakeResult::Preview(migration),
@@ -123,10 +125,11 @@ where
                 schema,
                 name,
                 decisions,
+                filters,
                 ..
             } => match self
                 .engine
-                .make_named(schema.clone(), name.as_deref(), decisions)
+                .make_named_filtered(schema.clone(), name.as_deref(), decisions, filters)
                 .await?
             {
                 Some(migration) => MakeResult::Created(migration),
@@ -315,7 +318,13 @@ where
             .normalize_inspected_schema(self.inspect(schemas).await?)
             .map_err(|error| CommandError::Invalid(error.to_string()))?;
         let names = schemas.iter().map(String::as_str).collect::<Vec<_>>();
+        let row_report =
+            managed_rows::drift::verify(&replay, self.engine.dialect(), self.engine.executor_mut())
+                .await
+                .map_err(CommandError::Execution)?;
         let mut report = drift::diff_schemas(replay, live, &names, self.engine.dialect());
+        report.findings.extend(row_report.findings);
+        report.operations.extend(row_report.operations);
         report.pending_migrations = self.engine.plan().await?;
         Ok(report)
     }
@@ -338,9 +347,14 @@ where
                 plan.skipped_findings.len()
             )));
         }
-        let sql = self.engine.render_operations(&plan.operations).await?;
+        let sql = if options.apply && !plan.operations.is_empty() {
+            self.engine
+                .execute_operations_untracked(&plan.operations)
+                .await?
+        } else {
+            self.engine.render_operations(&plan.operations).await?
+        };
         if options.apply && !sql.is_empty() {
-            self.engine.execute_untracked(&sql).await?;
             return Ok(RepairReport {
                 verification: self.verify(schemas).await?,
                 operations: plan.operations,
@@ -397,9 +411,16 @@ where
             .dialect()
             .normalize_inspected_schema(self.inspect(schemas).await?)
             .map_err(|error| CommandError::Invalid(error.to_string()))?;
-        let live = select_schema_for_drift(live, &filters)?;
+        let live_filters = inspected_filters(&filters, schemas);
+        let live = select_schema_for_drift(live, &live_filters)?;
         let names = schemas.iter().map(String::as_str).collect::<Vec<_>>();
-        let report = drift::diff_schemas(replay, live, &names, self.engine.dialect());
+        let row_report =
+            managed_rows::drift::verify(&replay, self.engine.dialect(), self.engine.executor_mut())
+                .await
+                .map_err(CommandError::Execution)?;
+        let mut report = drift::diff_schemas(replay, live, &names, self.engine.dialect());
+        report.findings.extend(row_report.findings);
+        report.operations.extend(row_report.operations);
         if !report.findings.is_empty() {
             let details = drift::format_report(&report).join("; ");
             return Err(CommandError::Invalid(format!(
@@ -411,6 +432,27 @@ where
             self.engine.apply(Some(&target), true).await?,
         ))
     }
+}
+
+/// Qualifies exact inspected identities when one non-public namespace was requested.
+fn inspected_filters(filters: &[EntityFilter], schemas: &[String]) -> Vec<EntityFilter> {
+    let [schema] = schemas else {
+        return filters.to_vec();
+    };
+    if schema == "public" {
+        return filters.to_vec();
+    }
+    filters
+        .iter()
+        .map(|filter| EntityFilter {
+            kind: filter.kind,
+            pattern: if filter.pattern.contains('.') {
+                filter.pattern.clone()
+            } else {
+                format!("{schema}.{}", filter.pattern)
+            },
+        })
+        .collect()
 }
 
 /// Maps candidate migration operations to the roots verified by fake application.
@@ -829,6 +871,21 @@ mod tests {
         })))
         .expect("verified fake application");
         assert!(matches!(result, CommandResult::Movement(movement) if movement.applied == 1));
+    }
+
+    /// Verifies inspected filtering maps unqualified replay roots into one explicit schema.
+    #[test]
+    fn verified_fake_qualifies_inspected_filters() {
+        let filters = vec![EntityFilter {
+            kind: crate::states::EntityKind::Table,
+            pattern: "items".to_string(),
+        }];
+
+        let scoped = inspected_filters(&filters, &["tenant_test".to_string()]);
+        let public = inspected_filters(&filters, &["public".to_string()]);
+
+        assert_eq!(scoped[0].pattern, "tenant_test.items");
+        assert_eq!(public, filters);
     }
 
     /// Verifies schema checking retains ignored inputs and continues after statement failures.

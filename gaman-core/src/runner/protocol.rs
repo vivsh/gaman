@@ -79,7 +79,7 @@ impl Command {
 pub type CommandRequest = Command;
 
 /// Current version of the portable command request and response protocol.
-pub const COMMAND_PROTOCOL_VERSION: u32 = 2;
+pub const COMMAND_PROTOCOL_VERSION: u32 = 4;
 
 /// Versioned portable command request envelope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +100,9 @@ pub enum MakeCommand {
         name: Option<String>,
         dry_run: bool,
         decisions: Vec<Decision>,
+        /// Invocation-scoped root filters; empty preserves complete generation.
+        #[serde(default)]
+        filters: Vec<EntityFilter>,
     },
     /// Create a named empty migration.
     Empty { name: String },

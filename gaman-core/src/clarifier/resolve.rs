@@ -170,6 +170,27 @@ impl ClarifyPlan {
 
         let mut result = Vec::with_capacity(ops.len());
         let mut replaced_enums: HashSet<String> = HashSet::new();
+        let dropped_tables = ops
+            .iter()
+            .filter_map(|operation| match operation {
+                Operation::DropTable { table } => Some(table.qualified_name()),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        let deleted_rows = ops
+            .iter()
+            .filter_map(|operation| match operation {
+                Operation::DeleteRow {
+                    table_name,
+                    key,
+                    row,
+                } => row
+                    .identity(key)
+                    .ok()
+                    .map(|identity| ((table_name.as_str(), identity), row)),
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
 
         for op in ops {
             match op {
@@ -226,6 +247,60 @@ impl ClarifyPlan {
                     }
                     result.push(op.clone());
                 }
+                Operation::InsertRow {
+                    table_name,
+                    key,
+                    row,
+                } if rename_table_targets.contains(table_name.as_str()) => {
+                    let previous_table = table_renames
+                        .iter()
+                        .find_map(|(old, new)| (*new == table_name.as_str()).then_some(*old));
+                    let previous = previous_table
+                        .and_then(|table| row.identity(key).ok().map(|identity| (table, identity)))
+                        .and_then(|identity| deleted_rows.get(&identity));
+                    if let Some(previous) = previous
+                        && *previous != row
+                    {
+                        result.push(Operation::UpdateRow {
+                            table_name: table_name.clone(),
+                            key: key.clone(),
+                            old: (*previous).clone(),
+                            new: row.clone(),
+                        });
+                    }
+                }
+                Operation::UpdateRow {
+                    table_name,
+                    key,
+                    old,
+                    new,
+                } => {
+                    let mut expected = old.clone();
+                    for ((renamed_table, old_name), new_name) in &col_renames {
+                        if *renamed_table != table_name.as_str() {
+                            continue;
+                        }
+                        if let Some(value) = expected.values.remove(*old_name) {
+                            expected.values.insert((*new_name).to_string(), value);
+                        }
+                    }
+                    if expected != *new {
+                        result.push(Operation::UpdateRow {
+                            table_name: table_name.clone(),
+                            key: key
+                                .iter()
+                                .map(|name| {
+                                    col_renames
+                                        .get(&(table_name.as_str(), name.as_str()))
+                                        .map_or_else(|| name.clone(), |name| (*name).to_string())
+                                })
+                                .collect(),
+                            old: expected,
+                            new: new.clone(),
+                        });
+                    }
+                }
+                Operation::DeleteRow { table_name, .. } if dropped_tables.contains(table_name) => {}
                 Operation::AlterColumn {
                     table_name,
                     old,
@@ -584,7 +659,8 @@ fn validate_answer(clar: &Clarification, answer: &Answer) -> Result<(), ClarifyE
         | (ClarificationKind::TypeCast { .. }, Answer::TypeCastImplicit) => {}
         (ClarificationKind::OpaqueEntity { .. }, Answer::AcceptRisk)
         | (ClarificationKind::UnmanagedTableOptions { .. }, Answer::AcceptRisk)
-        | (ClarificationKind::ColumnMetadataChange { .. }, Answer::AcceptRisk) => {}
+        | (ClarificationKind::ColumnMetadataChange { .. }, Answer::AcceptRisk)
+        | (ClarificationKind::DeleteManagedRow { .. }, Answer::AcceptRisk) => {}
         _ => {
             return Err(ClarifyError::InvalidAnswer {
                 id: clar.id.clone(),

@@ -33,6 +33,33 @@ fn write_migration(dir: &tempfile::TempDir, id: &str) {
     .expect("write migration");
 }
 
+/// Verifies entity filters are rejected for global check, empty, and merge
+/// generation modes before migration planning begins.
+#[test]
+fn make_filters_reject_incompatible_modes() {
+    let cases = [
+        vec!["make", "--check", "--filter", "users"],
+        vec!["make", "empty", "--empty", "--filter", "users"],
+        vec!["make", "merge", "--merge", "--filter", "users"],
+    ];
+    for arguments in cases {
+        let dir = tempfile::tempdir().expect("create temp directory");
+        fs::write(dir.path().join("schema.yaml"), "tables: {}\n").expect("write empty schema");
+        let output = gaman_command(&dir)
+            .args(&arguments)
+            .output()
+            .expect("run filtered make");
+
+        assert!(
+            !output.status.success(),
+            "{} unexpectedly accepted filters",
+            arguments[1]
+        );
+        let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+        assert!(stderr.contains("filter"), "{}: {stderr}", arguments[1]);
+    }
+}
+
 /// Verifies the no-argument banner describes Gaman without privileging PostgreSQL.
 #[test]
 fn banner_is_dialect_neutral() {
@@ -370,7 +397,7 @@ fn config_rejects_disabled_mysql() {
     let dir = tempfile::tempdir().expect("create temp directory");
     let output = Command::new(env!("CARGO_BIN_EXE_gaman"))
         .current_dir(dir.path())
-        .args(["--database-url", "mysql://localhost/app", "config"])
+        .args(["--database-url", "mysql://localhost/app", "status"])
         .output()
         .expect("run gaman config");
 
@@ -398,6 +425,45 @@ fn make_dry_run_prints_generated_migration_yaml() {
     assert!(stdout.starts_with("--- 0001_initial\n"), "{stdout}");
     assert!(stdout.contains("type: create_table"));
     assert!(!stdout.contains("Created:"));
+}
+
+/// Verifies filtered dry-run and persisted generation produce identical
+/// canonical migration content.
+#[test]
+fn filtered_dry_run_matches_persisted_output() {
+    let dir = tempfile::tempdir().expect("create temp directory");
+    fs::write(
+        dir.path().join("schema.yaml"),
+        "tables:\n  users:\n    columns:\n      - name: id\n        type: integer\n  projects:\n    columns:\n      - name: id\n        type: integer\n",
+    )
+    .expect("write schema");
+    let dry_run = gaman_command(&dir)
+        .args([
+            "make",
+            "focused",
+            "--filter",
+            "users",
+            "--dry-run",
+            "--non-interactive",
+        ])
+        .output()
+        .expect("run filtered dry-run");
+    assert!(dry_run.status.success());
+    let stdout = String::from_utf8(dry_run.stdout).expect("utf8 stdout");
+    let expected = stdout
+        .strip_prefix("--- 0001_focused\n")
+        .expect("dry-run migration header");
+
+    let persisted = gaman_command(&dir)
+        .args(["make", "focused", "--filter", "users", "--non-interactive"])
+        .output()
+        .expect("persist filtered migration");
+    assert!(persisted.status.success());
+    let actual = fs::read_to_string(dir.path().join("migrations/0001_focused.yaml"))
+        .expect("read persisted migration");
+
+    assert_eq!(expected, actual);
+    assert!(!actual.contains("projects"));
 }
 
 /// Verifies artifact inspection accepts a read-only migration directory.

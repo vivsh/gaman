@@ -443,7 +443,7 @@ fn opaque_declaration_from_segment(
                 },
             })
         }
-        EntityKind::Column | EntityKind::ForeignKey | EntityKind::Constraint => {
+        EntityKind::Column | EntityKind::ForeignKey | EntityKind::Constraint | EntityKind::Row => {
             Err(ParseError::unsupported(
                 dialect,
                 segment.sql.clone(),

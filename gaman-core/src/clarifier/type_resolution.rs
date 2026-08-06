@@ -16,11 +16,31 @@ pub enum TypeResolution {
 #[doc(hidden)]
 pub fn resolve_unknown_types(
     dialect: Dialect,
-    mut desired: Schema,
+    desired: Schema,
     previous: &Schema,
     decisions: &[Decision],
 ) -> Result<TypeResolution, ClarifyError> {
-    let clarifications = unknown_type_clarifications(dialect, &desired, previous);
+    resolve_unknown_types_scoped(dialect, desired, previous, decisions, None)
+}
+
+pub(crate) fn resolve_unknown_types_for_tables(
+    dialect: Dialect,
+    desired: Schema,
+    previous: &Schema,
+    decisions: &[Decision],
+    tables: &HashSet<String>,
+) -> Result<TypeResolution, ClarifyError> {
+    resolve_unknown_types_scoped(dialect, desired, previous, decisions, Some(tables))
+}
+
+fn resolve_unknown_types_scoped(
+    dialect: Dialect,
+    mut desired: Schema,
+    previous: &Schema,
+    decisions: &[Decision],
+    tables: Option<&HashSet<String>>,
+) -> Result<TypeResolution, ClarifyError> {
+    let clarifications = unknown_type_clarifications(dialect, &desired, previous, tables);
     let by_id = clarifications
         .iter()
         .map(|clarification| (clarification.id.clone(), clarification.clone()))
@@ -78,11 +98,15 @@ fn unknown_type_clarifications(
     dialect: Dialect,
     desired: &Schema,
     previous: &Schema,
+    tables: Option<&HashSet<String>>,
 ) -> Vec<Clarification> {
     let trusted_types = trusted_project_types(previous);
     let mut clarifications = Vec::new();
 
     for (table_name, table) in &desired.tables {
+        if tables.is_some_and(|tables| !tables.contains(table_name)) {
+            continue;
+        }
         for column in &table.columns {
             if is_type_accepted(dialect, desired, &trusted_types, &column.col_type) {
                 continue;

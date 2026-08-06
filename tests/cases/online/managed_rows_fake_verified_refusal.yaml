@@ -1,0 +1,49 @@
+description: verified fake application refuses mismatching managed rows without recording the migration
+features:
+  - managed_rows
+  - live_inspect_verify
+  - migration_tracking
+  - data_preservation
+
+migrations:
+  - id: 0001_create_items
+    atomic: false
+    operations:
+      - type: create_table
+        table:
+          name: items
+          columns:
+            - name: id
+              type: varchar(64)
+              primary_key: true
+            - name: name
+              type: varchar(128)
+            - name: external_note
+              type: varchar(128)
+              nullable: true
+  - id: 0002_adopt_managed
+    dependencies: [0001_create_items]
+    operations:
+      - type: insert_row
+        table_name: items
+        key: [id]
+        row: {id: managed, name: expected}
+
+mutate_sql: |
+  INSERT INTO items (id, name, external_note) VALUES ('managed', 'unexpected', 'external-value');
+
+dialects:
+  postgres: &refusal
+    checks: [migrate_to, fake_verified, error, migration_records, data]
+    target: 0001_create_items
+    fake_verified_target: 0002_adopt_managed
+    expect_error: drift finding
+    expect_records: [0001_create_items]
+    data:
+      - sql: "SELECT name FROM items WHERE id = 'managed'"
+        expect: [unexpected]
+      - sql: "SELECT external_note FROM items WHERE id = 'managed'"
+        expect: [external-value]
+  sqlite: *refusal
+  mysql: *refusal
+  mariadb: *refusal

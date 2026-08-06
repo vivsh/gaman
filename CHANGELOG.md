@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added top-level managed rows for application-owned records identified by an
+  ordered primary or non-null unique key. Managed rows support deterministic
+  insert, checked update, confirmed delete, replay, rollback, verification,
+  repair, Rust builders, and YAML/JSON schema fragments.
+- Added offline managed-row SQL rendering for PostgreSQL, SQLite, MySQL, and
+  MariaDB. Live dialect support remains governed by accepted support evidence.
+- Added `Executor::execute_affected` as a defaulted embedding capability used
+  only by managed-row writes.
+- Added repeatable `make -f` / `make --filter` root-entity filters for focused,
+  invocation-scoped migration generation. Required changed dependencies and
+  complete table-owned operation groups are included automatically.
+
 ### Changed
+
+- Bumped the portable command protocol to version 4. Version 3 introduced
+  managed-row protocol variants; version 4 adds migration-generation filters
+  that older hosts must not silently ignore.
+- Managed-row declarations no longer accept a caller-selected `key`; Gaman
+  infers identity from the represented table primary key or an eligible unique
+  key. Declarations may own a subset of table columns without owning other rows
+  or undeclared columns.
 
 - The CLI now requires `DATABASE_URL` or `--database-url` to select a dialect;
   offline commands do not open that connection.

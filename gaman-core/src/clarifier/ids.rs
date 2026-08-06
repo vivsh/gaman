@@ -49,6 +49,11 @@ pub fn clarification_id(kind: &ClarificationKind) -> String {
                 encode_part(column)
             )
         }
+        ClarificationKind::DeleteManagedRow { table, identity } => format!(
+            "delete_managed_row:{}:{}",
+            encode_part(table),
+            encode_part(identity)
+        ),
     }
 }
 

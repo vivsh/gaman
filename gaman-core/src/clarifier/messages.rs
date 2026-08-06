@@ -264,6 +264,16 @@ pub fn clarification_message(clar: &Clarification) -> ClarificationMessage {
                 action: OptionAction::Fixed(Answer::AcceptRisk),
             }],
         },
+        ClarificationKind::DeleteManagedRow { table, identity } => ClarificationMessage {
+            description: format!(
+                "{} Managed row '{}' will be deleted from '{}'.",
+                tag, identity, table
+            ),
+            options: vec![ClarificationOption {
+                label: "Accept deletion of the previously managed row".to_string(),
+                action: OptionAction::Fixed(Answer::AcceptRisk),
+            }],
+        },
     }
 }
 

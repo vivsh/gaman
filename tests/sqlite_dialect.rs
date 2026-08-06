@@ -1,6 +1,6 @@
 #![cfg(feature = "sqlite")]
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use gaman::Migration;
 use gaman::core::{
@@ -1702,6 +1702,141 @@ async fn sqlite_executor() -> SqliteExecutor {
         .unwrap()
         .foreign_keys(true);
     SqliteExecutor::new(opts.connect().await.unwrap())
+}
+
+/// Verifies managed identities and columns coexist safely with unmanaged database data.
+#[tokio::test]
+async fn managed_rows_preserve_unmanaged_rows_and_columns() {
+    use gaman_core::managed_rows::{ManagedRow, ManagedValue};
+
+    fn managed_row(id: &str, name: &str) -> ManagedRow {
+        ManagedRow {
+            values: BTreeMap::from([
+                ("id".to_string(), ManagedValue(id.into())),
+                ("name".to_string(), ManagedValue(name.into())),
+            ]),
+        }
+    }
+
+    async fn apply_row(
+        executor: &mut SqliteExecutor,
+        operation: &Operation,
+    ) -> Result<u64, gaman::core::ExecutorError> {
+        let sql = gaman_core::managed_rows::sql::render(Dialect::Sqlite, operation)
+            .expect("managed-row SQL");
+        executor.execute_affected(&sql[0]).await
+    }
+
+    let mut executor = sqlite_executor().await;
+    executor
+        .execute(
+            "CREATE TABLE items (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, \
+             external_note TEXT, revision INTEGER NOT NULL DEFAULT 0)",
+        )
+        .await
+        .expect("create table");
+    executor
+        .execute(
+            "INSERT INTO items (id, name, external_note, revision) \
+             VALUES ('external', 'outside', 'keep-external', 7)",
+        )
+        .await
+        .expect("insert unmanaged row");
+
+    let first = managed_row("managed", "first");
+    let second = managed_row("managed", "second");
+    let third = managed_row("managed", "third");
+    assert_eq!(
+        apply_row(
+            &mut executor,
+            &Operation::InsertRow {
+                table_name: "items".to_string(),
+                key: vec!["id".to_string()],
+                row: first.clone(),
+            },
+        )
+        .await
+        .expect("managed insert"),
+        1
+    );
+    executor
+        .execute("UPDATE items SET external_note = 'keep-managed' WHERE id = 'managed'")
+        .await
+        .expect("mutate unmanaged column");
+    assert_eq!(
+        apply_row(
+            &mut executor,
+            &Operation::UpdateRow {
+                table_name: "items".to_string(),
+                key: vec!["id".to_string()],
+                old: first,
+                new: second.clone(),
+            },
+        )
+        .await
+        .expect("managed update"),
+        1
+    );
+    assert_eq!(
+        executor
+            .fetch_strings("SELECT name || ':' || external_note FROM items WHERE id = 'managed'",)
+            .await
+            .expect("managed row"),
+        vec!["second:keep-managed"]
+    );
+    assert_eq!(
+        executor
+            .fetch_strings(
+                "SELECT name || ':' || external_note || ':' || revision \
+                 FROM items WHERE id = 'external'",
+            )
+            .await
+            .expect("unmanaged row"),
+        vec!["outside:keep-external:7"]
+    );
+
+    executor
+        .execute("UPDATE items SET name = 'tampered' WHERE id = 'managed'")
+        .await
+        .expect("external managed-column mutation");
+    assert_eq!(
+        apply_row(
+            &mut executor,
+            &Operation::UpdateRow {
+                table_name: "items".to_string(),
+                key: vec!["id".to_string()],
+                old: second.clone(),
+                new: third,
+            },
+        )
+        .await
+        .expect("checked stale update"),
+        0
+    );
+    executor
+        .execute("UPDATE items SET name = 'second' WHERE id = 'managed'")
+        .await
+        .expect("restore managed value");
+    assert_eq!(
+        apply_row(
+            &mut executor,
+            &Operation::DeleteRow {
+                table_name: "items".to_string(),
+                key: vec!["id".to_string()],
+                row: second,
+            },
+        )
+        .await
+        .expect("managed delete"),
+        1
+    );
+    assert_eq!(
+        executor
+            .fetch_strings("SELECT id FROM items ORDER BY id")
+            .await
+            .expect("remaining rows"),
+        vec!["external"]
+    );
 }
 
 #[derive(Default)]

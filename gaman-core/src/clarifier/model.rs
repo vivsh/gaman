@@ -62,6 +62,10 @@ pub enum ClarificationKind {
         column: String,
         properties: Vec<String>,
     },
+    DeleteManagedRow {
+        table: String,
+        identity: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

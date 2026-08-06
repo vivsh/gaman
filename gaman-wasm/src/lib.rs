@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use gaman_core::clarifier::{Clarification, Decision};
-use gaman_core::command_args::{Command as ArgsCommand, CommandArgs};
+use gaman_core::command_args::{Command as ArgsCommand, CommandArgs, MakeCmd};
 use gaman_core::{
     ApplyCommand, BoxFuture, COMMAND_PROTOCOL_VERSION, Command, CommandEnvelope, CommandError,
     CommandResponse, CommandResult, Dialect, Executor, ExecutorError, InspectionError, MakeCommand,
@@ -117,11 +117,7 @@ impl MigrationRunner {
     pub async fn run_command_request(&mut self, request: JsValue) -> Result<JsValue, JsValue> {
         let envelope: CommandEnvelope =
             serde_wasm_bindgen::from_value(request).map_err(js_error)?;
-        if envelope.protocol_version != COMMAND_PROTOCOL_VERSION {
-            let error = CommandError::UnsupportedProtocolVersion {
-                expected: COMMAND_PROTOCOL_VERSION,
-                observed: envelope.protocol_version,
-            };
+        if let Err(error) = validate_protocol_version(envelope.protocol_version) {
             return Err(serde_wasm_bindgen::to_value(&error.failure())
                 .unwrap_or_else(|_| JsValue::from_str(&error.to_string())));
         }
@@ -132,6 +128,18 @@ impl MigrationRunner {
     #[wasm_bindgen(js_name = commandHelp)]
     pub fn command_help(command: Option<String>) -> String {
         CommandArgs::command_help(&["gaman"], command.as_deref()).output
+    }
+}
+
+/// Rejects incompatible hosts before catalog loading or command execution.
+fn validate_protocol_version(observed: u32) -> Result<(), CommandError> {
+    if observed == COMMAND_PROTOCOL_VERSION {
+        Ok(())
+    } else {
+        Err(CommandError::UnsupportedProtocolVersion {
+            expected: COMMAND_PROTOCOL_VERSION,
+            observed,
+        })
     }
 }
 
@@ -175,30 +183,8 @@ impl MigrationRunner {
     ) -> Result<Command, JsValue> {
         let decisions = parse_decisions(decisions)?;
         match command {
-            ArgsCommand::Make(command) if command.empty => command
-                .name
-                .map(|name| Command::Make(MakeCommand::Empty { name }))
-                .ok_or_else(|| JsValue::from_str("--empty requires a migration name")),
-            ArgsCommand::Make(command) if command.merge => command
-                .name
-                .map(|name| Command::Make(MakeCommand::Merge { name }))
-                .ok_or_else(|| JsValue::from_str("--merge requires a migration name")),
-            ArgsCommand::Make(command) => {
-                let schema = self
-                    .schema
-                    .clone()
-                    .ok_or_else(|| JsValue::from_str("set a schema before running make"))?;
-                Ok(Command::Make(if command.check {
-                    MakeCommand::Check { schema, decisions }
-                } else {
-                    MakeCommand::Generate {
-                        schema,
-                        name: command.name,
-                        dry_run: command.dry_run,
-                        decisions,
-                    }
-                }))
-            }
+            ArgsCommand::Make(command) => resolve_make(command, self.schema.clone(), decisions)
+                .map_err(|error| JsValue::from_str(&error)),
             ArgsCommand::Apply(command) => Ok(Command::Apply(if command.plan {
                 ApplyCommand::Plan
             } else if command.check {
@@ -232,6 +218,130 @@ impl MigrationRunner {
                 "this WASM host does not provide schema inspection or SQL file resolution",
             )),
         }
+    }
+}
+
+/// Resolves host-neutral make arguments without accessing JavaScript values so
+/// normal, dry-run, conflict, and filter behavior can be tested natively.
+fn resolve_make(
+    command: MakeCmd,
+    schema: Option<gaman_core::schema::Schema>,
+    decisions: Vec<Decision>,
+) -> Result<Command, String> {
+    if !command.filter.is_empty() && (command.empty || command.merge || command.check) {
+        return Err(
+            "make filters are supported only for normal and dry-run generation".to_string(),
+        );
+    }
+    if command.empty {
+        return command
+            .name
+            .map(|name| Command::Make(MakeCommand::Empty { name }))
+            .ok_or_else(|| "--empty requires a migration name".to_string());
+    }
+    if command.merge {
+        return command
+            .name
+            .map(|name| Command::Make(MakeCommand::Merge { name }))
+            .ok_or_else(|| "--merge requires a migration name".to_string());
+    }
+    let filters = command
+        .filter
+        .iter()
+        .map(|filter| gaman_core::EntityFilter::parse(filter).map_err(|error| error.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let schema = schema.ok_or_else(|| "set a schema before running make".to_string())?;
+    Ok(Command::Make(if command.check {
+        MakeCommand::Check { schema, decisions }
+    } else {
+        MakeCommand::Generate {
+            schema,
+            name: command.name,
+            dry_run: command.dry_run,
+            decisions,
+            filters,
+        }
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_make(tokens: &[&str]) -> MakeCmd {
+        let parsed = CommandArgs::parse(&["gaman"], tokens).expect("parse make tokens");
+        let ArgsCommand::Make(command) = parsed.command else {
+            panic!("expected make command");
+        };
+        command
+    }
+
+    fn schema() -> gaman_core::schema::Schema {
+        gaman_core::schema::Schema::from_sql_str(
+            "CREATE TABLE users (id bigint PRIMARY KEY);",
+            Dialect::Postgres,
+        )
+        .expect("test schema")
+    }
+
+    /// Verifies WASM token resolution preserves repeated filters and dry-run
+    /// intent in the portable protocol command.
+    #[test]
+    fn filtered_make_tokens_resolve_portably() {
+        let command = resolve_make(
+            parse_make(&[
+                "make",
+                "focused",
+                "--dry-run",
+                "-f",
+                "users",
+                "--filter",
+                "table:user*",
+            ]),
+            Some(schema()),
+            Vec::new(),
+        )
+        .expect("resolve filtered make");
+        assert!(matches!(
+            command,
+            Command::Make(MakeCommand::Generate {
+                dry_run: true,
+                filters,
+                ..
+            }) if filters.len() == 2
+        ));
+    }
+
+    /// Verifies WASM rejects filters for check, empty, and merge before runner
+    /// execution and rejects unknown root kinds during resolution.
+    #[test]
+    fn filtered_make_token_conflicts_are_rejected() {
+        for tokens in [
+            vec!["make", "--check", "-f", "users"],
+            vec!["make", "empty", "--empty", "-f", "users"],
+            vec!["make", "merge", "--merge", "-f", "users"],
+        ] {
+            assert!(resolve_make(parse_make(&tokens), Some(schema()), Vec::new()).is_err());
+        }
+        let error = resolve_make(
+            parse_make(&["make", "-f", "column:users.id"]),
+            Some(schema()),
+            Vec::new(),
+        )
+        .expect_err("reject unsupported filter kind");
+        assert!(error.contains("unknown entity filter kind"));
+    }
+
+    /// Verifies protocol v3 is rejected before a portable command can run.
+    #[test]
+    fn older_protocol_is_rejected_before_execution() {
+        assert!(matches!(
+            validate_protocol_version(3),
+            Err(CommandError::UnsupportedProtocolVersion {
+                expected: COMMAND_PROTOCOL_VERSION,
+                observed: 3,
+            })
+        ));
     }
 }
 

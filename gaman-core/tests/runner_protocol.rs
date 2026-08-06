@@ -8,10 +8,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 
+use gaman_core::runner::EntityFilter;
 use gaman_core::{
     BoxFuture, COMMAND_PROTOCOL_VERSION, Command, CommandEnvelope, CommandError, CommandResponse,
-    CommandResult, Dialect, Executor, ExecutorError, MakeResult, Migration, MigrationCatalog,
-    MigrationRunner, MigrationStore, StoreError, TrackingError, TrackingStore,
+    CommandResult, Dialect, Executor, ExecutorError, MakeCommand, MakeResult, Migration,
+    MigrationCatalog, MigrationRunner, MigrationStore, StoreError, TrackingError, TrackingStore,
 };
 
 struct CountingStore {
@@ -175,6 +176,63 @@ fn command_envelope_round_trips_through_json() {
             reverse: true,
             search: Some(search)
         } if search == "users"
+    ));
+}
+
+/// Verifies protocol v4 preserves repeatable migration-generation filters.
+#[test]
+fn filtered_make_round_trips_through_protocol_v4() {
+    let filters = vec![
+        EntityFilter::parse("enum:user_*").expect("enum filter"),
+        EntityFilter::parse("table:users").expect("table filter"),
+    ];
+    let envelope = CommandEnvelope {
+        protocol_version: COMMAND_PROTOCOL_VERSION,
+        command: Command::Make(MakeCommand::Generate {
+            schema: gaman_core::schema::Schema::default(),
+            name: Some("roles".to_string()),
+            dry_run: true,
+            decisions: Vec::new(),
+            filters: filters.clone(),
+        }),
+    };
+
+    let encoded = serde_json::to_string(&envelope).expect("serialize filtered command");
+    let decoded: CommandEnvelope =
+        serde_json::from_str(&encoded).expect("deserialize filtered command");
+
+    assert_eq!(decoded.protocol_version, 4);
+    assert!(matches!(
+        decoded.command,
+        Command::Make(MakeCommand::Generate { filters: decoded, .. }) if decoded == filters
+    ));
+}
+
+/// Verifies legacy unfiltered generation payloads default to an empty filter
+/// list while the envelope version remains host-enforced.
+#[test]
+fn generate_filters_are_serde_defaulted() {
+    let envelope = CommandEnvelope {
+        protocol_version: COMMAND_PROTOCOL_VERSION,
+        command: Command::Make(MakeCommand::Generate {
+            schema: gaman_core::schema::Schema::default(),
+            name: None,
+            dry_run: false,
+            decisions: Vec::new(),
+            filters: Vec::new(),
+        }),
+    };
+    let mut encoded = serde_json::to_value(envelope).expect("serialize command");
+    encoded["command"]["arguments"]
+        .as_object_mut()
+        .expect("generate arguments")
+        .remove("filters");
+    let decoded: CommandEnvelope =
+        serde_json::from_value(encoded).expect("deserialize command without filters");
+
+    assert!(matches!(
+        decoded.command,
+        Command::Make(MakeCommand::Generate { filters, .. }) if filters.is_empty()
     ));
 }
 
