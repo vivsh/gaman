@@ -1,5 +1,6 @@
 use super::{
-    Column, ColumnRef, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index,
+    Column, ColumnRef, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef,
+    FunctionParameter, Index,
     OpaqueMeta, PrimaryKey, Schema, SchemaBuilderIssue, SchemaLoadError, Table, TableOptionsMeta,
     TriggerDef, ViewDef, names, parse_qualified_name, schema_qualified_key,
 };
@@ -7,6 +8,123 @@ use crate::column_type::ColumnType;
 use crate::dialects::Dialect;
 use crate::parsers::{OpaqueDeclaration, opaque_parse_reason, parse_opaque_create};
 use serde::Serialize;
+
+/// Converts either a complete function definition or a fluent declaration into schema state.
+pub trait IntoFunctionDef {
+    /// Records declaration issues and returns the function value to register.
+    fn into_function_def(self, issues: &mut Vec<SchemaBuilderIssue>) -> FunctionDef;
+}
+
+impl IntoFunctionDef for FunctionDef {
+    fn into_function_def(self, _: &mut Vec<SchemaBuilderIssue>) -> FunctionDef {
+        self
+    }
+}
+
+/// Fluent, typed declaration for a modeled stored function.
+pub struct FunctionBuilder {
+    function: FunctionDef,
+    issues: Vec<String>,
+}
+
+impl FunctionBuilder {
+    /// Starts a function declaration with an unqualified or schema-qualified name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            function: FunctionDef {
+                name: name.into(),
+                schema: None,
+                parameters: Vec::new(),
+                arguments: String::new(),
+                returns: String::new(),
+                language: String::new(),
+                body: String::new(),
+                depends_on: Vec::new(),
+                volatility: Default::default(),
+                security_definer: false,
+                opaque: OpaqueMeta::default(),
+            },
+            issues: Vec::new(),
+        }
+    }
+
+    /// Sets the PostgreSQL schema containing the function.
+    pub fn schema(mut self, schema: impl Into<String>) -> Self {
+        self.function.schema = Some(schema.into());
+        self
+    }
+
+    /// Adds one named parameter with an SQL type.
+    pub fn parameter(mut self, name: impl Into<String>, type_name: impl Into<String>) -> Self {
+        self.function.parameters.push(FunctionParameter {
+            name: name.into(),
+            type_name: type_name.into(),
+            default: None,
+        });
+        self
+    }
+
+    /// Adds one named parameter with a raw SQL default expression.
+    pub fn parameter_default(
+        mut self,
+        name: impl Into<String>,
+        type_name: impl Into<String>,
+        default: impl Into<String>,
+    ) -> Self {
+        self.function.parameters.push(FunctionParameter {
+            name: name.into(),
+            type_name: type_name.into(),
+            default: Some(default.into()),
+        });
+        self
+    }
+
+    /// Sets the SQL return type.
+    pub fn returns(mut self, returns: impl Into<String>) -> Self {
+        self.function.returns = returns.into();
+        self
+    }
+
+    /// Sets the function language.
+    pub fn language(mut self, language: impl Into<String>) -> Self {
+        self.function.language = language.into();
+        self
+    }
+
+    /// Sets the executable function body.
+    pub fn body(mut self, body: impl Into<String>) -> Self {
+        self.function.body = body.into();
+        self
+    }
+
+    /// Registers explicit root-entity dependencies using canonical selectors.
+    pub fn depends_on<I, S>(mut self, dependencies: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        for value in dependencies {
+            match crate::EntitySelector::parse_dependency(value.as_ref()) {
+                Ok(dependency) => self.function.depends_on.push(dependency),
+                Err(reason) => self.issues.push(reason),
+            }
+        }
+        self
+    }
+}
+
+impl IntoFunctionDef for FunctionBuilder {
+    fn into_function_def(self, issues: &mut Vec<SchemaBuilderIssue>) -> FunctionDef {
+        let identity = self.function.qualified_name();
+        issues.extend(self.issues.into_iter().map(|reason| {
+            SchemaBuilderIssue::InvalidFunctionDefinition {
+                function: identity.clone(),
+                reason,
+            }
+        }));
+        self.function
+    }
+}
 
 /// Map a Rust type to a table definition.
 pub trait IntoTable {
@@ -723,9 +841,16 @@ impl SchemaBuilder {
         self
     }
 
-    pub fn function(mut self, f: FunctionDef) -> Self {
-        let key = schema_qualified_key(&f.name, f.schema.as_deref());
-        self.state.functions.insert(key, f);
+    /// Adds a complete function definition or a [`FunctionBuilder`] declaration.
+    pub fn function<F: IntoFunctionDef>(mut self, function: F) -> Self {
+        let f = function.into_function_def(&mut self.issues);
+        let key = f.identity_key();
+        if self.state.functions.insert(key.clone(), f).is_some() {
+            self.issues.push(SchemaBuilderIssue::DuplicateEntity {
+                kind: "function".to_string(),
+                entity: key,
+            });
+        }
         self
     }
 

@@ -402,7 +402,8 @@ fn function_equal(left: &FunctionDef, right: &FunctionDef) -> bool {
     }
     left.name == right.name
         && left.schema == right.schema
-        && left.arguments == right.arguments
+        && left.parameters_sql() == right.parameters_sql()
+        && left.depends_on == right.depends_on
         && left.returns == right.returns
         && left.language == right.language
         && left.volatility == right.volatility

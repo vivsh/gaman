@@ -81,7 +81,11 @@ impl Schema {
             }
         }
         self.views.extend(other.views);
-        self.functions.extend(other.functions);
+        for (name, function) in other.functions {
+            if self.functions.insert(name.clone(), function).is_some() {
+                return Err(SchemaValidationError::Invalid(format!("duplicate function '{name}' when merging schemas")).into());
+            }
+        }
         self.extensions.extend(other.extensions);
         self.enums.extend(other.enums);
         Ok(self)

@@ -1,3 +1,4 @@
+use super::annotations;
 use super::classifier::{CreateDeterminantKind, classify_segment, determinant_for_word};
 use super::types::{Location, SqlSegment, SqlSegmentationExt};
 use crate::dialects::Dialect;
@@ -234,9 +235,14 @@ impl<'a> Scanner<'a> {
         let start_loc = location_at(self.sql, start);
         let end_loc = location_at(self.sql, end.saturating_sub(1));
         let segment_sql = self.sql[start..end].to_string();
+        let (annotations, semantic_sql) = annotations::parse(&segment_sql).map_err(|reason| {
+            ParseError::segment(self.dialect, start_loc.line, start_loc.column, reason)
+        })?;
         self.segments.push(SqlSegment {
             ordinal: self.ordinal,
             kind: classify_segment(self.dialect, &segment_sql),
+            annotations,
+            semantic_sql,
             sql: segment_sql,
             start_byte: start,
             end_byte: end,

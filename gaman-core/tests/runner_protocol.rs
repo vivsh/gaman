@@ -179,9 +179,9 @@ fn command_envelope_round_trips_through_json() {
     ));
 }
 
-/// Verifies protocol v4 preserves repeatable migration-generation filters.
+/// Verifies protocol v5 preserves repeatable migration-generation filters.
 #[test]
-fn filtered_make_round_trips_through_protocol_v4() {
+fn filtered_make_round_trips_through_protocol_v5() {
     let filters = vec![
         EntityFilter::parse("enum:user_*").expect("enum filter"),
         EntityFilter::parse("table:users").expect("table filter"),
@@ -201,7 +201,7 @@ fn filtered_make_round_trips_through_protocol_v4() {
     let decoded: CommandEnvelope =
         serde_json::from_str(&encoded).expect("deserialize filtered command");
 
-    assert_eq!(decoded.protocol_version, 4);
+    assert_eq!(decoded.protocol_version, 5);
     assert!(matches!(
         decoded.command,
         Command::Make(MakeCommand::Generate { filters: decoded, .. }) if decoded == filters

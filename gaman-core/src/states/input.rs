@@ -240,14 +240,21 @@ pub struct FunctionInput {
     /// Optional database schema name.
     #[serde(default)]
     pub schema: Option<String>,
-    /// Function argument signature.
+    /// Legacy function argument signature.
+    #[serde(default)]
     pub arguments: String,
+    /// Typed function parameters.
+    #[serde(default)]
+    pub parameters: Vec<super::FunctionParameter>,
     /// Function return type.
     pub returns: String,
     /// Function language.
     pub language: String,
     /// Function body.
     pub body: String,
+    /// Explicit root dependencies required before this function.
+    #[serde(default)]
+    pub depends_on: Vec<crate::EntityDependency>,
     /// Function volatility.
     #[serde(default)]
     pub volatility: Volatility,
@@ -258,19 +265,28 @@ pub struct FunctionInput {
 
 impl FunctionInput {
     fn into_function(self) -> FunctionDef {
+        let parameters = if self.parameters.is_empty() {
+            super::legacy_function_parameters(&self.arguments).unwrap_or_default()
+        } else {
+            self.parameters
+        };
+        let arguments = parameters.is_empty().then_some(self.arguments).unwrap_or_default();
         FunctionDef {
             name: self.name,
             schema: self.schema,
-            arguments: self.arguments,
+            parameters,
+            arguments,
             returns: self.returns,
             language: self.language,
             body: self.body,
+            depends_on: self.depends_on,
             volatility: self.volatility,
             security_definer: self.security_definer,
             opaque: OpaqueMeta::default(),
         }
     }
 }
+
 
 /// Authored view definition without opaque raw SQL metadata.
 #[derive(Debug, Clone, Deserialize, PartialEq)]

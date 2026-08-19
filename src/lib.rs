@@ -69,11 +69,13 @@ pub use gaman_core::{EmbeddedMigrations, EngineError, Migration, OfflineError, O
 #[cfg(feature = "native")]
 pub mod schema {
     pub use gaman_core::column_type::{ColumnDesc, ColumnType};
+    pub use gaman_core::entity_selector::EntityDependency;
     pub use gaman_core::operations::Operation;
     pub use gaman_core::parsers::ParseError;
     pub use gaman_core::states::{
         Column, ColumnBuilder, ColumnRef, Constraint, ConstraintInput, EnumDef, EnumInput,
-        ExtensionDef, ExtensionInput, ForeignKey, FunctionDef, FunctionInput, GeneratedStorage,
+        ExtensionDef, ExtensionInput, ForeignKey, FunctionBuilder, FunctionDef, FunctionIdentity,
+        FunctionInput, FunctionParameter, GeneratedStorage,
         Index, IndexInput, InputSchema, IntoTable, PostgresRangePartition,
         PostgresRangePartitioning, PrimaryKey, ReplayError, Schema, SchemaBuilder, SchemaLoadError,
         SchemaValidationError, Table, TableBuilder, TableInput, TriggerDef, TriggerEvent,

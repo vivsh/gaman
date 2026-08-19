@@ -6,23 +6,13 @@ use crate::dialects::Dialect;
 use crate::states::{EntityKind, Schema};
 
 use super::CommandError;
-pub use crate::entity_filter::EntityFilter;
+pub use crate::entity_selector::EntityFilter;
 
 impl EntityFilter {
     /// Parses one `[kind:]glob` selector, defaulting to table roots.
     pub fn parse(value: &str) -> Result<Self, CommandError> {
-        let (kind, pattern) = match value.split_once(':') {
-            Some((kind, pattern)) => (parse_kind(kind)?, pattern),
-            None => (EntityKind::Table, value),
-        };
-        if pattern.trim().is_empty() {
-            return Err(CommandError::Invalid(
-                "entity filter pattern is empty".to_string(),
-            ));
-        }
-        Ok(Self {
-            kind,
-            pattern: pattern.to_string(),
+        crate::entity_selector::EntitySelector::parse_filter(value).map_err(|reason| {
+            CommandError::Invalid(reason.replace("entity selector kind", "entity filter kind"))
         })
     }
 
@@ -230,19 +220,6 @@ fn export_error(kind: &str, name: &str, detail: &str) -> Result<(), CommandError
 }
 
 /// Parses only the root kinds that are meaningful for catalog selection.
-fn parse_kind(value: &str) -> Result<EntityKind, CommandError> {
-    match value {
-        "table" => Ok(EntityKind::Table),
-        "function" => Ok(EntityKind::Function),
-        "view" => Ok(EntityKind::View),
-        "enum" => Ok(EntityKind::Enum),
-        "extension" => Ok(EntityKind::Extension),
-        _ => Err(CommandError::Invalid(format!(
-            "unknown entity filter kind '{value}'; use table, function, view, enum, or extension"
-        ))),
-    }
-}
-
 /// Returns the CLI spelling for one root entity kind.
 fn kind_name(kind: EntityKind) -> &'static str {
     match kind {

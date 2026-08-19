@@ -372,7 +372,15 @@ fn merge_fragment(
         }
     }
     merged.views.extend(fragment.views);
-    merged.functions.extend(fragment.functions);
+    for (name, function) in fragment.functions {
+        if merged.functions.insert(name.clone(), function).is_some() {
+            return Err(SchemaLoadError::Validation(
+                gaman_core::states::SchemaValidationError::Invalid(format!(
+                    "duplicate function '{name}' when merging schemas"
+                )),
+            ));
+        }
+    }
     merged.extensions.extend(fragment.extensions);
     merged.enums.extend(fragment.enums);
     Ok(merged)

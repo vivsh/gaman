@@ -1193,11 +1193,7 @@ fn scope_table_references(table: &mut Table, schema: &str) {
 }
 
 fn function_verify_key(function: &FunctionDef) -> String {
-    if function.arguments.is_empty() {
-        function.qualified_name()
-    } else {
-        format!("{}({})", function.qualified_name(), function.arguments)
-    }
+    function.identity_key()
 }
 
 pub fn format_report(report: &VerificationReport) -> Vec<String> {
@@ -1547,6 +1543,8 @@ mod tests {
             name: "audit_users".to_string(),
             schema: None,
             arguments: String::new(),
+            parameters: Vec::new(),
+            depends_on: Vec::new(),
             returns: "trigger".to_string(),
             language: "plpgsql".to_string(),
             body: body.to_string(),

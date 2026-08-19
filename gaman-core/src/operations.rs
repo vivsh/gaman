@@ -523,19 +523,9 @@ impl Operation {
             }
             Self::AlterTrigger { old, .. } => Cow::Borrowed(old.name.as_deref().unwrap_or("")),
             Self::CreateFunction { function } | Self::DropFunction { function } => {
-                if function.schema.is_some() {
-                    Cow::Owned(function.qualified_name())
-                } else {
-                    Cow::Borrowed(&function.name)
-                }
+                Cow::Owned(function.identity_key())
             }
-            Self::AlterFunction { old, .. } => {
-                if old.schema.is_some() {
-                    Cow::Owned(old.qualified_name())
-                } else {
-                    Cow::Borrowed(&old.name)
-                }
-            }
+            Self::AlterFunction { old, .. } => Cow::Owned(old.identity_key()),
             Self::CreateView { view } | Self::DropView { view } => {
                 if view.schema.is_some() {
                     Cow::Owned(view.qualified_name())
@@ -796,11 +786,10 @@ impl Operation {
                 }
                 deps
             }
-            Self::CreateFunction { .. }
-            | Self::AlterFunction { .. }
-            | Self::DropFunction { .. } => {
-                vec![Dep::all_of(EntityKind::Extension)]
+            Self::CreateFunction { function } | Self::DropFunction { function } => {
+                function_dependencies(function)
             }
+            Self::AlterFunction { new, .. } => function_dependencies(new),
             Self::CreateView { .. } | Self::ReplaceView { .. } | Self::DropView { .. } => {
                 vec![
                     Dep::all_of(EntityKind::Table),
@@ -834,6 +823,7 @@ impl Operation {
                     Dep::new(EntityKind::Enum, &old.col_type),
                 ]
             }
+            Self::AlterFunction { old, .. } => function_dependencies(old),
             _ => self.forward_deps(),
         }
     }
@@ -915,7 +905,7 @@ impl Operation {
             Self::CreateFunction { function }
             | Self::DropFunction { function }
             | Self::AlterFunction { new: function, .. } => {
-                vec![(EntityKind::Function, function.qualified_name())]
+                vec![(EntityKind::Function, function.identity_key())]
             }
             Self::CreateView { view }
             | Self::DropView { view }
@@ -930,4 +920,14 @@ impl Operation {
             }),
         }
     }
+}
+
+/// Converts explicit function dependencies into the generic operation graph representation.
+fn function_dependencies(function: &FunctionDef) -> Vec<Dep> {
+    let mut dependencies = vec![Dep::all_of(EntityKind::Extension)];
+    dependencies.extend(function.depends_on.iter().map(|dependency| Dep {
+        kind: dependency.kind,
+        name: Some(dependency.target.clone()),
+    }));
+    dependencies
 }

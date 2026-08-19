@@ -70,6 +70,14 @@ Supported desired state can include:
 - enums and extensions where the dialect supports them;
 - functions, triggers, and views.
 
+Functions use typed parameters, including PostgreSQL default expressions. Their
+identity is schema-qualified name plus ordered parameter types; defaults and
+parameter names do not change an overload identity. Function dependencies are
+explicit root-entity edges, never inferred from SQL bodies or source-file order.
+YAML and Rust use `kind::target` declarations. SQL files use repeatable leading
+`-- @depends-on kind::target` comments on `CREATE FUNCTION`; unknown leading
+`@` directives fail during segmentation and are not database metadata.
+
 `ALTER`, `DROP`, transaction control, and arbitrary utility statements do not
 become desired schema state. The one bounded data exception is a top-level
 managed-row declaration: a finite set of keyed configuration/reference rows
@@ -147,6 +155,10 @@ owned operation groups, adds the minimum changed dependency closure, limits
 clarification to that candidate, and validates the result by replaying it from
 the committed baseline. An unfiltered invocation retains the normal global
 planning path and exposes any changes left for later migrations.
+
+Filters use canonical `kind::glob` syntax and retain legacy `kind:glob` input
+compatibility. Dependency selectors use exact `kind::target` identities only;
+they never accept globs and name-only function references must resolve uniquely.
 
 Raw SQL remains an escape hatch inside migration history. It is executed as
 authored, but it does not silently mutate Gaman's modeled replayed schema.

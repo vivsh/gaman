@@ -1,5 +1,5 @@
 ---
-description: Function signature changes produce a function alteration.
+description: Function signature changes create the new overload before dropping the old overload.
 group: diff
 features:
 - diff.diff_function_signature_changed
@@ -28,16 +28,21 @@ current:
       language: sql
       body: SELECT $1 + 1
 expect_operations:
-- type: alter_function
-  old:
+- type: create_function
+  function:
     name: add_one
-    arguments: integer
-    returns: integer
+    parameters:
+    - name: ''
+      type: bigint
+    returns: bigint
     language: sql
     body: SELECT $1 + 1
-  new:
+- type: drop_function
+  function:
     name: add_one
-    arguments: bigint
-    returns: bigint
+    parameters:
+    - name: ''
+      type: integer
+    returns: integer
     language: sql
     body: SELECT $1 + 1

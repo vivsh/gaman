@@ -12,7 +12,9 @@ impl Schema {
 
     pub fn prepare_mut(&mut self, dialect: &Dialect) -> Result<(), SchemaValidationError> {
         self.normalize();
+        validate_function_identities(self)?;
         self.canonicalize(dialect);
+        resolve_function_dependencies(self)?;
         self.validate_checked()?;
         dialect.validate_schema(self)?;
         Ok(())
@@ -24,6 +26,7 @@ impl Schema {
 
     pub fn validate_checked(&self) -> Result<(), SchemaValidationError> {
         crate::managed_rows::validate_schema(self)?;
+        validate_function_parameters(self)?;
         for table in self.tables.values() {
             for column in &table.columns {
                 if column.dialect_options.mysql.is_some()
@@ -68,6 +71,145 @@ impl Schema {
         }
         Ok(())
     }
+}
+
+fn resolve_function_dependencies(schema: &mut Schema) -> Result<(), SchemaValidationError> {
+    let functions = schema
+        .functions
+        .iter()
+        .map(|(key, function)| (key.clone(), function.qualified_name()))
+        .collect::<Vec<_>>();
+    let tables = schema.tables.keys().cloned().collect::<Vec<_>>();
+    let views = schema.views.keys().cloned().collect::<Vec<_>>();
+    let enums = schema.enums.keys().cloned().collect::<Vec<_>>();
+    let extensions = schema.extensions.keys().cloned().collect::<Vec<_>>();
+    for function in schema.functions.values_mut() {
+        for dependency in &mut function.depends_on {
+            let target = match dependency.kind {
+                EntityKind::Function => resolve_function_dependency(&dependency.target, &functions)?,
+                EntityKind::Table => resolve_root_dependency(&dependency.target, &tables)?,
+                EntityKind::View => resolve_root_dependency(&dependency.target, &views)?,
+                EntityKind::Enum => resolve_root_dependency(&dependency.target, &enums)?,
+                EntityKind::Extension => resolve_root_dependency(&dependency.target, &extensions)?,
+                _ => return Err(SchemaValidationError::Invalid("function dependencies must target root entities".to_string())),
+            };
+            dependency.target = target;
+        }
+        function.depends_on.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| left.target.cmp(&right.target))
+        });
+        function.depends_on.dedup();
+    }
+    validate_function_dependency_cycles(schema)?;
+    Ok(())
+}
+
+fn validate_function_identities(schema: &Schema) -> Result<(), SchemaValidationError> {
+    let mut identities = HashSet::new();
+    for function in schema.functions.values() {
+        let identity = function.identity_key();
+        if !identities.insert(identity.clone()) {
+            return Err(SchemaValidationError::Invalid(format!(
+                "duplicate function identity '{identity}'"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_function_dependency_cycles(schema: &Schema) -> Result<(), SchemaValidationError> {
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+    let mut path = Vec::new();
+    for key in schema.functions.keys() {
+        visit_function_dependencies(schema, key, &mut visiting, &mut visited, &mut path)?;
+    }
+    Ok(())
+}
+
+fn visit_function_dependencies(
+    schema: &Schema,
+    key: &str,
+    visiting: &mut HashSet<String>,
+    visited: &mut HashSet<String>,
+    path: &mut Vec<String>,
+) -> Result<(), SchemaValidationError> {
+    if visited.contains(key) {
+        return Ok(());
+    }
+    if !visiting.insert(key.to_string()) {
+        let start = path.iter().position(|entry| entry == key).unwrap_or(0);
+        let mut cycle = path[start..].to_vec();
+        cycle.push(key.to_string());
+        return Err(SchemaValidationError::Invalid(format!(
+            "function dependency cycle: {}",
+            cycle.join(" -> ")
+        )));
+    }
+    path.push(key.to_string());
+    let function = schema.functions.get(key).ok_or_else(|| {
+        SchemaValidationError::Invalid(format!("function dependency target '{key}' disappeared"))
+    })?;
+    for dependency in &function.depends_on {
+        if dependency.kind == EntityKind::Function {
+            visit_function_dependencies(schema, &dependency.target, visiting, visited, path)?;
+        }
+    }
+    path.pop();
+    visiting.remove(key);
+    visited.insert(key.to_string());
+    Ok(())
+}
+
+fn resolve_function_dependency(target: &str, functions: &[(String, String)]) -> Result<String, SchemaValidationError> {
+    let matches = if target.contains('(') {
+        functions.iter().filter(|(key, _)| key == target || (target.ends_with("()") && key == target.trim_end_matches("()"))).map(|(key, _)| key.clone()).collect::<Vec<_>>()
+    } else {
+        functions.iter().filter(|(_, name)| name == target || (!name.contains('.') && target == format!("public.{name}"))).map(|(key, _)| key.clone()).collect::<Vec<_>>()
+    };
+    match matches.as_slice() {
+        [only] => Ok(only.clone()),
+        [] => Err(SchemaValidationError::Invalid(format!("function dependency '{target}' does not resolve"))),
+        _ => Err(SchemaValidationError::Invalid(format!("function dependency '{target}' is ambiguous; use one of: {}", matches.join(", ")))),
+    }
+}
+
+fn resolve_root_dependency(target: &str, keys: &[String]) -> Result<String, SchemaValidationError> {
+    let matches = keys.iter().filter(|key| key.as_str() == target || (!key.contains('.') && target == format!("public.{key}"))).cloned().collect::<Vec<_>>();
+    match matches.as_slice() {
+        [only] => Ok(only.clone()),
+        [] => Err(SchemaValidationError::Invalid(format!("dependency '{target}' does not resolve"))),
+        _ => Err(SchemaValidationError::Invalid(format!("dependency '{target}' is ambiguous"))),
+    }
+}
+
+fn validate_function_parameters(schema: &Schema) -> Result<(), SchemaValidationError> {
+    for function in schema.functions.values() {
+        if !function.arguments.trim().is_empty() && !function.parameters.is_empty() {
+            return Err(SchemaValidationError::Invalid(format!(
+                "function '{}' cannot specify both legacy arguments and typed parameters",
+                function.qualified_name()
+            )));
+        }
+        let mut default_seen = false;
+        let mut names = HashSet::new();
+        for parameter in &function.parameters {
+            if parameter.type_name.trim().is_empty() {
+                return Err(SchemaValidationError::Invalid(format!("function '{}' has a parameter without a type", function.qualified_name())));
+            }
+            if !parameter.name.is_empty() && !names.insert(parameter.name.as_str()) {
+                return Err(SchemaValidationError::Invalid(format!("function '{}' repeats parameter '{}'", function.qualified_name(), parameter.name)));
+            }
+            if parameter.default.is_some() {
+                default_seen = true;
+            } else if default_seen {
+                return Err(SchemaValidationError::Invalid(format!("function '{}' has a non-default parameter after a default parameter", function.qualified_name())));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Rejects vendor column blocks for dialects that do not own them.

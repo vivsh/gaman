@@ -454,6 +454,8 @@ fn sqlite_unsupported_function(name: &str) -> FunctionDef {
         name: name.to_string(),
         schema: None,
         arguments: String::new(),
+        parameters: Vec::new(),
+        depends_on: Vec::new(),
         returns: "void".to_string(),
         language: "sql".to_string(),
         body: "SELECT 1".to_string(),

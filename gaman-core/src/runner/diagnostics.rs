@@ -476,7 +476,7 @@ mod tests {
         }
         .failure();
 
-        assert_eq!(failure.protocol_version, 4);
+        assert_eq!(failure.protocol_version, 5);
         assert_eq!(
             failure.diagnostic.code,
             DiagnosticCode::UnsupportedProtocolVersion

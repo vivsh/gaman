@@ -25,6 +25,12 @@ pub enum ParseError {
         statement: String,
         reason: String,
     },
+    /// A modeled function form cannot fall back to opaque SQL because doing so would lose semantics.
+    #[error("unsupported {dialect} function parameter mode in '{statement}'")]
+    UnsupportedFunctionParameterMode {
+        dialect: &'static str,
+        statement: String,
+    },
     #[error("{dialect} SQL segmentation error at line {line}, column {column}: {reason}")]
     Segment {
         dialect: &'static str,

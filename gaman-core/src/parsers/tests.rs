@@ -324,10 +324,10 @@ fn test_create_function() {
         AS $$ SELECT a + b; $$;
     "#;
     let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
-    assert!(schema.functions.contains_key("add_numbers"));
-    let f = &schema.functions["add_numbers"];
+    assert!(schema.functions.contains_key("add_numbers(integer, integer)"));
+    let f = &schema.functions["add_numbers(integer, integer)"];
     assert_eq!(f.language, "sql");
-    assert!(f.arguments.contains("integer"));
+    assert_eq!(f.parameters.len(), 2);
     assert_eq!(f.returns, "integer");
 }
 
@@ -509,20 +509,16 @@ fn test_column_level_unique_auto_name() {
     assert_eq!(t.constraints[0].name(), "users_email_key");
 }
 
-/// Function argument modes (IN, OUT, INOUT) are included in the argument string.
+/// Function argument modes fail because typed parameters cannot preserve their semantics.
 #[test]
 fn test_function_argument_modes() {
     let sql = r#"
         CREATE FUNCTION compute(IN a integer, OUT b integer)
         RETURNS integer LANGUAGE sql AS $$ SELECT a; $$;
     "#;
-    let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
-    let f = &schema.functions["compute"];
-    assert!(f.arguments.contains("IN"), "expected IN mode in arguments");
-    assert!(
-        f.arguments.contains("OUT"),
-        "expected OUT mode in arguments"
-    );
+    let error = parse_sql(sql, crate::dialects::Dialect::Postgres)
+        .expect_err("parameter modes must not be silently discarded");
+    assert!(error.to_string().contains("function parameter mode"));
 }
 
 /// PostgreSQL parsing segments a function body with internal semicolons before lowering.

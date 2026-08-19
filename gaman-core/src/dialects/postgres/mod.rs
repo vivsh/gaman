@@ -151,7 +151,8 @@ pub fn reorder_ops(ops: Vec<Operation>, previous: &Schema, current: &Schema) -> 
     let sig_changed_fns: HashSet<&str> = ops
         .iter()
         .filter_map(|op| match op {
-            Operation::AlterFunction { old, new } if old.arguments != new.arguments => {
+            Operation::AlterFunction { old, new }
+                if old.argument_types_sql() != new.argument_types_sql() => {
                 Some(new.name.as_str())
             }
             _ => None,
@@ -238,10 +239,10 @@ pub fn reorder_ops(ops: Vec<Operation>, previous: &Schema, current: &Schema) -> 
     // Find where the first AlterFunction (sig change) sits — pre_fn_drops go just before it,
     // post_fn_creates go just after the last one.
     let first_alter = ops.iter().position(
-        |op| matches!(op, Operation::AlterFunction { old, new } if old.arguments != new.arguments),
+        |op| matches!(op, Operation::AlterFunction { old, new } if old.argument_types_sql() != new.argument_types_sql()),
     );
     let last_alter = ops.iter().rposition(
-        |op| matches!(op, Operation::AlterFunction { old, new } if old.arguments != new.arguments),
+        |op| matches!(op, Operation::AlterFunction { old, new } if old.argument_types_sql() != new.argument_types_sql()),
     );
 
     let (first_alter, last_alter) = match (first_alter, last_alter) {
@@ -679,7 +680,7 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             vec![create_function_sql(function)?]
         }
         Operation::DropFunction { function } => {
-            if function.is_opaque() && function.arguments.trim().is_empty() {
+            if function.is_opaque() && function.argument_types_sql().trim().is_empty() {
                 return Err(DialectError::Unsupported(
                     "drop_function".to_string(),
                     "opaque function drops require a modeled function signature".to_string(),
@@ -688,18 +689,18 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             vec![format!(
                 "DROP FUNCTION {}({})",
                 qualified_function(function),
-                function.arguments
+                function.argument_types_sql()
             )]
         }
         Operation::AlterFunction { old, new } => {
-            if old.arguments == new.arguments && !old.is_opaque() && !new.is_opaque() {
+            if old.argument_types_sql() == new.argument_types_sql() && !old.is_opaque() && !new.is_opaque() {
                 vec![create_function_sql(new)?]
             } else {
                 vec![
                     format!(
                         "DROP FUNCTION {}({})",
                         qualified_function(old),
-                        old.arguments
+                        old.argument_types_sql()
                     ),
                     create_function_sql(new)?,
                 ]
@@ -1014,7 +1015,7 @@ fn create_function_sql(f: &crate::states::FunctionDef) -> Result<String, Dialect
     // PostgreSQL requires trigger functions to be VOLATILE; STABLE/IMMUTABLE are rejected.
     // Trigger functions also cannot have declared arguments (use TG_ARGV instead).
     let is_trigger = f.returns.eq_ignore_ascii_case("trigger");
-    if is_trigger && !f.arguments.trim().is_empty() {
+    if is_trigger && !f.parameters_sql().trim().is_empty() {
         return Err(DialectError::Unsupported(
             f.name.clone(),
             "trigger functions cannot have declared arguments (use TG_NARGS/TG_ARGV instead)"
@@ -1039,7 +1040,7 @@ fn create_function_sql(f: &crate::states::FunctionDef) -> Result<String, Dialect
         "CREATE OR REPLACE FUNCTION {}({})\nRETURNS {}\nLANGUAGE {}{}{}
 AS $func$\n{}\n$func$",
         qualified_function(f),
-        f.arguments,
+        f.parameters_sql(),
         f.returns,
         f.language,
         vol,
@@ -1085,6 +1086,8 @@ fn generated_trigger_function(
         name: format!("{trigger_name}_fn"),
         schema: None,
         arguments: String::new(),
+        parameters: Vec::new(),
+        depends_on: Vec::new(),
         returns: "trigger".to_string(),
         language: trigger
             .language

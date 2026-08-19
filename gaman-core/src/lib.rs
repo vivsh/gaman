@@ -33,6 +33,7 @@ pub mod command_args;
 pub mod dialects;
 pub mod diff;
 pub mod drift;
+pub mod entity_selector;
 mod entity_filter;
 pub mod graphs;
 pub mod managed_rows;
@@ -54,7 +55,7 @@ mod offline_planner;
 mod opaque;
 
 pub use dialects::{Dialect, DialectError};
-pub use entity_filter::EntityFilter;
+pub use entity_selector::{EntityDependency, EntityFilter, EntitySelector};
 pub use migration_engine::{
     BoxFuture, DatabaseTrackingStore, EngineError, Executor, ExecutorError, MigrationArtifact,
     MigrationCatalog, MigrationEngine, MigrationMovement, MigrationStore, StoreError,
@@ -73,12 +74,14 @@ pub use runner::{
 
 pub mod schema {
     pub use crate::column_type::{ColumnDesc, ColumnType};
+    pub use crate::entity_selector::EntityDependency;
     pub use crate::managed_rows::{ManagedRow, ManagedRows, ManagedValue};
     pub use crate::operations::Operation;
     pub use crate::parsers::ParseError;
     pub use crate::states::{
         Column, ColumnBuilder, ColumnRef, Constraint, ConstraintInput, EnumDef, EnumInput,
-        ExtensionDef, ExtensionInput, ForeignKey, FunctionDef, FunctionInput, GeneratedStorage,
+        ExtensionDef, ExtensionInput, ForeignKey, FunctionBuilder, FunctionDef, FunctionIdentity,
+        FunctionInput, FunctionParameter, GeneratedStorage,
         Index, IndexInput, InputSchema, IntoTable, PostgresRangePartition,
         PostgresRangePartitioning, PrimaryKey, ReplayError, Schema, SchemaBuilder, SchemaLoadError,
         SchemaValidationError, Table, TableBuilder, TableInput, TriggerDef, TriggerEvent,

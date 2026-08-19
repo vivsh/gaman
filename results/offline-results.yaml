@@ -1,4 +1,4 @@
-generation: 20260806T083520Z-11686
+generation: 20260819T075134Z-95479
 features:
   answer.keep_type:
     mariadb:
@@ -743,7 +743,7 @@ features:
       status: success
       evidence:
       - case: function_signature_changed
-        description: Function signature changes produce a function alteration.
+        description: Function signature changes create the new overload before dropping the old overload.
         group: diff
         kind: schema_to_migration
         dialect: postgres
@@ -1605,7 +1605,7 @@ features:
         - replayed_schema
         - sql
       - case: function_signature_changed
-        description: Function signature changes produce a function alteration.
+        description: Function signature changes create the new overload before dropping the old overload.
         group: diff
         kind: schema_to_migration
         dialect: postgres
@@ -1711,6 +1711,26 @@ features:
         dialect: postgres
         assertions:
         - sql_schema_to_migration
+        - operations
+        - replayed_schema
+        - sql
+      - case: postgres_function_argument_default
+        description: PostgreSQL SQL function parameter defaults survive parsing and generated migration rendering.
+        group: diff
+        kind: sql_schema_to_migration
+        dialect: postgres
+        assertions:
+        - sql_schema_to_migration
+        - operations
+        - replayed_schema
+        - sql
+      - case: postgres_function_dependency_order
+        description: Explicit function dependencies order PostgreSQL helper creates before a dependent alter.
+        group: diff
+        kind: schema_to_migration
+        dialect: postgres
+        assertions:
+        - schema_to_migration
         - operations
         - replayed_schema
         - sql
@@ -3946,7 +3966,7 @@ features:
         - replayed_schema
         - sql
       - case: function_signature_changed
-        description: Function signature changes produce a function alteration.
+        description: Function signature changes create the new overload before dropping the old overload.
         group: diff
         kind: schema_to_migration
         dialect: postgres
@@ -3997,6 +4017,16 @@ features:
         - sql
       - case: no_changes
         description: No migration is generated when the schema matches the current state.
+        group: diff
+        kind: schema_to_migration
+        dialect: postgres
+        assertions:
+        - schema_to_migration
+        - operations
+        - replayed_schema
+        - sql
+      - case: postgres_function_dependency_order
+        description: Explicit function dependencies order PostgreSQL helper creates before a dependent alter.
         group: diff
         kind: schema_to_migration
         dialect: postgres
@@ -4240,6 +4270,16 @@ features:
         - sql
       - case: opaque_index_introduction_prompt
         description: SQL input asks before managing an advanced index as opaque SQL.
+        group: diff
+        kind: sql_schema_to_migration
+        dialect: postgres
+        assertions:
+        - sql_schema_to_migration
+        - operations
+        - replayed_schema
+        - sql
+      - case: postgres_function_argument_default
+        description: PostgreSQL SQL function parameter defaults survive parsing and generated migration rendering.
         group: diff
         kind: sql_schema_to_migration
         dialect: postgres
@@ -4623,6 +4663,16 @@ features:
         - operations
         - replayed_schema
         - sql
+      - case: postgres_function_dependency_order
+        description: Explicit function dependencies order PostgreSQL helper creates before a dependent alter.
+        group: diff
+        kind: schema_to_migration
+        dialect: postgres
+        assertions:
+        - schema_to_migration
+        - operations
+        - replayed_schema
+        - sql
     sqlite:
       status: skipped
       reason: no offline evidence recorded
@@ -4717,6 +4767,26 @@ features:
     postgres:
       status: success
       evidence:
+      - case: postgres_function_argument_default
+        description: PostgreSQL SQL function parameter defaults survive parsing and generated migration rendering.
+        group: diff
+        kind: sql_schema_to_migration
+        dialect: postgres
+        assertions:
+        - sql_schema_to_migration
+        - operations
+        - replayed_schema
+        - sql
+      - case: postgres_function_dependency_order
+        description: Explicit function dependencies order PostgreSQL helper creates before a dependent alter.
+        group: diff
+        kind: schema_to_migration
+        dialect: postgres
+        assertions:
+        - schema_to_migration
+        - operations
+        - replayed_schema
+        - sql
       - case: postgres_create_function
         description: PostgreSQL parser and Gaman lowering handle a simple SQL function.
         group: parser
@@ -6267,6 +6337,16 @@ features:
     postgres:
       status: success
       evidence:
+      - case: postgres_function_argument_default
+        description: PostgreSQL SQL function parameter defaults survive parsing and generated migration rendering.
+        group: diff
+        kind: sql_schema_to_migration
+        dialect: postgres
+        assertions:
+        - sql_schema_to_migration
+        - operations
+        - replayed_schema
+        - sql
       - case: function_trigger_view_enum
         description: Rollback SQL reverses function, trigger, view, and enum operations.
         group: rollback

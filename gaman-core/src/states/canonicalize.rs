@@ -17,6 +17,11 @@ impl Schema {
             }
             normalize_table_primary_key(table);
         }
+        for function in self.functions.values_mut() {
+            for parameter in &mut function.parameters {
+                parameter.type_name = dialect.canonical_type(&parameter.type_name);
+            }
+        }
         self.normalize_schemas(dialect);
         crate::managed_rows::canonicalize_schema(self);
     }
@@ -46,7 +51,7 @@ impl Schema {
             func.schema =
                 dialect.canonicalize_schema_name(EntityKind::Function, func.schema.as_deref());
         }
-        rekey(&mut self.functions, |f| f.qualified_name());
+        rekey(&mut self.functions, |f| f.identity_key());
 
         for view in self.views.values_mut() {
             view.schema =

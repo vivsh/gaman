@@ -19,9 +19,11 @@ expect_lowering: ok
 expect_schema:
   tables: {}
   functions:
-    add_one:
+    add_one(integer):
       name: add_one
-      arguments: integer
+      parameters:
+      - name: ''
+        type: integer
       returns: integer
       language: sql
       body: " SELECT $1 + 1 "

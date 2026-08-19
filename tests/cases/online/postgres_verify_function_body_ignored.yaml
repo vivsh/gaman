@@ -10,7 +10,9 @@ migrations:
       - type: create_function
         function:
           name: add_one
-          arguments: "value integer"
+          parameters:
+          - name: value
+            type: integer
           returns: integer
           language: sql
           body: "SELECT $1 + 1"

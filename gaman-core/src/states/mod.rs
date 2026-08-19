@@ -25,6 +25,8 @@ pub use input::*;
 pub use types::*;
 
 #[cfg(test)]
+mod function_tests;
+#[cfg(test)]
 mod load_tests;
 #[cfg(test)]
 mod tests;

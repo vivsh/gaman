@@ -1,6 +1,6 @@
 # Support Evidence
 
-Evidence generation: `20260806T083520Z-11686`.
+Evidence generation: `20260819T075134Z-95479`.
 
 This is Gaman's authoritative compatibility reference. It expands the README lifecycle summary with the full feature matrix, limitations, and accepted fixture evidence for parsing, inspection, and `verify` drift detection.
 

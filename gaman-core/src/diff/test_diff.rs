@@ -88,6 +88,8 @@ fn basic_function(name: &str) -> FunctionDef {
         name: name.to_string(),
         schema: None,
         arguments: String::new(),
+        parameters: Vec::new(),
+        depends_on: Vec::new(),
         returns: "void".to_string(),
         language: "sql".to_string(),
         body: "SELECT 1".to_string(),
@@ -577,6 +579,66 @@ fn sort_function_before_trigger() {
         "CreateFunction before CreateTrigger, got: {:?}",
         names
     );
+}
+
+/// SQL-language function calls order helper creation before dependent creates and alters.
+#[test]
+fn sort_sql_function_body_dependencies_before_dependent_alter() {
+    let previous_daily_report = basic_function("dynrs_daily_report");
+    let mut daily_report = previous_daily_report.clone();
+    daily_report.body =
+        "SELECT dynrs_report_provider_daily(); SELECT dynrs_report_aggregate();".to_string();
+    daily_report.depends_on = vec![
+        crate::EntityDependency::parse("function::dynrs_report_provider_earnings").unwrap(),
+        crate::EntityDependency::parse("function::dynrs_report_aggregate").unwrap(),
+    ];
+
+    let mut provider_daily = basic_function("dynrs_report_provider_daily");
+    provider_daily.body = "SELECT dynrs_report_provider_sessions();".to_string();
+    provider_daily.depends_on = vec![
+        crate::EntityDependency::parse("function::dynrs_report_provider_sessions").unwrap(),
+    ];
+    let mut provider_earnings = basic_function("dynrs_report_provider_earnings");
+    provider_earnings.body = "SELECT dynrs_report_provider_daily();".to_string();
+    provider_earnings.depends_on = vec![
+        crate::EntityDependency::parse("function::dynrs_report_provider_daily").unwrap(),
+    ];
+    let mut report_aggregate = basic_function("dynrs_report_aggregate");
+    report_aggregate.body = "SELECT dynrs_report_provider_daily();".to_string();
+    report_aggregate.depends_on = vec![
+        crate::EntityDependency::parse("function::dynrs_report_provider_daily").unwrap(),
+    ];
+
+    let sorted = sort_operations(vec![
+        Operation::AlterFunction {
+            old: previous_daily_report,
+            new: daily_report,
+        },
+        Operation::CreateFunction {
+            function: report_aggregate,
+        },
+        Operation::CreateFunction {
+            function: provider_daily,
+        },
+        Operation::CreateFunction {
+            function: provider_earnings,
+        },
+        Operation::CreateFunction {
+            function: basic_function("dynrs_report_provider_sessions"),
+        },
+    ])
+    .unwrap();
+    let names = sorted
+        .iter()
+        .map(|operation| operation.entity_name().to_string())
+        .collect::<Vec<_>>();
+    let position = |name| names.iter().position(|candidate| candidate == name).unwrap();
+
+    assert!(position("dynrs_report_provider_sessions") < position("dynrs_report_provider_daily"));
+    assert!(position("dynrs_report_provider_daily") < position("dynrs_report_provider_earnings"));
+    assert!(position("dynrs_report_provider_daily") < position("dynrs_report_aggregate"));
+    assert!(position("dynrs_report_provider_earnings") < position("dynrs_daily_report"));
+    assert!(position("dynrs_report_aggregate") < position("dynrs_daily_report"));
 }
 
 /// DropTrigger is sorted before DropFunction of its function.

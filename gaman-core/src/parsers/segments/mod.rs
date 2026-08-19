@@ -14,6 +14,7 @@
 //! broad kind and primary object name from top-level tokens only; it does not
 //! validate SQL syntax, dialect support, or Gaman lowering support.
 
+pub mod annotations;
 mod classifier;
 mod scanner;
 mod types;
@@ -22,4 +23,5 @@ mod types;
 mod tests;
 
 pub use scanner::segment_sql;
+pub use annotations::SqlAnnotation;
 pub use types::{DdlStatementKind, DmlStatementKind, SqlObjectName, SqlSegment, SqlStatementKind};

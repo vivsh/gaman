@@ -1,0 +1,145 @@
+---
+description: Explicit function dependencies order PostgreSQL helper creates before a dependent alter.
+group: diff
+features:
+- group.diff
+- kind.schema_to_migration
+- operation.alter_function
+- operation.create_function
+kind: schema_to_migration
+dialect: postgres
+name: dynrs_function_dependencies
+migrations:
+- id: 0001_daily_report
+  operations:
+  - type: create_function
+    function:
+      name: dynrs_daily_report
+      arguments: p_working_date date
+      returns: jsonb
+      language: sql
+      body: SELECT '{}'::jsonb
+current:
+  tables: {}
+  functions:
+    dynrs_report_provider_sessions:
+      name: dynrs_report_provider_sessions
+      arguments: p_start_date date, p_end_date date, p_provider_id integer DEFAULT NULL
+      returns: jsonb
+      language: sql
+      body: SELECT '{}'::jsonb
+    dynrs_report_provider_daily:
+      name: dynrs_report_provider_daily
+      arguments: p_start_date date, p_end_date date, p_provider_id integer DEFAULT NULL
+      returns: jsonb
+      language: sql
+      body: SELECT '{}'::jsonb
+      depends_on:
+      - function::dynrs_report_provider_sessions
+    dynrs_report_provider_earnings:
+      name: dynrs_report_provider_earnings
+      arguments: p_start_date date, p_end_date date, p_provider_id integer DEFAULT NULL
+      returns: jsonb
+      language: sql
+      body: SELECT '{}'::jsonb
+      depends_on:
+      - function::dynrs_report_provider_daily
+    dynrs_report_aggregate:
+      name: dynrs_report_aggregate
+      arguments: p_start_date date, p_end_date date
+      returns: jsonb
+      language: sql
+      body: SELECT '{}'::jsonb
+      depends_on:
+      - function::dynrs_report_provider_daily
+    dynrs_daily_report:
+      name: dynrs_daily_report
+      arguments: p_working_date date
+      returns: jsonb
+      language: sql
+      body: SELECT dynrs_report_provider_daily($1, $1)
+      depends_on:
+      - function::dynrs_report_provider_daily
+      - function::dynrs_report_provider_earnings
+      - function::dynrs_report_aggregate
+expect_operations:
+- type: create_function
+  function:
+    name: dynrs_report_provider_sessions
+    parameters:
+    - name: p_start_date
+      type: date
+    - name: p_end_date
+      type: date
+    - name: p_provider_id
+      type: integer
+      default: 'NULL'
+    returns: jsonb
+    language: sql
+    body: SELECT '{}'::jsonb
+- type: create_function
+  function:
+    name: dynrs_report_provider_daily
+    parameters:
+    - name: p_start_date
+      type: date
+    - name: p_end_date
+      type: date
+    - name: p_provider_id
+      type: integer
+      default: 'NULL'
+    returns: jsonb
+    language: sql
+    body: SELECT '{}'::jsonb
+    depends_on:
+    - function::dynrs_report_provider_sessions(date, date, integer)
+- type: create_function
+  function:
+    name: dynrs_report_aggregate
+    parameters:
+    - name: p_start_date
+      type: date
+    - name: p_end_date
+      type: date
+    returns: jsonb
+    language: sql
+    body: SELECT '{}'::jsonb
+    depends_on:
+    - function::dynrs_report_provider_daily(date, date, integer)
+- type: create_function
+  function:
+    name: dynrs_report_provider_earnings
+    parameters:
+    - name: p_start_date
+      type: date
+    - name: p_end_date
+      type: date
+    - name: p_provider_id
+      type: integer
+      default: 'NULL'
+    returns: jsonb
+    language: sql
+    body: SELECT '{}'::jsonb
+    depends_on:
+    - function::dynrs_report_provider_daily(date, date, integer)
+- type: alter_function
+  old:
+    name: dynrs_daily_report
+    parameters:
+    - name: p_working_date
+      type: date
+    returns: jsonb
+    language: sql
+    body: SELECT '{}'::jsonb
+  new:
+    name: dynrs_daily_report
+    parameters:
+    - name: p_working_date
+      type: date
+    returns: jsonb
+    language: sql
+    body: SELECT dynrs_report_provider_daily($1, $1)
+    depends_on:
+    - function::dynrs_report_aggregate(date, date)
+    - function::dynrs_report_provider_daily(date, date, integer)
+    - function::dynrs_report_provider_earnings(date, date, integer)

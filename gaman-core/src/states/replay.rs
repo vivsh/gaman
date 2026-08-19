@@ -287,7 +287,7 @@ impl Schema {
             Operation::Statement { .. } => {}
 
             Operation::CreateFunction { function } => {
-                let key = function.qualified_name();
+                let key = function.identity_key();
                 if self.functions.contains_key(&key) {
                     return Err(ReplayError::FunctionAlreadyExists(key));
                 }
@@ -295,18 +295,18 @@ impl Schema {
             }
 
             Operation::DropFunction { function } => {
-                let key = function.qualified_name();
+                let key = function.identity_key();
                 if self.functions.remove(&key).is_none() {
                     return Err(ReplayError::FunctionNotFound(key));
                 }
             }
 
             Operation::AlterFunction { old, new } => {
-                let old_key = old.qualified_name();
+                let old_key = old.identity_key();
                 if self.functions.remove(&old_key).is_none() {
                     return Err(ReplayError::FunctionNotFound(old_key));
                 }
-                let new_key = new.qualified_name();
+                let new_key = new.identity_key();
                 self.functions.insert(new_key, new.clone());
             }
 

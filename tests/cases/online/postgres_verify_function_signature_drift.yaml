@@ -10,7 +10,9 @@ migrations:
       - type: create_function
         function:
           name: add_one
-          arguments: "value integer"
+          parameters:
+          - name: value
+            type: integer
           returns: integer
           language: sql
           body: "SELECT $1 + 1"
@@ -24,12 +26,14 @@ dialects:
     checks: [verify]
     expect_verification:
       findings:
-      - {operation: create_function, entity_kind: function, entity_name: "add_one(value integer)", property: presence, expected: present, observed: "<missing>", note: null}
+      - {operation: create_function, entity_kind: function, entity_name: "add_one(integer)", property: presence, expected: present, observed: "<missing>", note: null}
       operations:
         - type: create_function
           function:
             name: add_one
-            arguments: value integer
+            parameters:
+            - name: value
+              type: integer
             returns: integer
             language: sql
             body: ""

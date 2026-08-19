@@ -55,6 +55,10 @@ pub struct SqlSegment {
     pub ordinal: usize,
     /// High-confidence statement classification for Gaman-owned categories.
     pub kind: Option<SqlStatementKind>,
+    /// Strict leading Gaman annotations attached to this statement.
+    pub annotations: Vec<super::annotations::SqlAnnotation>,
+    /// SQL with reserved leading annotation comments blanked without changing line offsets.
+    pub semantic_sql: String,
     /// Statement SQL without the statement terminator.
     ///
     /// This preserves leading whitespace and comments from the segment boundary

@@ -669,7 +669,7 @@ fn function_arguments(
     observed: &FunctionDef,
     _: DriftContext<'_>,
 ) -> PropertyMatch {
-    exact_string(&expected.arguments, &observed.arguments)
+    exact_string(&expected.parameters_sql(), &observed.parameters_sql())
 }
 
 fn function_returns(

@@ -12,7 +12,7 @@ use super::error::ParseError;
 use super::sql::ParseContext;
 use crate::dialects::Dialect;
 use crate::states::{
-    EnumDef, ExtensionDef, FunctionDef, OpaqueMeta, TriggerDef, TriggerEvent, TriggerScope,
+    EnumDef, ExtensionDef, FunctionDef, FunctionParameter, OpaqueMeta, TriggerDef, TriggerEvent, TriggerScope,
     TriggerTiming, ViewDef, Volatility, schema_qualified_key,
 };
 
@@ -57,7 +57,7 @@ pub(super) fn lower_statement(stmt: &Statement, ctx: &mut ParseContext) -> Resul
             representation,
         } => lower_create_type(name, representation, ctx),
         Statement::CreateFunction(cf) => {
-            let (key, func) = parse_create_function(cf, stmt);
+            let (key, func) = parse_create_function(cf, stmt)?;
             ctx.schema.functions.insert(key, func);
             Ok(())
         }
@@ -101,30 +101,34 @@ fn lower_create_type(
     }
 }
 
-fn parse_create_function(cf: &CreateFunction, stmt: &Statement) -> (String, FunctionDef) {
+fn parse_create_function(
+    cf: &CreateFunction,
+    stmt: &Statement,
+) -> Result<(String, FunctionDef), ParseError> {
     let (fn_name, schema) = object_name_parts(&cf.name);
-    let key = schema_qualified_key(&fn_name, schema.as_deref());
-
-    let arguments = cf
+    if cf
         .args
         .as_deref()
         .unwrap_or(&[])
         .iter()
-        .map(|arg| {
-            let mode = arg
-                .mode
-                .as_ref()
-                .map(|m| format!("{} ", m))
-                .unwrap_or_default();
-            let name = arg
-                .name
-                .as_ref()
-                .map(|n| format!("{} ", n.value))
-                .unwrap_or_default();
-            format!("{}{}{}", mode, name, data_type_to_str(&arg.data_type))
+        .any(|argument| argument.mode.is_some())
+    {
+        return Err(ParseError::UnsupportedFunctionParameterMode {
+            dialect: Dialect::Postgres.as_str(),
+            statement: stmt.to_string(),
+        });
+    }
+    let parameters = cf
+        .args
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .map(|arg| FunctionParameter {
+            name: arg.name.as_ref().map(|name| name.value.clone()).unwrap_or_default(),
+            type_name: data_type_to_str(&arg.data_type),
+            default: arg.default_expr.as_ref().map(ToString::to_string),
         })
-        .collect::<Vec<_>>()
-        .join(", ");
+        .collect::<Vec<_>>();
 
     let returns = cf
         .return_type
@@ -163,20 +167,20 @@ fn parse_create_function(cf: &CreateFunction, stmt: &Statement) -> (String, Func
         _ => Volatility::Volatile,
     };
 
-    (
-        key,
-        FunctionDef {
+    let function = FunctionDef {
             name: fn_name,
             schema,
-            arguments,
+            parameters,
+            arguments: String::new(),
             returns,
             language,
             body,
+            depends_on: Vec::new(),
             volatility,
             security_definer: matches!(&cf.security, Some(FunctionSecurity::Definer)),
             opaque: OpaqueMeta::default(),
-        },
-    )
+        };
+    Ok((function.identity_key(), function))
 }
 
 fn lower_create_trigger(

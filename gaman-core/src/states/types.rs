@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize};
+use sqlparser::ast::Statement;
+use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::parser::Parser;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -267,15 +270,24 @@ pub struct Schema {
     pub enums: BTreeMap<String, EnumDef>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "FunctionDefInput")]
 pub struct FunctionDef {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
+    /// Typed parameters used by newly authored functions and migrations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<FunctionParameter>,
+    /// Legacy raw signature accepted for backwards-compatible input.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub arguments: String,
     pub returns: String,
     pub language: String,
     pub body: String,
+    /// Explicit root dependencies installed before this function.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<crate::EntityDependency>,
     #[serde(default, skip_serializing_if = "crate::states::is_volatile")]
     pub volatility: Volatility,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -283,6 +295,123 @@ pub struct FunctionDef {
     #[serde(default, skip_serializing_if = "OpaqueMeta::is_empty")]
     #[doc(hidden)]
     pub opaque: OpaqueMeta,
+}
+
+/// Deserialization-only compatibility shape for function payloads.
+#[derive(Deserialize)]
+struct FunctionDefInput {
+    name: String,
+    #[serde(default)]
+    schema: Option<String>,
+    #[serde(default)]
+    parameters: Vec<FunctionParameter>,
+    #[serde(default)]
+    arguments: String,
+    returns: String,
+    language: String,
+    body: String,
+    #[serde(default)]
+    depends_on: Vec<crate::EntityDependency>,
+    #[serde(default)]
+    volatility: Volatility,
+    #[serde(default)]
+    security_definer: bool,
+    #[serde(default)]
+    opaque: OpaqueMeta,
+}
+
+impl TryFrom<FunctionDefInput> for FunctionDef {
+    type Error = String;
+
+    fn try_from(value: FunctionDefInput) -> Result<Self, Self::Error> {
+        if !value.arguments.trim().is_empty() && !value.parameters.is_empty() {
+            return Err("function cannot specify both legacy arguments and typed parameters".to_string());
+        }
+        let parameters = if value.parameters.is_empty() {
+            legacy_function_parameters(&value.arguments).unwrap_or_default()
+        } else {
+            value.parameters
+        };
+        let arguments = parameters
+            .is_empty()
+            .then_some(value.arguments)
+            .unwrap_or_default();
+        Ok(Self {
+            name: value.name,
+            schema: value.schema,
+            parameters,
+            arguments,
+            returns: value.returns,
+            language: value.language,
+            body: value.body,
+            depends_on: value.depends_on,
+            volatility: value.volatility,
+            security_definer: value.security_definer,
+            opaque: value.opaque,
+        })
+    }
+}
+
+/// Converts compatible legacy PostgreSQL function arguments to typed parameters.
+///
+/// Unrecognized source remains raw so older migration payloads stay readable without a
+/// lossy guess. PostgreSQL is the only dialect that currently models stored functions.
+pub(crate) fn legacy_function_parameters(arguments: &str) -> Option<Vec<FunctionParameter>> {
+    if arguments.trim().is_empty() {
+        return Some(Vec::new());
+    }
+    let source = format!(
+        "CREATE FUNCTION gaman_legacy({arguments}) RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$"
+    );
+    let statement = Parser::parse_sql(&PostgreSqlDialect {}, &source).ok()?.pop()?;
+    let Statement::CreateFunction(function) = statement else {
+        return None;
+    };
+    function.args?.into_iter().map(|parameter| {
+        parameter.mode.is_none().then(|| FunctionParameter {
+            name: parameter.name.map(|name| name.value).unwrap_or_default(),
+            type_name: parameter.data_type.to_string(),
+            default: parameter.default_expr.map(|expression| expression.to_string()),
+        })
+    }).collect()
+}
+
+/// One stored-function parameter and optional SQL default expression.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FunctionParameter {
+    /// Parameter name.
+    #[serde(default)]
+    pub name: String,
+    /// SQL argument type.
+    #[serde(rename = "type", alias = "type_name")]
+    pub type_name: String,
+    /// Optional SQL `DEFAULT` expression.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+}
+
+impl PartialEq for FunctionDef {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.schema == other.schema
+            && self.parameters_sql() == other.parameters_sql()
+            && self.returns == other.returns
+            && self.language == other.language
+            && self.body == other.body
+            && self.depends_on == other.depends_on
+            && self.volatility == other.volatility
+            && self.security_definer == other.security_definer
+            && self.opaque == other.opaque
+    }
+}
+
+/// Stable overload identity excluding parameter names and defaults.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FunctionIdentity {
+    /// Qualified function name.
+    pub name: String,
+    /// Ordered argument types.
+    pub argument_types: Vec<String>,
 }
 
 impl FunctionDef {
@@ -297,15 +426,77 @@ impl FunctionDef {
         schema_qualified_key(&self.name, self.schema.as_deref())
     }
 
+    /// Returns the stable overload identity.
+    pub fn identity(&self) -> FunctionIdentity {
+        FunctionIdentity {
+            name: self.qualified_name(),
+            argument_types: self.parameters.iter().map(|value| value.type_name.clone()).collect(),
+        }
+    }
+
+    /// Returns the schema map key for this overload.
+    pub fn identity_key(&self) -> String {
+        if self.is_opaque() {
+            return self.qualified_name();
+        }
+        if self.parameters.is_empty() {
+            if self.arguments.trim().is_empty() {
+                self.qualified_name()
+            } else {
+                format!("{}({})", self.qualified_name(), self.arguments)
+            }
+        } else {
+            let identity = self.identity();
+            format!("{}({})", identity.name, identity.argument_types.join(", "))
+        }
+    }
+
+    /// Converts compatible legacy PostgreSQL argument text into typed parameters.
+    ///
+    /// Unrecognized text remains intact so callers can retain backward-compatible opaque
+    /// declarations without inventing a lossy signature.
+    #[doc(hidden)]
+    pub fn normalize_legacy_parameters(&mut self) {
+        if self.parameters.is_empty()
+            && let Some(parameters) = legacy_function_parameters(&self.arguments)
+        {
+            self.parameters = parameters;
+            self.arguments.clear();
+        }
+    }
+
+    /// Renders complete declarations for CREATE FUNCTION.
+    pub fn parameters_sql(&self) -> String {
+        if self.parameters.is_empty() {
+            return self.arguments.clone();
+        }
+        self.parameters.iter().map(|parameter| match (&parameter.name, &parameter.default) {
+            (name, Some(default)) if name.is_empty() => format!("{} DEFAULT {}", parameter.type_name, default),
+            (name, None) if name.is_empty() => parameter.type_name.clone(),
+            (name, Some(default)) => format!("{} {} DEFAULT {}", name, parameter.type_name, default),
+            (name, None) => format!("{} {}", name, parameter.type_name),
+        }).collect::<Vec<_>>().join(", ")
+    }
+
+    /// Renders only overload types for DROP FUNCTION.
+    pub fn argument_types_sql(&self) -> String {
+        if self.parameters.is_empty() {
+            return self.arguments.clone();
+        }
+        self.parameters.iter().map(|parameter| parameter.type_name.as_str()).collect::<Vec<_>>().join(", ")
+    }
+
     #[doc(hidden)]
     pub fn from_raw(name: impl Into<String>, raw: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             schema: None,
+            parameters: Vec::new(),
             arguments: String::new(),
             returns: String::new(),
             language: String::new(),
             body: String::new(),
+            depends_on: Vec::new(),
             volatility: Volatility::Volatile,
             security_definer: false,
             opaque: OpaqueMeta::from_raw(raw),

@@ -7,13 +7,17 @@ sql: |
   AS $$ SELECT a + b; $$;
 expect_entities:
 - kind: function
-  name: add_numbers
+  name: "add_numbers(integer, integer)"
 expect_schema:
   tables: {}
   functions:
-    add_numbers:
+    add_numbers(integer, integer):
       name: add_numbers
-      arguments: a integer, b integer
+      parameters:
+      - name: a
+        type: integer
+      - name: b
+        type: integer
       returns: integer
       language: sql
       body: " SELECT a + b; "

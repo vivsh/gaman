@@ -1,4 +1,4 @@
-generation: 20260806T083520Z-11686
+generation: 20260819T075134Z-95479
 features:
   check_constraints:
     mariadb:
@@ -465,6 +465,19 @@ features:
         checks:
         - migrate
         - verify
+        - data
+      - case: postgres_repair_pending_crawler_frontier
+        description: PostgreSQL repair converges an untracked crawler frontier change before verified fake application
+        checks:
+        - migrate_to
+        - repair
+        - fake_verified
+        - migration_records
+        - data
+      - case: postgres_repair_text_jsonb_apply
+        description: PostgreSQL repair applies a text-to-jsonb cast to valid JSON data
+        checks:
+        - repair
         - data
       - case: quoted_identifiers_shared
         description: PostgreSQL and SQLite preserve reserved mixed-case and spaced identifiers.
@@ -955,6 +968,14 @@ features:
         checks:
         - migrate
         - inspect
+      - case: postgres_repair_pending_crawler_frontier
+        description: PostgreSQL repair converges an untracked crawler frontier change before verified fake application
+        checks:
+        - migrate_to
+        - repair
+        - fake_verified
+        - migration_records
+        - data
       - case: verify_detects_missing_index_constraint_fk
         description: verify reports missing owned indexes constraints and foreign keys
         checks:
@@ -1276,6 +1297,23 @@ features:
         - migrate
         - verify
         - data
+      - case: postgres_repair_pending_crawler_frontier
+        description: PostgreSQL repair converges an untracked crawler frontier change before verified fake application
+        checks:
+        - migrate_to
+        - repair
+        - fake_verified
+        - migration_records
+        - data
+      - case: postgres_repair_text_jsonb_apply
+        description: PostgreSQL repair applies a text-to-jsonb cast to valid JSON data
+        checks:
+        - repair
+        - data
+      - case: postgres_repair_text_jsonb_sql_only
+        description: PostgreSQL repair dry-run projects text-to-jsonb drift with an explicit cast
+        checks:
+        - repair
       - case: postgres_verify_enum_drift
         description: PostgreSQL verify reports owned enum label order drift
         checks:
@@ -1826,6 +1864,23 @@ features:
         - migrate
         - verify
         - data
+      - case: postgres_repair_pending_crawler_frontier
+        description: PostgreSQL repair converges an untracked crawler frontier change before verified fake application
+        checks:
+        - migrate_to
+        - repair
+        - fake_verified
+        - migration_records
+        - data
+      - case: postgres_repair_text_jsonb_apply
+        description: PostgreSQL repair applies a text-to-jsonb cast to valid JSON data
+        checks:
+        - repair
+        - data
+      - case: postgres_repair_text_jsonb_sql_only
+        description: PostgreSQL repair dry-run projects text-to-jsonb drift with an explicit cast
+        checks:
+        - repair
       - case: postgres_view_replace
         description: PostgreSQL view replacement updates the inspected view definition
         checks:
@@ -2308,6 +2363,14 @@ features:
         description: managed rows coexist with never-managed rows and unmanaged columns through apply and rollback
         checks:
         - rollback
+        - migration_records
+        - data
+      - case: postgres_repair_pending_crawler_frontier
+        description: PostgreSQL repair converges an untracked crawler frontier change before verified fake application
+        checks:
+        - migrate_to
+        - repair
+        - fake_verified
         - migration_records
         - data
     sqlite:
@@ -3512,6 +3575,23 @@ features:
         description: PostgreSQL modeled column drift remains visible beside an owned opaque index.
         checks:
         - verify
+      - case: postgres_repair_pending_crawler_frontier
+        description: PostgreSQL repair converges an untracked crawler frontier change before verified fake application
+        checks:
+        - migrate_to
+        - repair
+        - fake_verified
+        - migration_records
+        - data
+      - case: postgres_repair_text_jsonb_apply
+        description: PostgreSQL repair applies a text-to-jsonb cast to valid JSON data
+        checks:
+        - repair
+        - data
+      - case: postgres_repair_text_jsonb_sql_only
+        description: PostgreSQL repair dry-run projects text-to-jsonb drift with an explicit cast
+        checks:
+        - repair
       - case: verify_detects_changed_column_metadata
         description: verify reports changed metadata for owned columns
         checks:

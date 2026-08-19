@@ -55,7 +55,7 @@ pub(crate) fn validate_authored_raw(schema: &Schema, dialect: Dialect) -> Vec<Sc
         ) && let Err(reason) = validate_function_signature(
             dialect,
             function.opaque.raw.as_deref().unwrap_or_default(),
-            &function.arguments,
+            &function.parameters_sql(),
         ) {
             push_opaque(
                 &mut issues,

@@ -43,7 +43,7 @@ question before writing the migration:
   2 - No, it was dropped
 ```
 
-For focused changes, `gaman make task-lanes --filter table:vyuh_task_lanes`
+For focused changes, `gaman make task-lanes --filter table::vyuh_task_lanes`
 generates only the selected root and required changed dependencies. Filters are
 temporary selectors for one invocation, not persistent staging; the next
 unfiltered `make` still sees every remaining schema change.
@@ -69,6 +69,12 @@ waiting for input.
   reports expected and observed properties, and `repair` plans bounded fixes.
 - **Track more than tables.** Keys, constraints, indexes, enums, extensions,
   functions, triggers, and views participate in migration ownership.
+- **Order functions explicitly.** Function defaults and declared dependencies
+  are modeled. In YAML and Rust, use exact `kind::target` selectors. In SQL,
+  attach repeatable leading `-- @depends-on function::name(...)` comments to
+  `CREATE FUNCTION`. `function::name` is valid only for a unique overload;
+  `function::name()` and typed signatures select exact overloads. Leading `@`
+  directives are reserved: unknown directives fail rather than being ignored.
 - **Version application-owned rows.** Declare stable records by a primary or
   non-null unique key without claiming ownership of unrelated table data.
 - **Choose the input that fits.** SQL DDL, YAML, JSON, and live inspection
@@ -203,7 +209,7 @@ Legend: ✅ accepted evidence, ◐ bounded support, 🚧 planned or not evidence
 yet, ❌ unsupported by design or by the database engine.
 
 <!-- gaman:support-matrix:start -->
-<!-- evidence-generation: 20260806T083520Z-11686 -->
+<!-- evidence-generation: 20260819T075134Z-95479 -->
 | Feature | PostgreSQL | SQLite | MySQL | MariaDB |
 | --- | --- | --- | --- | --- |
 | Offline replay, diff, and migration generation | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |

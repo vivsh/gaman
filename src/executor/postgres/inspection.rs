@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use sqlx::PgConnection;
 
 use super::{BoxFuture, ExecutorError, InspectionError, SchemaInspector};
-use gaman_core::TRACKING_TABLE;
+use gaman_core::{Dialect, TRACKING_TABLE};
 use gaman_core::states::{
     Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, OpaqueMeta,
     PrimaryKey, Schema, Table, TableOptionsMeta, TriggerDef, TriggerEvent, TriggerScope,
@@ -685,10 +685,12 @@ async fn fetch_functions(
     Ok(rows
         .into_iter()
         .map(|row| {
-            let function = FunctionDef {
+            let mut function = FunctionDef {
                 name: row.name,
                 schema: schema_for_output(&row.schema_name),
                 arguments: row.arguments,
+                parameters: Vec::new(),
+                depends_on: Vec::new(),
                 returns: row.returns,
                 language: row.language,
                 body: row.body,
@@ -696,6 +698,7 @@ async fn fetch_functions(
                 security_definer: row.security_definer,
                 opaque: OpaqueMeta::default(),
             };
+            normalize_function_identity(&mut function);
             (function_key(&function), function)
         })
         .collect())
@@ -771,10 +774,13 @@ fn schema_for_output(schema: &str) -> Option<String> {
 }
 
 fn function_key(function: &FunctionDef) -> String {
-    if function.arguments.is_empty() {
-        function.qualified_name()
-    } else {
-        format!("{}({})", function.qualified_name(), function.arguments)
+    function.identity_key()
+}
+
+fn normalize_function_identity(function: &mut FunctionDef) {
+    function.normalize_legacy_parameters();
+    for parameter in &mut function.parameters {
+        parameter.type_name = Dialect::Postgres.canonical_type(&parameter.type_name);
     }
 }
 
@@ -918,5 +924,28 @@ mod tests {
             "deleted IS NULL"
         );
         assert_eq!(normalize_index_predicate("active"), "active");
+    }
+
+    /// Verifies reflected PostgreSQL identity arguments use typed, canonical overload keys.
+    #[test]
+    fn function_key_normalizes_legacy_catalog_arguments() {
+        let mut function = FunctionDef {
+            name: "add_one".to_string(),
+            schema: None,
+            arguments: "value INTEGER".to_string(),
+            parameters: Vec::new(),
+            depends_on: Vec::new(),
+            returns: "integer".to_string(),
+            language: "sql".to_string(),
+            body: String::new(),
+            volatility: Volatility::Volatile,
+            security_definer: false,
+            opaque: OpaqueMeta::default(),
+        };
+
+        normalize_function_identity(&mut function);
+
+        assert_eq!(function_key(&function), "add_one(integer)");
+        assert!(function.arguments.is_empty());
     }
 }

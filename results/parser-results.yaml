@@ -1,4 +1,4 @@
-generation: 20260806T083520Z-11686
+generation: 20260819T075134Z-95479
 cases:
   check_constraint:
     description: PostgreSQL CHECK constraint lowers into Constraint::Check.
@@ -100,10 +100,10 @@ cases:
     status: success
     expected_entities:
     - kind: function
-      name: add_numbers
+      name: add_numbers(integer, integer)
     observed_entities:
     - kind: function
-      name: add_numbers
+      name: add_numbers(integer, integer)
   function_trigger:
     description: PostgreSQL function-backed CREATE TRIGGER lowers into table trigger metadata.
     dialect: postgres

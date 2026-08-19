@@ -4,6 +4,7 @@ use sqlparser::parser::Parser;
 
 use super::error::ParseError;
 use super::segments::{SqlObjectName, SqlSegment, SqlStatementKind, segment_sql};
+use std::collections::BTreeSet;
 use super::table_recovery::recover_table_sql;
 use super::tokens::{SqlToken, SqlTokenKind};
 use super::{postgres, sqlite};
@@ -219,8 +220,9 @@ pub(crate) fn parse_sql_raw(sql: &str, dialect: Dialect) -> Result<Schema, Parse
     let segments = segment_sql(sql, dialect)?;
     let mut ctx = ParseContext::new();
     for segment in segments {
+        let functions_before = ctx.schema.functions.keys().cloned().collect::<BTreeSet<_>>();
         ensure_schema_segment(&segment, dialect)?;
-        let statements = match parse_segment(&segment.sql, dialect) {
+        let statements = match parse_segment(&segment.semantic_sql, dialect) {
             Ok(statements) => statements,
             Err(error) => {
                 if recover_modeled_table(&segment, &mut ctx, dialect)? {
@@ -241,6 +243,9 @@ pub(crate) fn parse_sql_raw(sql: &str, dialect: Dialect) -> Result<Schema, Parse
                 Dialect::Mariadb => super::mariadb::lower_statement(stmt, &mut ctx),
             };
             if let Err(error) = lowered {
+                if matches!(&error, ParseError::UnsupportedFunctionParameterMode { .. }) {
+                    return Err(error);
+                }
                 if matches!(segment.kind, Some(SqlStatementKind::Ddl(ref ddl)) if ddl.entity == EntityKind::Table)
                 {
                     return Err(error);
@@ -256,8 +261,53 @@ pub(crate) fn parse_sql_raw(sql: &str, dialect: Dialect) -> Result<Schema, Parse
                 ctx.preserve_opaque_index_source(&segment, dialect)?;
             }
         }
+        apply_function_annotations(&mut ctx, &segment, &functions_before, dialect)?;
     }
     ctx.finish()
+}
+
+/// Attaches segmentation-owned annotations after the following function has been lowered.
+fn apply_function_annotations(
+    ctx: &mut ParseContext,
+    segment: &SqlSegment,
+    before: &BTreeSet<String>,
+    dialect: Dialect,
+) -> Result<(), ParseError> {
+    if segment.annotations.is_empty() {
+        return Ok(());
+    }
+    if !matches!(segment.kind, Some(SqlStatementKind::Ddl(ref ddl)) if ddl.entity == EntityKind::Function) {
+        return Err(ParseError::unsupported(
+            dialect,
+            segment.sql.clone(),
+            "SQL annotations are supported only for CREATE FUNCTION",
+        ));
+    }
+    let keys = ctx
+        .schema
+        .functions
+        .keys()
+        .filter(|key| !before.contains(*key))
+        .cloned()
+        .collect::<Vec<_>>();
+    if keys.len() != 1 {
+        return Err(ParseError::unsupported(
+            dialect,
+            segment.sql.clone(),
+            "SQL annotations require exactly one lowered CREATE FUNCTION",
+        ));
+    }
+    let function = ctx.schema.functions.get_mut(&keys[0]).ok_or_else(|| {
+        ParseError::unsupported(dialect, segment.sql.clone(), "annotated function disappeared during lowering")
+    })?;
+    for annotation in &segment.annotations {
+        match annotation {
+            super::segments::SqlAnnotation::DependsOn { dependency, .. } => {
+                function.depends_on.push(dependency.clone());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Rejects statements outside the closed CREATE EntityKind boundary before AST parsing.
@@ -398,10 +448,10 @@ fn opaque_declaration_from_segment(
         EntityKind::Function => {
             let (name, schema) = opaque_object_parts(segment, dialect, name)?;
             let key = schema_qualified_key(&name, schema.as_deref());
-            let mut function = FunctionDef::from_raw(name, segment.sql.clone());
+            let mut function = FunctionDef::from_raw(name, segment.semantic_sql.clone());
             function.schema = schema;
             function.arguments =
-                extract_function_arguments(dialect, &segment.sql).unwrap_or_default();
+                extract_function_arguments(dialect, &segment.semantic_sql).unwrap_or_default();
             Ok(OpaqueDeclaration::Function {
                 key,
                 value: function,

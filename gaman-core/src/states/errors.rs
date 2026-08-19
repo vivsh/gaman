@@ -32,6 +32,9 @@ pub enum SchemaBuilderIssue {
     /// A managed-row declaration could not be serialized or merged safely.
     #[error("invalid managed rows for '{table}': {reason}")]
     InvalidManagedRows { table: String, reason: String },
+    /// A fluent function declaration was incomplete or contained an invalid selector.
+    #[error("invalid function definition '{function}': {reason}")]
+    InvalidFunctionDefinition { function: String, reason: String },
 }
 
 /// Ordered builder failures returned together from the terminal build operation.

@@ -1,0 +1,41 @@
+---
+description: PostgreSQL SQL function parameter defaults survive parsing and generated migration rendering.
+group: diff
+features:
+- group.diff
+- kind.sql_schema_to_migration
+- operation.create_function
+- renderer.postgres.create_function
+kind: sql_schema_to_migration
+dialect: postgres
+name: provider_daily_default
+sql: |
+  CREATE FUNCTION dynrs_report_provider_daily(
+      p_start_date date,
+      p_end_date date,
+      p_provider_id integer DEFAULT NULL
+  ) RETURNS integer
+  LANGUAGE sql
+  AS $$ SELECT 1; $$;
+expect_operations:
+- type: create_function
+  function:
+    name: dynrs_report_provider_daily
+    parameters:
+    - name: p_start_date
+      type_name: date
+    - name: p_end_date
+      type_name: date
+    - name: p_provider_id
+      type_name: integer
+      default: "NULL"
+    returns: integer
+    language: sql
+    body: " SELECT 1; "
+expect_sql: |
+  CREATE OR REPLACE FUNCTION "dynrs_report_provider_daily"(p_start_date date, p_end_date date, p_provider_id integer DEFAULT NULL)
+  RETURNS integer
+  LANGUAGE sql
+  AS $func$
+   SELECT 1; 
+  $func$
