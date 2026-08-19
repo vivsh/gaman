@@ -454,6 +454,26 @@ fn alter_column_type_with_cast() {
     );
 }
 
+/// Renders the typed PostgreSQL repair cast used for text-to-jsonb drift recovery.
+#[test]
+fn alter_column_type_with_jsonb_repair_cast() {
+    let old = col("health_fault", "text");
+    let new = col("health_fault", "jsonb");
+    let sql = operation_to_sql(&Operation::AlterColumn {
+        table_name: "crawler_source".to_string(),
+        old,
+        new,
+        cast_expr: Some("\"health_fault\"::jsonb".to_string()),
+    })
+    .unwrap();
+    assert_eq!(
+        sql,
+        vec![
+            "ALTER TABLE \"crawler_source\" ALTER COLUMN \"health_fault\" TYPE jsonb USING \"health_fault\"::jsonb"
+        ]
+    );
+}
+
 #[test]
 fn alter_column_nullable_change() {
     let old = col("email", "text");

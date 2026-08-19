@@ -416,14 +416,16 @@ fn verify_columns(
 
         let findings = compare_column_properties(column, actual_column, registry, context);
         if !findings.is_empty() {
+            let old = column_for_operation(actual_column, context.dialect);
+            let new = context.dialect.column_for_repair(
+                &column_for_operation(column, context.dialect),
+                actual_column,
+            );
             report.operations.push(Operation::AlterColumn {
                 table_name: expected.qualified_name(),
-                old: column_for_operation(actual_column, context.dialect),
-                new: context.dialect.column_for_repair(
-                    &column_for_operation(column, context.dialect),
-                    actual_column,
-                ),
-                cast_expr: None,
+                cast_expr: context.dialect.repair_cast_expr(&old, &new),
+                old,
+                new,
             });
             report.findings.extend(findings);
         }

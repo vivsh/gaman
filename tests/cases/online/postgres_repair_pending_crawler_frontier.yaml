@@ -1,0 +1,67 @@
+description: PostgreSQL repair converges an untracked crawler frontier change before verified fake application
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - migration_tracking
+  - type_null_default_changes
+  - indexes
+  - data_preservation
+
+migrations:
+  - id: 0006_crawler_frontier_base
+    operations:
+      - type: create_table
+        table:
+          name: crawler_source
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: health_fault
+              type: text
+              nullable: true
+      - type: create_table
+        table:
+          name: crawler_frontier
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+  - id: 0007_crawler_frontier_priority
+    dependencies: [0006_crawler_frontier_base]
+    operations:
+      - type: add_column
+        table_name: crawler_frontier
+        column: {name: priority_at, type: timestamptz, nullable: true}
+      - type: add_index
+        table_name: crawler_frontier
+        index: {name: crawler_frontier_priority_at_idx, columns: [priority_at]}
+      - type: alter_column
+        table_name: crawler_source
+        old: {name: health_fault, type: text, nullable: true}
+        new: {name: health_fault, type: jsonb, nullable: true}
+        cast_expr: '"health_fault"::jsonb'
+
+mutate_sql: |
+  ALTER TABLE crawler_frontier ADD COLUMN IF NOT EXISTS priority_at timestamptz;
+  CREATE INDEX IF NOT EXISTS crawler_frontier_priority_at_idx ON crawler_frontier (priority_at);
+  INSERT INTO crawler_source (id, health_fault) VALUES (1, '{"reason":"timeout"}')
+  ON CONFLICT (id) DO UPDATE SET health_fault = EXCLUDED.health_fault;
+
+dialects:
+  postgres:
+    checks: [migrate_to, repair, fake_verified, migration_records, data]
+    target: 0006_crawler_frontier_base
+    repair_apply: true
+    repair_allow_pending: true
+    fake_verified_target: 0007_crawler_frontier_priority
+    expect_repair_operations:
+      - type: alter_column
+        table_name: crawler_source
+        old: {name: health_fault, type: text, nullable: true}
+        new: {name: health_fault, type: jsonb, nullable: true}
+        cast_expr: '"health_fault"::jsonb'
+    expect_records: [0006_crawler_frontier_base, 0007_crawler_frontier_priority]
+    data:
+      - sql: "SELECT pg_typeof(health_fault)::text FROM crawler_source WHERE id = 1"
+        expect: [jsonb]

@@ -338,6 +338,12 @@ pub struct OnlineDialectCase {
     #[serde(default)]
     pub repair_apply: bool,
     #[serde(default)]
+    pub repair_allow_pending: bool,
+    #[serde(default)]
+    pub repair_sql_only: bool,
+    #[serde(default)]
+    pub expect_repair_sql: Vec<String>,
+    #[serde(default)]
     pub expect_error: Option<String>,
     #[serde(default)]
     pub target: Option<String>,
@@ -1551,15 +1557,17 @@ pub async fn repair_runner(
     runner: &mut TestRunner,
     schemas: Vec<String>,
     apply: bool,
+    allow_pending: bool,
+    sql_only: bool,
 ) -> Result<gaman::RepairReport, TestSupportError> {
     match runner
         .run_command(&RunnerCommand::Repair {
             schemas,
             options: gaman::RepairOptions {
                 apply,
-                allow_pending: false,
+                allow_pending,
                 allow_partial: false,
-                sql_only: false,
+                sql_only,
             },
         })
         .await
@@ -1602,6 +1610,20 @@ pub fn assert_repair_operations(
     expected: &[Operation],
 ) -> Result<(), TestSupportError> {
     assert_ops_match(case_name, "repair operations", actual, expected)
+}
+
+/// Compares SQL returned by a repair dry-run without relying on CLI presentation.
+pub fn assert_repair_sql(
+    case_name: &str,
+    actual: &[String],
+    expected: &[String],
+) -> Result<(), TestSupportError> {
+    if expected.is_empty() || actual == expected {
+        return Ok(());
+    }
+    Err(TestSupportError::message(format!(
+        "{case_name}: repair SQL mismatch\nexpected: {expected:#?}\nactual: {actual:#?}"
+    )))
 }
 
 /// Compares every deterministic drift finding and repair operation.

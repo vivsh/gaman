@@ -70,6 +70,9 @@ Important expectation fields:
 - `target`: target migration id for target migrate or rollback checks.
 - `expect_records`: expected migration tracking records.
 - `data`: SQL data assertions.
+- `repair_allow_pending`: permit a repair check while migrations are pending.
+- `repair_sql_only` and `expect_repair_sql`: assert the SQL returned by a
+  dry-run repair request.
 
 ## Inspect and verify contracts
 

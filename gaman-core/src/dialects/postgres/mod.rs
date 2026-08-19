@@ -95,6 +95,10 @@ impl DialectProcessor for PostgresProcessor {
         schema.prepare(crate::dialects::Dialect::Postgres)
     }
 
+    fn repair_cast_expr(&self, observed: &Column, expected: &Column) -> Option<String> {
+        crate::drift::postgres::repair_cast_expr(observed, expected)
+    }
+
     fn tracking_install_sql(&self, table: &str) -> Option<Vec<String>> {
         Some(vec![format!(
             "CREATE TABLE IF NOT EXISTS \"{}\" (id TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)",

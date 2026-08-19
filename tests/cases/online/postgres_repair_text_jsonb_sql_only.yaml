@@ -1,0 +1,35 @@
+description: PostgreSQL repair dry-run projects text-to-jsonb drift with an explicit cast
+features:
+  - live_migration_application
+  - live_inspect_verify
+  - type_null_default_changes
+
+migrations:
+  - id: 0001_crawler_source
+    operations:
+      - type: create_table
+        table:
+          name: crawler_source
+          columns:
+            - name: id
+              type: integer
+              primary_key: true
+            - name: health_fault
+              type: jsonb
+              nullable: true
+
+mutate_sql: |
+  ALTER TABLE crawler_source ALTER COLUMN health_fault TYPE text USING health_fault::text;
+
+dialects:
+  postgres:
+    checks: [repair]
+    repair_sql_only: true
+    expect_repair_operations:
+      - type: alter_column
+        table_name: crawler_source
+        old: {name: health_fault, type: text, nullable: true}
+        new: {name: health_fault, type: jsonb, nullable: true}
+        cast_expr: '"health_fault"::jsonb'
+    expect_repair_sql:
+      - 'ALTER TABLE "crawler_source" ALTER COLUMN "health_fault" TYPE jsonb USING "health_fault"::jsonb'

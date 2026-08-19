@@ -210,6 +210,11 @@ Repair is local recovery from verified drift. It plans or applies safe repairs
 without creating migration files or changing migration history. This keeps
 environment-specific drift out of the shared migration graph.
 
+Repair operations remain typed. Where PostgreSQL requires a proven explicit
+conversion, such as `text` to `jsonb`, the projected `AlterColumn` carries its
+own `USING` expression. Repair never guesses arbitrary conversion SQL; normal
+migration planning retains its explicit cast clarification for those changes.
+
 ## Adoption
 
 Inspection is read-only and exports only schema that can be represented as

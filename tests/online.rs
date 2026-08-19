@@ -643,7 +643,13 @@ async fn run_family_checks(
         if let Some(sql) = section.mutate_sql(case) {
             harness.batch_execute(sql).await?;
         }
-        let report = support::repair_runner(&mut runner, Vec::new(), section.repair_apply)
+        let report = support::repair_runner(
+            &mut runner,
+            Vec::new(),
+            section.repair_apply,
+            section.repair_allow_pending,
+            section.repair_sql_only,
+        )
             .await
             .map_err(|error| TestSupportError::message(error.to_string()))?;
         support::assert_repair_operations(
@@ -651,6 +657,7 @@ async fn run_family_checks(
             &report.operations,
             &section.expect_repair_operations,
         )?;
+        support::assert_repair_sql(name, &report.sql, &section.expect_repair_sql)?;
         if report.applied != section.repair_apply {
             return Err(TestSupportError::message(format!(
                 "{name}: repair applied flag mismatch"
@@ -889,6 +896,8 @@ async fn run_postgres_checks(
                 &mut runner,
                 vec![harness.schema_name().to_string()],
                 section.repair_apply,
+                section.repair_allow_pending,
+                section.repair_sql_only,
             )
             .await
             .map_err(|error| TestSupportError::message(error.to_string()))?;
@@ -897,6 +906,7 @@ async fn run_postgres_checks(
                 &report.operations,
                 &section.expect_repair_operations,
             )?;
+            support::assert_repair_sql(name, &report.sql, &section.expect_repair_sql)?;
             if report.applied != section.repair_apply {
                 return Err(TestSupportError::message(format!(
                     "{name}: repair applied flag mismatch"
@@ -1120,7 +1130,13 @@ async fn run_sqlite_online_case(
             if let Some(sql) = section.mutate_sql(case) {
                 harness.batch_execute(sql).await?;
             }
-            let report = support::repair_runner(&mut runner, Vec::new(), section.repair_apply)
+            let report = support::repair_runner(
+                &mut runner,
+                Vec::new(),
+                section.repair_apply,
+                section.repair_allow_pending,
+                section.repair_sql_only,
+            )
                 .await
                 .map_err(|error| TestSupportError::message(error.to_string()))?;
             support::assert_repair_operations(
@@ -1128,6 +1144,7 @@ async fn run_sqlite_online_case(
                 &report.operations,
                 &section.expect_repair_operations,
             )?;
+            support::assert_repair_sql(name, &report.sql, &section.expect_repair_sql)?;
             if report.applied != section.repair_apply {
                 return Err(TestSupportError::message(format!(
                     "{name}: repair applied flag mismatch"

@@ -115,6 +115,14 @@ pub(crate) trait DialectProcessor: Sync {
         expected.clone()
     }
 
+    /// Returns a dialect-proven `USING` expression for one verified repair conversion.
+    ///
+    /// Returning `None` preserves direct type-change rendering and must never
+    /// guess a potentially lossy conversion expression.
+    fn repair_cast_expr(&self, _: &Column, _: &Column) -> Option<String> {
+        None
+    }
+
     /// Returns product-owned tracking installation SQL when generic schema rendering is unsuitable.
     fn tracking_install_sql(&self, _: &str) -> Option<Vec<String>> {
         None
@@ -214,6 +222,11 @@ impl Dialect {
 
     pub(crate) fn column_for_repair(&self, expected: &Column, observed: &Column) -> Column {
         self.processor().column_for_repair(expected, observed)
+    }
+
+    /// Returns dialect-owned explicit cast SQL for a verified repair when required.
+    pub(crate) fn repair_cast_expr(&self, observed: &Column, expected: &Column) -> Option<String> {
+        self.processor().repair_cast_expr(observed, expected)
     }
 
     #[doc(hidden)]

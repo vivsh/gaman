@@ -15,6 +15,25 @@ pub(crate) fn registry() -> &'static DriftRegistry {
     &REGISTRY
 }
 
+/// Returns PostgreSQL's explicit conversion for verified text-to-jsonb repair.
+///
+/// Other conversions deliberately retain direct rendering rather than adding a
+/// guessed `USING` expression. Normal migration planning continues to require
+/// its established cast clarification for arbitrary type changes.
+pub(crate) fn repair_cast_expr(observed: &Column, expected: &Column) -> Option<String> {
+    if observed.col_type.eq_ignore_ascii_case("text")
+        && expected.col_type.eq_ignore_ascii_case("jsonb")
+    {
+        Some(format!("{}::jsonb", quote_identifier(&observed.name)))
+    } else {
+        None
+    }
+}
+
+fn quote_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
 static REGISTRY: DriftRegistry = DriftRegistry {
     tables: TABLES,
     columns: COLUMNS,
