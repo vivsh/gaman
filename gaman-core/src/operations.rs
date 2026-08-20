@@ -6,7 +6,7 @@ use crate::managed_rows::ManagedRow;
 use crate::states::types::{Dep, EntityKind};
 use crate::states::{
     Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, Table,
-    TableOptionsMeta, TriggerDef, ViewDef,
+    SequenceDef, TableOptionsMeta, TriggerDef, ViewDef,
 };
 
 /// All possible schema change operations.
@@ -141,6 +141,12 @@ pub enum Operation {
     DropExtension {
         extension: ExtensionDef,
     },
+    CreateSequence {
+        sequence: SequenceDef,
+    },
+    DropSequence {
+        sequence: SequenceDef,
+    },
     CreateEnum {
         enum_def: EnumDef,
     },
@@ -185,6 +191,9 @@ impl Operation {
             Self::ReplaceView { old, new } => old.is_opaque() || new.is_opaque(),
             Self::CreateExtension { extension } | Self::DropExtension { extension } => {
                 extension.is_opaque()
+            }
+            Self::CreateSequence { sequence } | Self::DropSequence { sequence } => {
+                sequence.is_opaque()
             }
             Self::CreateEnum { enum_def } | Self::DropEnum { enum_def } => enum_def.is_opaque(),
             Self::AlterEnum { old, new } => old.is_opaque() || new.is_opaque(),
@@ -249,6 +258,9 @@ impl Operation {
             }
             Self::CreateExtension { .. } | Self::DropExtension { .. } => {
                 self.inverse_extension_op()
+            }
+            Self::CreateSequence { .. } | Self::DropSequence { .. } => {
+                self.inverse_sequence_op()
             }
             Self::CreateEnum { .. }
             | Self::DropEnum { .. }
@@ -444,6 +456,18 @@ impl Operation {
         }
     }
 
+    fn inverse_sequence_op(&self) -> Option<Operation> {
+        match self {
+            Self::CreateSequence { sequence } => Some(Self::DropSequence {
+                sequence: sequence.clone(),
+            }),
+            Self::DropSequence { sequence } => Some(Self::CreateSequence {
+                sequence: sequence.clone(),
+            }),
+            _ => None,
+        }
+    }
+
     fn inverse_enum_op(&self) -> Option<Operation> {
         match self {
             Self::CreateEnum { enum_def } => Some(Self::DropEnum {
@@ -547,6 +571,9 @@ impl Operation {
                     Cow::Borrowed(&extension.name)
                 }
             }
+            Self::CreateSequence { sequence } | Self::DropSequence { sequence } => {
+                Cow::Owned(sequence.qualified_name())
+            }
             Self::CreateEnum { enum_def } | Self::DropEnum { enum_def } => {
                 if enum_def.schema.is_some() {
                     Cow::Owned(enum_def.qualified_name())
@@ -626,6 +653,8 @@ impl Operation {
             Self::ReplaceView { .. } => "replace_view",
             Self::CreateExtension { .. } => "create_extension",
             Self::DropExtension { .. } => "drop_extension",
+            Self::CreateSequence { .. } => "create_sequence",
+            Self::DropSequence { .. } => "drop_sequence",
             Self::CreateEnum { .. } => "create_enum",
             Self::DropEnum { .. } => "drop_enum",
             Self::RenameEnumValue { .. } => "rename_enum_value",
@@ -650,6 +679,9 @@ impl Operation {
             | Self::DropEnum { .. } => Some(EntityKind::Enum),
             Self::CreateExtension { .. } | Self::DropExtension { .. } => {
                 Some(EntityKind::Extension)
+            }
+            Self::CreateSequence { .. } | Self::DropSequence { .. } => {
+                Some(EntityKind::Sequence)
             }
             Self::CreateView { .. } | Self::DropView { .. } | Self::ReplaceView { .. } => {
                 Some(EntityKind::View)
@@ -682,6 +714,7 @@ impl Operation {
                 | Self::CreateFunction { .. }
                 | Self::CreateEnum { .. }
                 | Self::CreateExtension { .. }
+                | Self::CreateSequence { .. }
                 | Self::CreateView { .. }
                 | Self::CreateTrigger { .. }
                 | Self::RenameEnumValue { .. }
@@ -702,6 +735,7 @@ impl Operation {
                 | Self::DropFunction { .. }
                 | Self::DropEnum { .. }
                 | Self::DropExtension { .. }
+                | Self::DropSequence { .. }
                 | Self::DropView { .. }
                 | Self::DropTrigger { .. }
                 | Self::DropColumn { .. }
@@ -715,7 +749,10 @@ impl Operation {
     pub fn forward_deps(&self) -> Vec<Dep> {
         match self {
             Self::CreateTable { table } | Self::DropTable { table } => {
-                let mut deps = vec![Dep::all_of(EntityKind::Extension)];
+                let mut deps = vec![
+                    Dep::all_of(EntityKind::Extension),
+                    Dep::all_of(EntityKind::Sequence),
+                ];
                 for col in &table.columns {
                     deps.push(Dep::new(EntityKind::Enum, &col.col_type));
                 }
@@ -792,11 +829,15 @@ impl Operation {
             Self::AlterFunction { new, .. } => function_dependencies(new),
             Self::CreateView { .. } | Self::ReplaceView { .. } | Self::DropView { .. } => {
                 vec![
+                    Dep::all_of(EntityKind::Sequence),
                     Dep::all_of(EntityKind::Table),
                     Dep::all_of(EntityKind::Function),
                 ]
             }
             Self::CreateExtension { .. } | Self::DropExtension { .. } => vec![],
+            Self::CreateSequence { .. } | Self::DropSequence { .. } => {
+                vec![Dep::all_of(EntityKind::Extension)]
+            }
             Self::CreateEnum { .. }
             | Self::RenameEnumValue { .. }
             | Self::AlterEnum { .. }
@@ -859,6 +900,9 @@ impl Operation {
             Self::CreateExtension { extension } | Self::DropExtension { extension } => {
                 Some(&extension.name)
             }
+            Self::CreateSequence { sequence } | Self::DropSequence { sequence } => {
+                Some(&sequence.name)
+            }
             Self::CreateEnum { enum_def } | Self::DropEnum { enum_def } => Some(&enum_def.name),
             Self::RenameEnumValue { enum_name, .. } => Some(enum_name),
             Self::AlterEnum { new, .. } => Some(&new.name),
@@ -869,6 +913,9 @@ impl Operation {
     /// Returns the stable entity identities touched by this operation.
     pub fn touched_entities(&self) -> Vec<(EntityKind, String)> {
         match self {
+            Self::CreateSequence { sequence } | Self::DropSequence { sequence } => {
+                vec![(EntityKind::Sequence, sequence.qualified_name())]
+            }
             Self::CreateTable { table } | Self::DropTable { table } => {
                 let mut entities = vec![(EntityKind::Table, table.qualified_name())];
                 entities.extend(
@@ -924,7 +971,10 @@ impl Operation {
 
 /// Converts explicit function dependencies into the generic operation graph representation.
 fn function_dependencies(function: &FunctionDef) -> Vec<Dep> {
-    let mut dependencies = vec![Dep::all_of(EntityKind::Extension)];
+    let mut dependencies = vec![
+        Dep::all_of(EntityKind::Extension),
+        Dep::all_of(EntityKind::Sequence),
+    ];
     dependencies.extend(function.depends_on.iter().map(|dependency| Dep {
         kind: dependency.kind,
         name: Some(dependency.target.clone()),

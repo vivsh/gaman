@@ -9,6 +9,7 @@ use sqlparser::parser::Parser;
 #[serde(rename_all = "snake_case")]
 pub enum EntityKind {
     Extension,
+    Sequence,
     Enum,
     Function,
     Table,
@@ -266,6 +267,8 @@ pub struct Schema {
     pub functions: BTreeMap<String, FunctionDef>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, ExtensionDef>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sequences: BTreeMap<String, SequenceDef>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub enums: BTreeMap<String, EnumDef>,
 }
@@ -732,6 +735,75 @@ impl ExtensionDef {
     #[doc(hidden)]
     pub fn mark_trusted(&mut self) {
         self.opaque.trusted = true;
+    }
+}
+
+/// A PostgreSQL sequence managed as one opaque root definition.
+///
+/// Gaman owns the definition and presence only. Runtime counter state is never
+/// serialized, inspected, compared, or repaired.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SequenceDef {
+    /// Unqualified sequence name.
+    pub name: String,
+    /// Optional PostgreSQL schema.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    /// One plain `CREATE SEQUENCE` statement. Inspected identity-only values omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sql: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) trusted: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+impl SequenceDef {
+    /// Returns the canonical schema-qualified identity.
+    pub fn qualified_name(&self) -> String {
+        schema_qualified_key(&self.name, self.schema.as_deref())
+    }
+
+    /// Creates an authored opaque sequence definition.
+    #[doc(hidden)]
+    pub fn from_raw(name: impl Into<String>, sql: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            schema: None,
+            sql: Some(sql.into()),
+            trusted: false,
+        }
+    }
+
+    /// Creates a catalog-derived identity without claiming executable source.
+    #[doc(hidden)]
+    pub fn trusted_identity(name: impl Into<String>, schema: Option<String>) -> Self {
+        Self {
+            name: name.into(),
+            schema,
+            sql: None,
+            trusted: true,
+        }
+    }
+
+    /// Returns stored authored SQL when available.
+    #[doc(hidden)]
+    pub fn raw_sql(&self) -> Option<&str> {
+        self.sql.as_deref()
+    }
+
+    /// Reports whether this definition uses the opaque lifecycle.
+    #[doc(hidden)]
+    pub fn is_opaque(&self) -> bool {
+        self.sql.is_some() || self.trusted
+    }
+
+    /// Marks an authored definition as accepted by structured clarification.
+    #[doc(hidden)]
+    pub fn mark_trusted(&mut self) {
+        self.trusted = true;
     }
 }
 

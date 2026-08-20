@@ -110,6 +110,7 @@ pub(super) fn determinant_for_word(word: &str) -> Option<CreateDeterminantKind> 
         "FUNCTION" => Some(CreateDeterminantKind::Entity(EntityKind::Function)),
         "TRIGGER" => Some(CreateDeterminantKind::Entity(EntityKind::Trigger)),
         "EXTENSION" => Some(CreateDeterminantKind::Entity(EntityKind::Extension)),
+        "SEQUENCE" => Some(CreateDeterminantKind::Entity(EntityKind::Sequence)),
         "TYPE" => Some(CreateDeterminantKind::Type),
         "PROCEDURE" => Some(CreateDeterminantKind::Procedure),
         "EVENT" => Some(CreateDeterminantKind::Event),

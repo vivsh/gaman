@@ -771,3 +771,81 @@ fn public_alias_and_overlapping_filters_are_canonical() {
         Operation::CreateTable { .. }
     ));
 }
+
+/// Verifies sequence filters select qualified opaque roots and leave independent roots pending.
+#[test]
+fn sequence_filter_selects_only_the_requested_root() {
+    let desired = postgres_schema(
+        "CREATE SEQUENCE audit.event_ids;\nCREATE SEQUENCE billing.invoice_ids;",
+    );
+    let planner = OfflinePlanner::new(Dialect::Postgres);
+    let pending = planner
+        .make_migration_filtered(desired.clone(), &[], &[filter("sequence::audit.*")])
+        .expect_err("opaque sequence should require explicit acceptance");
+    let clarification_id = match pending {
+        OfflineError::NeedsInput(clarifications) => clarifications
+            .into_iter()
+            .find(|clarification| {
+                matches!(
+                    clarification.kind,
+                    ClarificationKind::OpaqueEntity {
+                        kind: EntityKind::Sequence,
+                        ..
+                    }
+                )
+            })
+            .expect("sequence clarification should be present")
+            .id,
+        other => panic!("expected sequence clarification, got {other:?}"),
+    };
+    let first = planner
+        .make_migration_filtered(
+            desired.clone(),
+            &[Decision {
+                clarification_id,
+                answer: Answer::AcceptRisk,
+            }],
+            &[filter("sequence::audit.*")],
+        )
+        .expect("accepted sequence filter should plan")
+        .expect("selected sequence should produce a migration");
+    assert!(matches!(
+        first.operations.as_slice(),
+        [Operation::CreateSequence { sequence }] if sequence.qualified_name() == "audit.event_ids"
+    ));
+
+    let remaining_planner = OfflinePlanner::new(Dialect::Postgres).from_migrations(vec![first]);
+    let pending = remaining_planner
+        .make_migration(desired.clone(), &[])
+        .expect_err("remaining opaque sequence should require explicit acceptance");
+    let clarification_id = match pending {
+        OfflineError::NeedsInput(clarifications) => clarifications
+            .into_iter()
+            .find(|clarification| {
+                matches!(
+                    clarification.kind,
+                    ClarificationKind::OpaqueEntity {
+                        kind: EntityKind::Sequence,
+                        ..
+                    }
+                )
+            })
+            .expect("remaining sequence clarification should be present")
+            .id,
+        other => panic!("expected sequence clarification, got {other:?}"),
+    };
+    let remaining = remaining_planner
+        .make_migration(
+            desired,
+            &[Decision {
+                clarification_id,
+                answer: Answer::AcceptRisk,
+            }],
+        )
+        .expect("accepted remaining sequence should plan")
+        .expect("remaining sequence should produce a migration");
+    assert!(matches!(
+        remaining.operations.as_slice(),
+        [Operation::CreateSequence { sequence }] if sequence.qualified_name() == "billing.invoice_ids"
+    ));
+}

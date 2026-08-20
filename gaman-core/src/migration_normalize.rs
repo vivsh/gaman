@@ -106,6 +106,14 @@ fn validate_opaque_sources(operation: &Operation) -> Result<(), ReplayError> {
                 function.raw_sql(),
             )
         }
+        Operation::CreateSequence { sequence } | Operation::DropSequence { sequence } => {
+            validate_top_level_source(
+                EntityKind::Sequence,
+                &sequence.name,
+                sequence.schema.as_deref(),
+                sequence.raw_sql(),
+            )
+        }
         Operation::AlterFunction { old, new } => {
             validate_top_level_source(
                 EntityKind::Function,

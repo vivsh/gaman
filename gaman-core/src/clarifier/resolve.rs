@@ -566,6 +566,17 @@ fn trust_accepted_risks(ops: &mut [Operation], decisions: &HashMap<&str, &Answer
                     extension.mark_trusted();
                 }
             }
+            Operation::CreateSequence { sequence } | Operation::DropSequence { sequence }
+                if sequence.is_opaque() =>
+            {
+                let id = opaque_id(
+                    crate::states::types::EntityKind::Sequence,
+                    &sequence.qualified_name(),
+                );
+                if accepted(decisions, &id) {
+                    sequence.mark_trusted();
+                }
+            }
             _ => {}
         }
     }

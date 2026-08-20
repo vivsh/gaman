@@ -158,6 +158,10 @@ pub enum ReplayError {
     ExtensionAlreadyExists(String),
     #[error("extension '{0}' not found")]
     ExtensionNotFound(String),
+    #[error("sequence '{0}' already exists")]
+    SequenceAlreadyExists(String),
+    #[error("sequence '{0}' not found")]
+    SequenceNotFound(String),
     #[error("enum '{0}' already exists")]
     EnumAlreadyExists(String),
     #[error("enum '{0}' not found")]

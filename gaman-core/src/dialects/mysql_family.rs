@@ -303,6 +303,8 @@ pub(super) fn validate_migration(
             operation,
             Operation::CreateExtension { .. }
                 | Operation::DropExtension { .. }
+                | Operation::CreateSequence { .. }
+                | Operation::DropSequence { .. }
                 | Operation::CreateEnum { .. }
                 | Operation::DropEnum { .. }
                 | Operation::RenameEnumValue { .. }

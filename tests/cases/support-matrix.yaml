@@ -493,6 +493,40 @@ rows:
       evidence:
         online: []
         offline: []
+- id: sequences_opaque
+  label: PostgreSQL sequences as opaque schema objects
+  dialects:
+    postgres:
+      status: supported
+      evidence:
+        online:
+        - case: postgres_opaque_sequence
+          checks: [migrate, verify, data]
+        - case: postgres_verify_missing_sequence
+          checks: [verify]
+        - case: postgres_repair_missing_sequence
+          checks: [repair, data]
+        - case: postgres_rollback_sequence
+          checks: [rollback, migration_records, data]
+        offline: []
+    sqlite:
+      status: unsupported
+      note: Sequence operations are currently supported only by PostgreSQL.
+      evidence:
+        online: []
+        offline: []
+    mysql:
+      status: unsupported
+      note: Sequence operations are currently supported only by PostgreSQL.
+      evidence:
+        online: []
+        offline: []
+    mariadb:
+      status: unsupported
+      note: Sequence operations are currently supported only by PostgreSQL.
+      evidence:
+        online: []
+        offline: []
 - id: offline_sql_rendering
   label: Offline SQL rendering through `sql_migrate`
   dialects:

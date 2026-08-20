@@ -232,6 +232,12 @@ fn schema_roots(schema: &Schema) -> impl Iterator<Item = (EntityKind, &str)> {
                 .keys()
                 .map(|name| (EntityKind::Extension, name.as_str())),
         )
+        .chain(
+            schema
+                .sequences
+                .keys()
+                .map(|name| (EntityKind::Sequence, name.as_str())),
+        )
 }
 
 fn operation_root(operation: &Operation) -> Option<(EntityKind, String)> {
@@ -246,7 +252,8 @@ fn operation_root(operation: &Operation) -> Option<(EntityKind, String)> {
             kind @ (EntityKind::View
             | EntityKind::Function
             | EntityKind::Enum
-            | EntityKind::Extension) => Some((kind, operation.entity_name().to_string())),
+            | EntityKind::Extension
+            | EntityKind::Sequence) => Some((kind, operation.entity_name().to_string())),
             _ => None,
         },
     }
@@ -259,6 +266,7 @@ fn kind_name(kind: EntityKind) -> &'static str {
         EntityKind::Function => "function",
         EntityKind::Enum => "enum",
         EntityKind::Extension => "extension",
+        EntityKind::Sequence => "sequence",
         _ => "unsupported",
     }
 }

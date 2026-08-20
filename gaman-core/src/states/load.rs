@@ -61,7 +61,7 @@ impl Schema {
     }
 
     /// Merge `other` into `self`. Duplicate table names are an error; other objects (views,
-    /// functions, extensions, enums) use last-writer-wins.
+    /// functions, extensions, sequences, enums) use their declared merge policy.
     pub fn merge(mut self, other: Schema) -> Result<Self, SchemaLoadError> {
         for (name, table) in other.tables {
             if self.tables.contains_key(&name) {
@@ -87,6 +87,14 @@ impl Schema {
             }
         }
         self.extensions.extend(other.extensions);
+        for (name, sequence) in other.sequences {
+            if self.sequences.insert(name.clone(), sequence).is_some() {
+                return Err(SchemaValidationError::Invalid(format!(
+                    "duplicate sequence '{name}' when merging schemas"
+                ))
+                .into());
+            }
+        }
         self.enums.extend(other.enums);
         Ok(self)
     }

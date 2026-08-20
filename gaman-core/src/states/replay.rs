@@ -412,6 +412,21 @@ impl Schema {
                 }
             }
 
+            Operation::CreateSequence { sequence } => {
+                let key = sequence.qualified_name();
+                if self.sequences.contains_key(&key) {
+                    return Err(ReplayError::SequenceAlreadyExists(key));
+                }
+                self.sequences.insert(key, sequence.clone());
+            }
+
+            Operation::DropSequence { sequence } => {
+                let key = sequence.qualified_name();
+                if self.sequences.remove(&key).is_none() {
+                    return Err(ReplayError::SequenceNotFound(key));
+                }
+            }
+
             Operation::CreateEnum { enum_def } => {
                 let key = enum_def.qualified_name();
                 if self.enums.contains_key(&key) {

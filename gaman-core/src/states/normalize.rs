@@ -69,6 +69,17 @@ impl Schema {
                 func.name = key.clone();
             }
         }
+        for (key, sequence) in self.sequences.iter_mut() {
+            if sequence.name.is_empty() {
+                let (schema, name) = key
+                    .rsplit_once('.')
+                    .map_or((None, key.as_str()), |(schema, name)| (Some(schema), name));
+                sequence.name = name.to_string();
+                if sequence.schema.is_none() {
+                    sequence.schema = schema.map(str::to_string);
+                }
+            }
+        }
     }
 }
 

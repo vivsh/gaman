@@ -2885,6 +2885,40 @@ features:
     sqlite:
       status: unimplemented
       reason: dialect section missing
+  sequences_opaque:
+    mariadb:
+      status: unimplemented
+      reason: dialect section missing
+    mysql:
+      status: unimplemented
+      reason: dialect section missing
+    postgres:
+      status: success
+      evidence:
+      - case: postgres_opaque_sequence
+        description: PostgreSQL applies an opaque sequence before a table default and ignores counter state during verify
+        checks:
+        - migrate
+        - verify
+        - data
+      - case: postgres_repair_missing_sequence
+        description: PostgreSQL repair recreates a missing owned opaque sequence from verified state
+        checks:
+        - repair
+        - data
+      - case: postgres_rollback_sequence
+        description: PostgreSQL rollback restores a dropped opaque sequence with its declared definition
+        checks:
+        - rollback
+        - migration_records
+        - data
+      - case: postgres_verify_missing_sequence
+        description: PostgreSQL verify detects a missing owned opaque sequence and plans recreation
+        checks:
+        - verify
+    sqlite:
+      status: unimplemented
+      reason: dialect section missing
   single_foreign_keys:
     mariadb:
       status: unimplemented

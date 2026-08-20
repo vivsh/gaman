@@ -12,7 +12,7 @@ strip = "symbols"
 
 [package]
 name = "gaman"
-version = "0.3.33"
+version = "0.3.34"
 edition = "2024"
 default-run = "gaman"
 description = "Schema-first SQL migration CLI for PostgreSQL, SQLite, and MySQL with offline planning, Django-style prompts, drift verification, and repair"
@@ -104,7 +104,7 @@ uuid-types = ["native", "gaman-core/uuid-types"]
 [dependencies]
 argh = { version = "0.1.19", optional = true }
 dotenvy = { version = "0.15.7", optional = true }
-gaman-core = { version = "0.3.33", path = "gaman-core", optional = true, default-features = false }
+gaman-core = { version = "0.3.34", path = "gaman-core", optional = true, default-features = false }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-native-tls", "derive"], optional = true }
 tokio = { version = "1", features = ["rt", "macros", "fs", "io-util"], optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }

@@ -84,7 +84,7 @@ pub mod schema {
         FunctionInput, FunctionParameter, GeneratedStorage,
         Index, IndexInput, InputSchema, IntoTable, PostgresRangePartition,
         PostgresRangePartitioning, PrimaryKey, ReplayError, Schema, SchemaBuilder, SchemaLoadError,
-        SchemaValidationError, Table, TableBuilder, TableInput, TriggerDef, TriggerEvent,
+        SchemaValidationError, SequenceDef, SequenceInput, Table, TableBuilder, TableInput, TriggerDef, TriggerEvent,
         TriggerInput, TriggerScope, TriggerTiming, ViewDef, ViewInput, Volatility, is_volatile,
         schema_qualified_key,
     };

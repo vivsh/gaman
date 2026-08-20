@@ -83,6 +83,7 @@ fn resolve_function_dependencies(schema: &mut Schema) -> Result<(), SchemaValida
     let views = schema.views.keys().cloned().collect::<Vec<_>>();
     let enums = schema.enums.keys().cloned().collect::<Vec<_>>();
     let extensions = schema.extensions.keys().cloned().collect::<Vec<_>>();
+    let sequences = schema.sequences.keys().cloned().collect::<Vec<_>>();
     for function in schema.functions.values_mut() {
         for dependency in &mut function.depends_on {
             let target = match dependency.kind {
@@ -91,6 +92,7 @@ fn resolve_function_dependencies(schema: &mut Schema) -> Result<(), SchemaValida
                 EntityKind::View => resolve_root_dependency(&dependency.target, &views)?,
                 EntityKind::Enum => resolve_root_dependency(&dependency.target, &enums)?,
                 EntityKind::Extension => resolve_root_dependency(&dependency.target, &extensions)?,
+                EntityKind::Sequence => resolve_root_dependency(&dependency.target, &sequences)?,
                 _ => return Err(SchemaValidationError::Invalid("function dependencies must target root entities".to_string())),
             };
             dependency.target = target;

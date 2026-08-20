@@ -6,7 +6,7 @@ use super::{BoxFuture, ExecutorError, InspectionError, SchemaInspector};
 use gaman_core::{Dialect, TRACKING_TABLE};
 use gaman_core::states::{
     Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, OpaqueMeta,
-    PrimaryKey, Schema, Table, TableOptionsMeta, TriggerDef, TriggerEvent, TriggerScope,
+    PrimaryKey, Schema, SequenceDef, Table, TableOptionsMeta, TriggerDef, TriggerEvent, TriggerScope,
     TriggerTiming, ViewDef, Volatility, schema_qualified_key,
 };
 
@@ -124,6 +124,12 @@ struct PgExtensionRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct PgSequenceRow {
+    name: String,
+    schema_name: String,
+}
+
+#[derive(sqlx::FromRow)]
 struct PgEnumRow {
     name: String,
     schema_name: String,
@@ -153,6 +159,7 @@ async fn inspect_postgres_schema(
         views: fetch_views(conn, &schema_list).await?,
         functions: fetch_functions(conn, &schema_list).await?,
         extensions: fetch_extensions(conn, &schema_list).await?,
+        sequences: fetch_sequences(conn, &schema_list).await?,
         enums: fetch_enums(conn, &schema_list).await?,
         managed_rows: BTreeMap::new(),
     })
@@ -730,6 +737,34 @@ async fn fetch_extensions(
                 opaque: OpaqueMeta::default(),
             };
             (extension.qualified_name(), extension)
+        })
+        .collect())
+}
+
+/// Reflects sequence identities without reading mutable counter state.
+async fn fetch_sequences(
+    conn: &mut PgConnection,
+    schemas: &[String],
+) -> Result<BTreeMap<String, SequenceDef>, ExecutorError> {
+    let rows = sqlx::query_as::<_, PgSequenceRow>(
+        "SELECT c.relname AS name, n.nspname AS schema_name \
+         FROM pg_class c \
+         JOIN pg_namespace n ON n.oid = c.relnamespace \
+         WHERE c.relkind = 'S' AND n.nspname = ANY($1) \
+         ORDER BY n.nspname, c.relname",
+    )
+    .bind(schemas)
+    .fetch_all(conn)
+    .await
+    .map_err(|error| ExecutorError::Fetch(error.to_string()))?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let sequence = SequenceDef::trusted_identity(
+                row.name,
+                schema_for_output(&row.schema_name),
+            );
+            (sequence.qualified_name(), sequence)
         })
         .collect())
 }

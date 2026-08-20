@@ -269,6 +269,20 @@ fn opaque_and_unmanaged_clarifications(ops: &[Operation]) -> Vec<Clarification> 
                     extension.qualified_name(),
                 );
             }
+            Operation::CreateSequence { sequence } if !sequence.trusted => {
+                push_opaque(
+                    &mut result,
+                    EntityKind::Sequence,
+                    sequence.qualified_name(),
+                );
+            }
+            Operation::DropSequence { sequence } if sequence.is_opaque() => {
+                push_opaque(
+                    &mut result,
+                    EntityKind::Sequence,
+                    sequence.qualified_name(),
+                );
+            }
             _ => {}
         }
     }

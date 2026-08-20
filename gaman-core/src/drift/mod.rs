@@ -20,7 +20,7 @@ use crate::operations::Operation;
 use crate::states::types::EntityKind;
 use crate::states::{
     Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, PrimaryKey, Schema,
-    Table, TriggerDef, ViewDef,
+    SequenceDef, Table, TriggerDef, ViewDef,
 };
 
 pub use contract::DriftPropertyDoc;
@@ -469,6 +469,7 @@ fn verify_top_level_objects(
     context: DriftContext<'_>,
     report: &mut VerificationReport,
 ) {
+    verify_sequence_presence(&replay.sequences, &live.sequences, report);
     verify_top_map(
         &replay.functions,
         &live.functions,
@@ -552,6 +553,28 @@ fn verify_top_level_objects(
         context,
         report,
     );
+}
+
+fn verify_sequence_presence(
+    expected: &std::collections::BTreeMap<String, SequenceDef>,
+    observed: &std::collections::BTreeMap<String, SequenceDef>,
+    report: &mut VerificationReport,
+) {
+    for sequence in expected.values() {
+        let identity = sequence.qualified_name();
+        if observed.values().any(|item| item.qualified_name() == identity) {
+            continue;
+        }
+        report.operations.push(Operation::CreateSequence {
+            sequence: sequence.clone(),
+        });
+        report.findings.push(missing_finding(
+            "create_sequence",
+            EntityKind::Sequence,
+            &identity,
+            "presence",
+        ));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1066,7 +1089,25 @@ fn scope_schemas(state: &mut Schema, schemas: &[&str], dialect: Dialect) {
     scope_views(state, schemas, dialect);
     scope_functions(state, schemas, dialect);
     scope_extensions(state, schemas, dialect);
+    scope_sequences(state, schemas, dialect);
     scope_enums(state, schemas, dialect);
+}
+
+fn scope_sequences(state: &mut Schema, schemas: &[&str], dialect: Dialect) {
+    let sequences = std::mem::take(&mut state.sequences);
+    state.sequences = sequences
+        .into_values()
+        .filter_map(|mut sequence| {
+            sequence.schema = scoped_schema(
+                dialect,
+                EntityKind::Sequence,
+                sequence.schema.as_deref(),
+                schemas,
+            )?;
+            Some(sequence)
+        })
+        .map(|sequence| (sequence.qualified_name(), sequence))
+        .collect();
 }
 
 fn scope_tables(state: &mut Schema, schemas: &[&str], dialect: Dialect) {

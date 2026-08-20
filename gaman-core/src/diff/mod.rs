@@ -8,7 +8,8 @@ use crate::opaque::{
 };
 use crate::operations::Operation;
 use crate::states::{
-    Column, Constraint, EnumDef, ExtensionDef, FunctionDef, Schema, Table, TriggerDef, ViewDef,
+    Column, Constraint, EnumDef, ExtensionDef, FunctionDef, Schema, SequenceDef, Table, TriggerDef,
+    ViewDef,
 };
 
 #[derive(Debug, Error)]
@@ -37,6 +38,13 @@ pub fn generate_diff(current: &Schema, previous: &Schema) -> Vec<Operation> {
         &mut ops,
         extension_equal,
         diff_extension,
+    );
+    diff_map_with_eq(
+        &current.sequences,
+        &previous.sequences,
+        &mut ops,
+        sequence_equal,
+        diff_sequence,
     );
     diff_map(&current.enums, &previous.enums, &mut ops, diff_enum);
     diff_map_with_eq(
@@ -127,6 +135,36 @@ fn diff_extension(
             });
         }
         _ => {}
+    }
+}
+
+fn sequence_equal(current: &SequenceDef, previous: &SequenceDef) -> bool {
+    current.name == previous.name
+        && current.schema == previous.schema
+        && opaque_option_sources_equal(&current.sql, &previous.sql)
+}
+
+fn diff_sequence(
+    current: Option<&SequenceDef>,
+    previous: Option<&SequenceDef>,
+    operations: &mut Vec<Operation>,
+) {
+    match (current, previous) {
+        (Some(sequence), None) => operations.push(Operation::CreateSequence {
+            sequence: sequence.clone(),
+        }),
+        (None, Some(sequence)) => operations.push(Operation::DropSequence {
+            sequence: sequence.clone(),
+        }),
+        (Some(current), Some(previous)) => {
+            operations.push(Operation::DropSequence {
+                sequence: previous.clone(),
+            });
+            operations.push(Operation::CreateSequence {
+                sequence: current.clone(),
+            });
+        }
+        (None, None) => {}
     }
 }
 
@@ -876,6 +914,7 @@ pub fn sort_operations(ops: Vec<Operation>) -> Result<Vec<Operation>, DiffError>
 fn tiebreak_priority(op: &Operation) -> (u8, u8) {
     match op {
         Operation::CreateExtension { .. } => (0, 0),
+        Operation::CreateSequence { .. } => (0, 1),
         Operation::CreateEnum { .. }
         | Operation::RenameEnumValue { .. }
         | Operation::AlterEnum { .. } => (1, 0),
@@ -900,6 +939,7 @@ fn tiebreak_priority(op: &Operation) -> (u8, u8) {
         Operation::CreateView { .. } => (11, 0),
         Operation::DropEnum { .. } => (12, 0),
         Operation::DropExtension { .. } => (13, 0),
+        Operation::DropSequence { .. } => (13, 0),
         Operation::Statement { .. }
         | Operation::AcknowledgeTableOptions { .. }
         | Operation::RenameTable { .. }
@@ -935,6 +975,20 @@ fn build_dependency_edges(ops: &[Operation], adj: &mut [Vec<usize>], in_deg: &mu
             in_deg[to] += 1;
         }
     };
+
+    for (identity, drops) in &drop_idx {
+        if identity.0 != EntityKind::Sequence {
+            continue;
+        }
+        let Some(creates) = create_idx.get(identity) else {
+            continue;
+        };
+        for drop_index in drops {
+            for create_index in creates {
+                add_edge(*drop_index, *create_index);
+            }
+        }
+    }
 
     let resolve_create = |dep: &Dep| -> Vec<usize> {
         match &dep.name {

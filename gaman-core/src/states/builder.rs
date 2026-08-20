@@ -929,6 +929,9 @@ fn apply_opaque_declaration(
         OpaqueDeclaration::Extension { key, value } => {
             insert_root(&mut state.extensions, issues, "extension", key, value)
         }
+        OpaqueDeclaration::Sequence { key, value } => {
+            insert_root(&mut state.sequences, issues, "sequence", key, value)
+        }
         OpaqueDeclaration::Enum { key, value } => {
             insert_root(&mut state.enums, issues, "enum", key, value)
         }

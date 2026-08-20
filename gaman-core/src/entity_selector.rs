@@ -110,6 +110,7 @@ fn parse_kind(value: &str) -> Result<EntityKind, String> {
         "view" => Ok(EntityKind::View),
         "enum" => Ok(EntityKind::Enum),
         "extension" => Ok(EntityKind::Extension),
+        "sequence" => Ok(EntityKind::Sequence),
         _ => Err(format!("unknown entity selector kind '{value}'")),
     }
 }
@@ -121,6 +122,7 @@ fn kind_name(kind: EntityKind) -> &'static str {
         EntityKind::View => "view",
         EntityKind::Enum => "enum",
         EntityKind::Extension => "extension",
+        EntityKind::Sequence => "sequence",
         _ => "entity",
     }
 }
@@ -143,5 +145,14 @@ mod tests {
         assert_eq!(serde_yaml::to_string(&dependency).unwrap().trim(), "function::daily(date, integer)");
         assert!(EntityDependency::parse("function::daily*").is_err());
         assert!(EntityDependency::parse("function::daily(date))").is_err());
+    }
+
+    /// Verifies sequences share the canonical root selector grammar.
+    #[test]
+    fn sequence_selectors_are_root_selectors() {
+        let filter = EntitySelector::parse_filter("sequence::audit.*").unwrap();
+        assert_eq!(filter.kind, EntityKind::Sequence);
+        let dependency = EntityDependency::parse("sequence::audit.event_ids").unwrap();
+        assert_eq!(dependency.kind, EntityKind::Sequence);
     }
 }

@@ -79,7 +79,7 @@ impl Command {
 pub type CommandRequest = Command;
 
 /// Current version of the portable command request and response protocol.
-pub const COMMAND_PROTOCOL_VERSION: u32 = 5;
+pub const COMMAND_PROTOCOL_VERSION: u32 = 6;
 
 /// Versioned portable command request envelope.
 #[derive(Debug, Clone, Serialize, Deserialize)]

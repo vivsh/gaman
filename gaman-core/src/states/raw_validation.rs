@@ -87,6 +87,17 @@ pub(crate) fn validate_authored_raw(schema: &Schema, dialect: Dialect) -> Vec<Sc
             extension.opaque.trusted,
         );
     }
+    for sequence in schema.sequences.values() {
+        validate_top_level(
+            &mut issues,
+            dialect,
+            EntityKind::Sequence,
+            &sequence.name,
+            sequence.schema.as_deref(),
+            sequence.raw_sql(),
+            sequence.trusted,
+        );
+    }
     for enum_def in schema.enums.values() {
         validate_top_level(
             &mut issues,

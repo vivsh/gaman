@@ -53,6 +53,8 @@ features:
     label: Schemas / namespaces
   - id: extensions
     label: Extensions
+  - id: sequences_opaque
+    label: PostgreSQL sequences
   - id: enums
     label: Enums
   - id: functions_opaque

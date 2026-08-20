@@ -898,6 +898,8 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
         | Operation::DropFunction { .. }
         | Operation::CreateExtension { .. }
         | Operation::DropExtension { .. }
+        | Operation::CreateSequence { .. }
+        | Operation::DropSequence { .. }
         | Operation::CreateEnum { .. }
         | Operation::DropEnum { .. }
         | Operation::RenameEnumValue { .. }

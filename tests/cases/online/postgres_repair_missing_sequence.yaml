@@ -1,0 +1,25 @@
+description: PostgreSQL repair recreates a missing owned opaque sequence from verified state
+features: [live_migration_application, live_inspect_verify, ownership_scoped_verify, opaque_presence_verify, sequences_opaque]
+
+migrations:
+  - id: 0001_create_event_ids
+    operations:
+      - type: create_sequence
+        sequence:
+          name: event_ids
+          sql: CREATE SEQUENCE event_ids START WITH 100
+
+mutate_sql: DROP SEQUENCE event_ids;
+
+dialects:
+  postgres:
+    checks: [repair, data]
+    repair_apply: true
+    expect_repair_operations:
+      - type: create_sequence
+        sequence:
+          name: event_ids
+          sql: CREATE SEQUENCE event_ids START WITH 100
+    data:
+      - sql: "SELECT nextval('event_ids')::text"
+        expect: ["100"]

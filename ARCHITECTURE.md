@@ -67,7 +67,7 @@ Supported desired state can include:
 - primary and foreign keys;
 - unique and check constraints;
 - indexes;
-- enums and extensions where the dialect supports them;
+- enums, extensions, and PostgreSQL sequences where the dialect supports them;
 - functions, triggers, and views.
 
 Functions use typed parameters, including PostgreSQL default expressions. Their
@@ -101,7 +101,14 @@ indexes are the main examples.
 
 **Opaque objects** have a known kind and identity, but their internal SQL is not
 interpreted deeply enough for safe granular edits. Functions, triggers, views,
-extensions, and advanced index definitions may use this lifecycle.
+extensions, PostgreSQL sequences, and advanced index definitions may use this lifecycle.
+
+PostgreSQL sequences are opaque root entities. Gaman owns their declared
+definition and presence, but never their runtime counter state (`last_value`,
+`is_called`, or consumed values). Temporary sequences and `OWNED BY` are
+rejected because their session or reverse table lifecycle cannot be represented
+by this root-only ownership model. Sequence creation precedes dependent schema
+objects and sequence removal follows their removal.
 
 Opaque does not mean ignored. Opaque objects are migration-owned, can be
 created or removed, and can participate in coarse replacement. Formatting and

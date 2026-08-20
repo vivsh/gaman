@@ -179,9 +179,9 @@ fn command_envelope_round_trips_through_json() {
     ));
 }
 
-/// Verifies protocol v5 preserves repeatable migration-generation filters.
+/// Verifies protocol v6 preserves repeatable migration-generation filters.
 #[test]
-fn filtered_make_round_trips_through_protocol_v5() {
+fn filtered_make_round_trips_through_protocol_v6() {
     let filters = vec![
         EntityFilter::parse("enum:user_*").expect("enum filter"),
         EntityFilter::parse("table:users").expect("table filter"),
@@ -201,11 +201,17 @@ fn filtered_make_round_trips_through_protocol_v5() {
     let decoded: CommandEnvelope =
         serde_json::from_str(&encoded).expect("deserialize filtered command");
 
-    assert_eq!(decoded.protocol_version, 5);
+    assert_eq!(decoded.protocol_version, 6);
     assert!(matches!(
         decoded.command,
         Command::Make(MakeCommand::Generate { filters: decoded, .. }) if decoded == filters
     ));
+}
+
+/// Verifies protocol version six is explicit so older hosts cannot ignore sequence semantics.
+#[test]
+fn sequence_protocol_version_is_six() {
+    assert_eq!(COMMAND_PROTOCOL_VERSION, 6);
 }
 
 /// Verifies legacy unfiltered generation payloads default to an empty filter

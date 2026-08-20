@@ -875,6 +875,7 @@ fn entity_kind_name(kind: EntityKind) -> &'static str {
         EntityKind::View => "view",
         EntityKind::Enum => "enum",
         EntityKind::Extension => "extension",
+        EntityKind::Sequence => "sequence",
         EntityKind::Row => "row",
     }
 }

@@ -967,6 +967,7 @@ const EXPECTED_ONLINE_FEATURES: &[&str] = &[
     "postgres_range_partitioning",
     "schemas_namespaces",
     "extensions",
+    "sequences_opaque",
     "enums",
     "functions_opaque",
     "trigger_query_objects",

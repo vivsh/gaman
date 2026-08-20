@@ -16,7 +16,7 @@ dialect SQL, and can verify the deployed database for drift.
 
 Schema tracking is deliberately **DDL `CREATE`-only**, with one bounded
 exception: top-level managed rows. Gaman tracks desired definitions for tables,
-columns, keys, constraints, indexes, enums, extensions, functions, triggers,
+columns, keys, constraints, indexes, enums, extensions, PostgreSQL sequences, functions, triggers,
 and views. Managed rows let applications own a small, explicitly identified
 set of data records. Arbitrary DML, transformations, `ALTER`, and `DROP` remain
 migration operations rather than desired schema input.
@@ -68,7 +68,10 @@ waiting for input.
 - **Keep production honest.** `inspect` reflects a live database, `verify`
   reports expected and observed properties, and `repair` plans bounded fixes.
 - **Track more than tables.** Keys, constraints, indexes, enums, extensions,
-  functions, triggers, and views participate in migration ownership.
+  PostgreSQL sequences, functions, triggers, and views participate in migration ownership.
+- **Keep sequence ownership bounded.** PostgreSQL sequence definitions and
+  presence are migration-owned opaque roots. Gaman never inspects or repairs
+  counter state, and rejects temporary sequences and `OWNED BY` declarations.
 - **Order functions explicitly.** Function defaults and declared dependencies
   are modeled. In YAML and Rust, use exact `kind::target` selectors. In SQL,
   attach repeatable leading `-- @depends-on function::name(...)` comments to
@@ -269,6 +272,11 @@ YAML and JSON use the same database-native type strings and prepare into the
 same schema model. SQL schema input describes desired `CREATE` state only;
 `ALTER`, `DROP`, DML, data migrations, and unsupported structural surgery remain
 explicit migration SQL rather than tracked desired state.
+
+PostgreSQL sequences may be declared with `CREATE SEQUENCE`, through
+`SchemaBuilder::opaque`, or under structured `sequences` entries containing
+`sql`. Gaman owns the normalized definition and presence only; runtime counter
+values are intentionally outside desired state.
 
 ## Where Gaman Fits
 

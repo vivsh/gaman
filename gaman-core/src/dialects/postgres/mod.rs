@@ -795,6 +795,19 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
         Operation::DropExtension { extension } => {
             vec![format!("DROP EXTENSION {}", quote_ident(&extension.name))]
         }
+        Operation::CreateSequence { sequence } => {
+            let raw = sequence.raw_sql().ok_or_else(|| {
+                DialectError::Unsupported(
+                    "create_sequence".to_string(),
+                    "inspected sequence identity has no executable CREATE source".to_string(),
+                )
+            })?;
+            vec![trim_sql_terminator(raw).to_string()]
+        }
+        Operation::DropSequence { sequence } => vec![format!(
+            "DROP SEQUENCE {}",
+            qualified_name(&sequence.name, sequence.schema.as_deref())
+        )],
         Operation::CreateEnum { enum_def } => {
             let values: Vec<String> = enum_def.values.iter().map(|v| quote_literal(v)).collect();
             let name = qualified_name(&enum_def.name, enum_def.schema.as_deref());

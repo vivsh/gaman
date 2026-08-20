@@ -11,8 +11,8 @@ use super::{postgres, sqlite};
 use crate::dialects::Dialect;
 use crate::states::types::EntityKind;
 use crate::states::{
-    EnumDef, ExtensionDef, FunctionDef, Index, OpaqueMeta, Schema, Table, TriggerDef, ViewDef,
-    schema_qualified_key,
+    EnumDef, ExtensionDef, FunctionDef, Index, OpaqueMeta, Schema, SequenceDef, Table, TriggerDef,
+    ViewDef, schema_qualified_key,
 };
 
 /// One classifiable opaque CREATE declaration shared by SQL and Rust ingestion.
@@ -23,6 +23,7 @@ pub(crate) enum OpaqueDeclaration {
     Function { key: String, value: FunctionDef },
     View { key: String, value: ViewDef },
     Extension { key: String, value: ExtensionDef },
+    Sequence { key: String, value: SequenceDef },
     Enum { key: String, value: EnumDef },
 }
 
@@ -35,6 +36,7 @@ impl OpaqueDeclaration {
             Self::Function { .. } => EntityKind::Function,
             Self::View { .. } => EntityKind::View,
             Self::Extension { .. } => EntityKind::Extension,
+            Self::Sequence { .. } => EntityKind::Sequence,
             Self::Enum { .. } => EntityKind::Enum,
         }
     }
@@ -47,6 +49,7 @@ impl OpaqueDeclaration {
             Self::Function { key, .. }
             | Self::View { key, .. }
             | Self::Extension { key, .. }
+            | Self::Sequence { key, .. }
             | Self::Enum { key, .. } => key.clone(),
         }
     }
@@ -222,6 +225,12 @@ pub(crate) fn parse_sql_raw(sql: &str, dialect: Dialect) -> Result<Schema, Parse
     for segment in segments {
         let functions_before = ctx.schema.functions.keys().cloned().collect::<BTreeSet<_>>();
         ensure_schema_segment(&segment, dialect)?;
+        if matches!(segment.kind, Some(SqlStatementKind::Ddl(ref ddl)) if ddl.entity == EntityKind::Sequence)
+        {
+            lower_raw_segment(&segment, &mut ctx, dialect)?;
+            apply_function_annotations(&mut ctx, &segment, &functions_before, dialect)?;
+            continue;
+        }
         let statements = match parse_segment(&segment.semantic_sql, dialect) {
             Ok(statements) => statements,
             Err(error) => {
@@ -414,7 +423,7 @@ fn lower_raw_segment(
     dialect: Dialect,
 ) -> Result<(), ParseError> {
     let declaration = opaque_declaration_from_segment(segment, dialect)?;
-    apply_opaque_declaration(ctx, declaration)
+    apply_opaque_declaration(ctx, declaration, dialect)
 }
 
 /// Produces the sole raw declaration shape used by every opaque ingestion frontend.
@@ -480,6 +489,7 @@ fn opaque_declaration_from_segment(
                 value: extension,
             })
         }
+        EntityKind::Sequence => opaque_sequence(segment, dialect, name),
         EntityKind::Enum => {
             let (name, schema) = opaque_object_parts(segment, dialect, name)?;
             let key = schema_qualified_key(&name, schema.as_deref());
@@ -501,6 +511,55 @@ fn opaque_declaration_from_segment(
             ))
         }
     }
+}
+
+fn opaque_sequence(
+    segment: &SqlSegment,
+    dialect: Dialect,
+    object: &SqlObjectName,
+) -> Result<OpaqueDeclaration, ParseError> {
+    if dialect != Dialect::Postgres {
+        return Err(ParseError::unsupported(
+            dialect,
+            segment.sql.clone(),
+            "opaque sequences are supported only by PostgreSQL",
+        ));
+    }
+    validate_sequence_lifecycle(segment, dialect)?;
+    let (name, schema) = opaque_object_parts(segment, dialect, object)?;
+    let key = schema_qualified_key(&name, schema.as_deref());
+    let mut sequence = SequenceDef::from_raw(name, segment.sql.clone());
+    sequence.schema = schema;
+    Ok(OpaqueDeclaration::Sequence { key, value: sequence })
+}
+
+fn validate_sequence_lifecycle(
+    segment: &SqlSegment,
+    dialect: Dialect,
+) -> Result<(), ParseError> {
+    let words = significant_tokens(dialect, &segment.sql)
+        .map_err(|error| ParseError::unsupported(dialect, &segment.sql, error.to_string()))?
+        .into_iter()
+        .filter_map(|token| token.canonical_word().map(str::to_string))
+        .collect::<Vec<_>>();
+    if words.iter().any(|word| word == "TEMP" || word == "TEMPORARY") {
+        return Err(ParseError::unsupported(
+            dialect,
+            &segment.sql,
+            "temporary sequences are session-owned and cannot be managed",
+        ));
+    }
+    if words
+        .windows(2)
+        .any(|pair| pair[0] == "OWNED" && pair[1] == "BY")
+    {
+        return Err(ParseError::unsupported(
+            dialect,
+            &segment.sql,
+            "sequence OWNED BY creates an unsupported reverse table lifecycle dependency",
+        ));
+    }
+    Ok(())
 }
 
 fn opaque_index(
@@ -565,6 +624,7 @@ fn opaque_trigger(
 fn apply_opaque_declaration(
     ctx: &mut ParseContext,
     declaration: OpaqueDeclaration,
+    dialect: Dialect,
 ) -> Result<(), ParseError> {
     match declaration {
         OpaqueDeclaration::Index { table, value } => ctx.push_index((table, value)),
@@ -585,6 +645,16 @@ fn apply_opaque_declaration(
         }
         OpaqueDeclaration::Extension { key, value } => {
             ctx.schema.extensions.insert(key, value);
+        }
+        OpaqueDeclaration::Sequence { key, value } => {
+            if ctx.schema.sequences.contains_key(&key) {
+                return Err(ParseError::unsupported(
+                    dialect,
+                    value.raw_sql().unwrap_or_default(),
+                    format!("duplicate sequence '{key}'"),
+                ));
+            }
+            ctx.schema.sequences.insert(key, value);
         }
         OpaqueDeclaration::Enum { key, value } => {
             ctx.schema.enums.insert(key, value);
@@ -815,6 +885,7 @@ mod recovery_tests {
             ),
             ("CREATE VIEW active_users AS SELECT 1", EntityKind::View),
             ("CREATE EXTENSION pg_trgm", EntityKind::Extension),
+            ("CREATE SEQUENCE event_ids START WITH 100", EntityKind::Sequence),
             (
                 "CREATE TYPE user_state AS ENUM ('active')",
                 EntityKind::Enum,
@@ -838,6 +909,34 @@ mod recovery_tests {
                 .expect_err("caller-owned lifecycle modifier must fail");
             assert!(opaque_parse_reason(&error).contains("Gaman owns"));
         }
+    }
+
+    /// Verifies sequence lifecycle features outside root ownership fail closed.
+    #[test]
+    fn opaque_sequence_rejects_temporary_and_owned_by() {
+        for source in [
+            "CREATE TEMP SEQUENCE event_ids",
+            "CREATE SEQUENCE event_ids OWNED BY events.id",
+        ] {
+            let error = parse_opaque_create(source, Dialect::Postgres)
+                .expect_err("unsupported sequence lifecycle must fail");
+            assert!(matches!(error, ParseError::UnsupportedStatement { .. }));
+        }
+    }
+
+    /// Verifies sequence source is retained under its canonical root identity.
+    #[test]
+    fn opaque_sequence_preserves_source_and_identity() {
+        let declaration = parse_opaque_create(
+            "CREATE SEQUENCE audit.event_ids START WITH 100 INCREMENT BY 5",
+            Dialect::Postgres,
+        )
+        .expect("PostgreSQL sequence should classify");
+        assert_eq!(declaration.identity(), "audit.event_ids");
+        let OpaqueDeclaration::Sequence { value, .. } = declaration else {
+            panic!("expected sequence declaration");
+        };
+        assert_eq!(value.raw_sql(), Some("CREATE SEQUENCE audit.event_ids START WITH 100 INCREMENT BY 5"));
     }
 
     /// Verifies comments, terminators, and protected modifier text remain valid source content.

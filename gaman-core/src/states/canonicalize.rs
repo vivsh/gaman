@@ -65,6 +65,12 @@ impl Schema {
         }
         rekey(&mut self.extensions, |e| e.qualified_name());
 
+        for sequence in self.sequences.values_mut() {
+            sequence.schema = dialect
+                .canonicalize_schema_name(EntityKind::Sequence, sequence.schema.as_deref());
+        }
+        rekey(&mut self.sequences, |sequence| sequence.qualified_name());
+
         for en in self.enums.values_mut() {
             en.schema = dialect.canonicalize_schema_name(EntityKind::Enum, en.schema.as_deref());
         }

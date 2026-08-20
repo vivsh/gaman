@@ -1,0 +1,26 @@
+description: PostgreSQL rollback restores a dropped opaque sequence with its declared definition
+features: [live_migration_application, rollback_migrations, migration_tracking, sequences_opaque]
+
+migrations:
+  - id: 0001_create_event_ids
+    operations:
+      - type: create_sequence
+        sequence:
+          name: event_ids
+          sql: CREATE SEQUENCE event_ids START WITH 50 INCREMENT BY 2
+  - id: 0002_drop_event_ids
+    dependencies: [0001_create_event_ids]
+    operations:
+      - type: drop_sequence
+        sequence:
+          name: event_ids
+          sql: CREATE SEQUENCE event_ids START WITH 50 INCREMENT BY 2
+
+dialects:
+  postgres:
+    checks: [rollback, migration_records, data]
+    target: 0001_create_event_ids
+    expect_records: [0001_create_event_ids]
+    data:
+      - sql: "SELECT nextval('event_ids')::text"
+        expect: ["50"]

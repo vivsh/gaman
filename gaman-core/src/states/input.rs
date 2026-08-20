@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use super::{
     Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, OpaqueMeta,
-    PrimaryKey, Schema, Table, TableOptionsMeta, TriggerDef, ViewDef, Volatility,
+    PrimaryKey, Schema, SequenceDef, Table, TableOptionsMeta, TriggerDef, ViewDef, Volatility,
 };
 
 /// Authored YAML/JSON schema shape without internal lifecycle metadata.
@@ -31,6 +31,9 @@ pub struct InputSchema {
     /// Authored extension definitions keyed by extension name.
     #[serde(default)]
     pub extensions: BTreeMap<String, ExtensionInput>,
+    /// Authored PostgreSQL opaque sequences keyed by sequence identity.
+    #[serde(default)]
+    pub sequences: BTreeMap<String, SequenceInput>,
     /// Authored enum definitions keyed by enum name.
     #[serde(default)]
     pub enums: BTreeMap<String, EnumInput>,
@@ -62,11 +65,51 @@ impl InputSchema {
                 .into_iter()
                 .map(|(key, extension)| (key, extension.into_extension()))
                 .collect(),
+            sequences: self
+                .sequences
+                .into_iter()
+                .map(|(key, sequence)| {
+                    let sequence = sequence.into_sequence(&key);
+                    (key, sequence)
+                })
+                .collect(),
             enums: self
                 .enums
                 .into_iter()
                 .map(|(key, enum_def)| (key, enum_def.into_enum()))
                 .collect(),
+        }
+    }
+}
+
+/// Authored PostgreSQL sequence definition.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SequenceInput {
+    /// Sequence name. Empty names are filled from the map key during normalization.
+    #[serde(default)]
+    pub name: String,
+    /// Optional PostgreSQL schema.
+    #[serde(default)]
+    pub schema: Option<String>,
+    /// One plain `CREATE SEQUENCE` statement.
+    pub sql: String,
+}
+
+impl SequenceInput {
+    fn into_sequence(self, key: &str) -> SequenceDef {
+        let (key_schema, key_name) = key
+            .rsplit_once('.')
+            .map_or((None, key), |(schema, name)| (Some(schema), name));
+        SequenceDef {
+            name: if self.name.is_empty() {
+                key_name.to_string()
+            } else {
+                self.name
+            },
+            schema: self.schema.or_else(|| key_schema.map(str::to_string)),
+            sql: Some(self.sql),
+            trusted: false,
         }
     }
 }

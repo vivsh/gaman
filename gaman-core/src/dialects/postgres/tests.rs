@@ -6,8 +6,8 @@ use serde::Deserialize;
 use crate::migrations::Migration;
 use crate::operations::Operation;
 use crate::states::{
-    Column, Constraint, EnumDef, ExtensionDef, ForeignKey, Index, PrimaryKey, Schema, Table,
-    ViewDef,
+    Column, Constraint, EnumDef, ExtensionDef, ForeignKey, Index, PrimaryKey, Schema, SequenceDef,
+    Table, ViewDef,
 };
 
 fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
@@ -1292,4 +1292,28 @@ fn replace_view_sql() {
             "CREATE OR REPLACE VIEW \"app\".\"active_users\" AS SELECT id FROM app.users WHERE active"
         ]
     );
+}
+
+/// Renders authored sequence creation verbatim and drops by qualified identity only.
+#[test]
+fn opaque_sequence_sql() {
+    let sequence = SequenceDef::from_raw(
+        "event_ids",
+        "CREATE SEQUENCE audit.event_ids START WITH 100 INCREMENT BY 5;",
+    );
+    let mut sequence = sequence;
+    sequence.schema = Some("audit".to_string());
+
+    let create = operation_to_sql(&Operation::CreateSequence {
+        sequence: sequence.clone(),
+    })
+    .expect("sequence create should render");
+    let drop = operation_to_sql(&Operation::DropSequence { sequence })
+        .expect("sequence drop should render");
+
+    assert_eq!(
+        create,
+        vec!["CREATE SEQUENCE audit.event_ids START WITH 100 INCREMENT BY 5"]
+    );
+    assert_eq!(drop, vec!["DROP SEQUENCE \"audit\".\"event_ids\""]);
 }

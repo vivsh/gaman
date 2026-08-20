@@ -112,6 +112,13 @@ fn select_schema_with_match_requirement(
                 |extension| extension.qualified_name(),
                 require_match,
             )?,
+            EntityKind::Sequence => copy_matches(
+                &schema.sequences,
+                &mut selected.sequences,
+                filter,
+                |sequence| sequence.qualified_name(),
+                require_match,
+            )?,
             _ => {
                 return Err(CommandError::Invalid(format!(
                     "'{:?}' is not a root inspection filter kind",
@@ -203,6 +210,10 @@ fn ensure_authored_exportable(schema: &Schema) -> Result<(), CommandError> {
         || schema.views.values().any(|value| value.is_opaque())
         || schema.enums.values().any(|value| value.is_opaque())
         || schema.extensions.values().any(|value| value.is_opaque())
+        || schema
+            .sequences
+            .values()
+            .any(|value| value.raw_sql().is_none())
     {
         return Err(CommandError::Invalid(
             "inspected schema contains opaque root entities and cannot be exported as authored YAML"

@@ -19,6 +19,7 @@ Legend: ✅ accepted evidence, ◐ bounded support, 🚧 planned or not evidence
 | Feature | PostgreSQL | SQLite | MySQL | MariaDB |
 | --- | --- | --- | --- | --- |
 | Offline replay, diff, and migration generation | ✅ | ✅ | ✅ | 🚧 |
+| PostgreSQL sequences as opaque schema objects | ✅ | ❌ | ❌ | ❌ |
 | Offline SQL rendering through `sql_migrate` | ✅ | ✅ | ✅ | 🚧 |
 | Live migration application | ✅ | ✅ | ◐ | 🚧 |
 | Live database introspection | ✅ | ✅ | ✅ | 🚧 |
@@ -54,6 +55,7 @@ Legend: ✅ accepted evidence, ◐ bounded support, 🚧 planned or not evidence
 
 ### Compatibility Notes
 
+- PostgreSQL sequences as opaque schema objects (sqlite/mysql/mariadb): Sequence operations are currently supported only by PostgreSQL.
 - Live migration application (mysql): Apply, target application, rollback, idempotency, and partial-failure behavior are live-tested. Fake application is not yet accepted evidence.
 - Non-transactional partial-failure reporting (postgres): PostgreSQL modeled migrations use transactional DDL; this failure mode does not apply.
 - Non-transactional partial-failure reporting (sqlite): SQLite modeled migrations use transactional DDL; this failure mode does not apply.
