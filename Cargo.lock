@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "gaman"
-version = "0.3.33"
+version = "0.3.34"
 dependencies = [
  "argh",
  "dotenvy",
@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "gaman-core"
-version = "0.3.33"
+version = "0.3.34"
 dependencies = [
  "argh",
  "chrono",
@@ -501,7 +501,7 @@ dependencies = [
 
 [[package]]
 name = "gaman-wasm"
-version = "0.3.33"
+version = "0.3.34"
 dependencies = [
  "gaman-core",
  "js-sys",
