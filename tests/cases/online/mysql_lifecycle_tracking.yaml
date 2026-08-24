@@ -2,7 +2,7 @@ description: MySQL repeatedly applies migrations idempotently and preserves trac
 features: [live_migration_application, idempotent_migrations, migration_tracking, raw_sql_statements, tables_columns]
 migrations: []
 dialects:
-  mysql:
+  mysql: &family
     checks: [migrate_twice, migration_records, data]
     migrations:
     - id: 0001_mysql_users
@@ -25,3 +25,4 @@ dialects:
     data:
     - sql: SELECT name FROM users ORDER BY id
       expect: [Ada]
+  mariadb: *family

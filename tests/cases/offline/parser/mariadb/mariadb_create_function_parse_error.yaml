@@ -1,0 +1,14 @@
+---
+description: MariaDB stored functions are accepted through opaque source fallback.
+group: parser
+features:
+- group.parser
+- kind.parser
+- parser.mariadb.parser_mariadb_create_function_parse_error
+kind: parser
+parser_dialect: mariadb
+sql: 'CREATE FUNCTION f(x INT) RETURNS INT DETERMINISTIC RETURN x + 1;
+
+'
+expect_parse: ok
+expect_lowering: ok

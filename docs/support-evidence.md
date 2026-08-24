@@ -1,6 +1,6 @@
 # Support Evidence
 
-Evidence generation: `20260819T075134Z-95479`.
+Evidence generation: `20260824T161607Z-38144`.
 
 This is Gaman's authoritative compatibility reference. It expands the README lifecycle summary with the full feature matrix, limitations, and accepted fixture evidence for parsing, inspection, and `verify` drift detection.
 
@@ -18,50 +18,53 @@ Legend: ✅ accepted evidence, ◐ bounded support, 🚧 planned or not evidence
 
 | Feature | PostgreSQL | SQLite | MySQL | MariaDB |
 | --- | --- | --- | --- | --- |
-| Offline replay, diff, and migration generation | ✅ | ✅ | ✅ | 🚧 |
+| Offline replay, diff, and migration generation | ✅ | ✅ | ✅ | ✅ |
 | PostgreSQL sequences as opaque schema objects | ✅ | ❌ | ❌ | ❌ |
-| Offline SQL rendering through `sql_migrate` | ✅ | ✅ | ✅ | 🚧 |
-| Live migration application | ✅ | ✅ | ◐ | 🚧 |
-| Live database introspection | ✅ | ✅ | ✅ | 🚧 |
-| Live `verify_db` | ✅ | ✅ | ✅ | 🚧 |
-| Non-transactional partial-failure reporting | ❌ | ❌ | ✅ | 🚧 |
-| Migration tracking table | ✅ | ✅ | ✅ | 🚧 |
-| Dedicated migration lock | ✅ | ❌ | ◐ | 🚧 |
-| Tables: create, drop, rename | ✅ | ✅ | ◐ | 🚧 |
-| Columns: add, drop, rename | ✅ | ✅ | ✅ | 🚧 |
-| Columns: type, nullability, default changes | ✅ | ✅ | ◐ | 🚧 |
-| Generated columns | ✅ | ✅ | ✅ | 🚧 |
-| Single-column primary keys | ✅ | ✅ | ✅ | 🚧 |
-| Multi-column / composite primary keys | ✅ | ✅ | ✅ | 🚧 |
+| Offline SQL rendering through `sql_migrate` | ✅ | ✅ | ✅ | ✅ |
+| Live migration application | ✅ | ✅ | ◐ | ◐ |
+| Live database introspection | ✅ | ✅ | ✅ | ✅ |
+| Live `verify_db` | ✅ | ✅ | ✅ | ✅ |
+| Non-transactional partial-failure reporting | ❌ | ❌ | ✅ | ✅ |
+| Migration tracking table | ✅ | ✅ | ✅ | ✅ |
+| Dedicated migration lock | ✅ | ❌ | ◐ | ◐ |
+| Tables: create, drop, rename | ✅ | ✅ | ◐ | ◐ |
+| Columns: add, drop, rename | ✅ | ✅ | ✅ | ✅ |
+| Columns: type, nullability, default changes | ✅ | ✅ | ◐ | ◐ |
+| Generated columns | ✅ | ✅ | ✅ | ✅ |
+| Single-column primary keys | ✅ | ✅ | ✅ | ✅ |
+| Multi-column / composite primary keys | ✅ | ✅ | ✅ | ✅ |
 | Automatic primary-key mutation generation | ❌ | ❌ | ❌ | ❌ |
-| Single-column foreign keys | ✅ | ✅ | ✅ | 🚧 |
-| Multi-column / composite foreign keys | ✅ | ✅ | ✅ | 🚧 |
-| Unique constraints | ✅ | ✅ | ✅ | 🚧 |
-| Check constraints | ✅ | ✅ | ✅ | 🚧 |
-| Indexes | ✅ | ✅ | ✅ | 🚧 |
+| Single-column foreign keys | ✅ | ✅ | ✅ | ✅ |
+| Multi-column / composite foreign keys | ✅ | ✅ | ✅ | ✅ |
+| Unique constraints | ✅ | ✅ | ✅ | ✅ |
+| Check constraints | ✅ | ✅ | ✅ | ✅ |
+| Indexes | ✅ | ✅ | ✅ | ✅ |
 | Partial indexes | ✅ | ◐ | ❌ | 🚧 |
 | PostgreSQL range partitioning | ✅ | ❌ | ❌ | ❌ |
 | Concurrent indexes | ✅ | ❌ | 🚧 | 🚧 |
 | Schemas / namespaces | ✅ | ❌ | ❌ | ❌ |
 | Extensions as opaque schema objects | ✅ | ❌ | ❌ | ❌ |
 | Enums | ✅ | ❌ | 🚧 | 🚧 |
-| Functions as opaque schema objects | ✅ | ❌ | ◐ | 🚧 |
-| Trigger query schema objects | ✅ | ✅ | ◐ | 🚧 |
-| Views as opaque schema objects | ✅ | ✅ | ◐ | 🚧 |
-| Raw SQL statements | ✅ | ✅ | ✅ | 🚧 |
+| Functions as opaque schema objects | ✅ | ❌ | ◐ | ◐ |
+| Trigger query schema objects | ✅ | ✅ | ◐ | ◐ |
+| Views as opaque schema objects | ✅ | ✅ | ◐ | ◐ |
+| Raw SQL statements | ✅ | ✅ | ✅ | ✅ |
 | SQLite table-rebuild planner for ALTER TABLE | ❌ | ✅ | ❌ | ❌ |
 | Opaque source formatting fallback in offline diff | ✅ | 🚧 | 🚧 | 🚧 |
-| Ownership-scoped `verify_db` | ✅ | ✅ | ✅ | 🚧 |
+| Ownership-scoped `verify_db` | ✅ | ✅ | ✅ | ✅ |
 
 ### Compatibility Notes
 
 - PostgreSQL sequences as opaque schema objects (sqlite/mysql/mariadb): Sequence operations are currently supported only by PostgreSQL.
+- Live migration application (mariadb): Apply, target application, rollback, idempotency, and partial-failure behavior are live-tested. Direct table-drop and lock-contention coverage is not yet accepted evidence.
 - Live migration application (mysql): Apply, target application, rollback, idempotency, and partial-failure behavior are live-tested. Fake application is not yet accepted evidence.
 - Non-transactional partial-failure reporting (postgres): PostgreSQL modeled migrations use transactional DDL; this failure mode does not apply.
 - Non-transactional partial-failure reporting (sqlite): SQLite modeled migrations use transactional DDL; this failure mode does not apply.
-- Dedicated migration lock (mysql): Named-lock release after application is live-tested; contention and timeout behavior are not yet accepted evidence.
+- Dedicated migration lock (mysql/mariadb): Named-lock release after application is live-tested; contention and timeout behavior are not yet accepted evidence.
 - Dedicated migration lock (sqlite): SQLite has no dedicated advisory-lock primitive; migration atomicity relies on SQLite transactions and file locking.
+- Tables: create, drop, rename (mariadb): MariaDB table creation and rename are live-tested; direct live table-drop coverage is not yet accepted evidence.
 - Tables: create, drop, rename (mysql): MySQL table creation and rename are live-tested; direct live table-drop coverage is not yet accepted evidence.
+- Columns: type, nullability, default changes (mariadb): Column defaults and product metadata round trips are live-tested, while type and nullability mutation cases are proven offline but not yet accepted as live evidence.
 - Columns: type, nullability, default changes (mysql): MySQL column type, nullability, default, and product metadata round trips are live-tested; mutation cases are not yet accepted evidence.
 - Automatic primary-key mutation generation (postgres/sqlite/mysql/mariadb): Primary-key surgery is intentionally manual/raw SQL for every dialect.
 - Partial indexes (mysql): MySQL does not support predicate-based partial indexes; prefix and advanced indexes use Gaman's opaque index lifecycle.
@@ -77,10 +80,12 @@ Legend: ✅ accepted evidence, ◐ bounded support, 🚧 planned or not evidence
 - Extensions as opaque schema objects (mysql): MySQL extensions are not modeled as migratable schema objects.
 - Extensions as opaque schema objects (sqlite): SQLite extensions are not modeled as migratable schema objects.
 - Enums (sqlite): SQLite has no native enum schema object in Gaman.
+- Functions as opaque schema objects (mariadb): MariaDB stored functions are accepted as opaque SQL offline; live function inspection and verification are not yet accepted evidence.
 - Functions as opaque schema objects (mysql): MySQL stored functions are accepted as opaque SQL offline; live function inspection and verification are not yet accepted evidence.
 - Functions as opaque schema objects (sqlite): SQLite stored functions are not supported by Gaman.
+- Trigger query schema objects (mariadb): MariaDB triggers are accepted as opaque SQL offline; live trigger inspection and verification are not yet accepted evidence.
 - Trigger query schema objects (mysql): MySQL triggers are accepted as opaque SQL offline; live trigger inspection and verification are not yet accepted evidence.
-- Views as opaque schema objects (mysql): Opaque view creation and inspection coexistence are live-tested; missing-view presence drift and repair are not yet accepted evidence.
+- Views as opaque schema objects (mysql/mariadb): Opaque view creation and inspection coexistence are live-tested; missing-view presence drift and repair are not yet accepted evidence.
 - SQLite table-rebuild planner for ALTER TABLE (postgres): PostgreSQL uses native ALTER TABLE paths; SQLite rebuild planning does not apply.
 - SQLite table-rebuild planner for ALTER TABLE (mariadb): SQLite rebuild planning does not apply to MariaDB.
 - SQLite table-rebuild planner for ALTER TABLE (mysql): SQLite rebuild planning does not apply to MySQL.
@@ -565,6 +570,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`legacy_inline_check_then_drop`](tests/cases/online/legacy_inline_check_then_drop.yaml): A later migration drops a canonical constraint created from legacy inline shorthand. (`migrate, inspect, verify, data`)
 - [`postgres_default_canonical_forms`](tests/cases/online/postgres_default_canonical_forms.yaml): PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift. (`migrate, verify`)
 - [`postgres_opaque_index_with_modeled_drift`](tests/cases/online/postgres_opaque_index_with_modeled_drift.yaml): PostgreSQL modeled column drift remains visible beside an owned opaque index. (`verify`)
+- [`postgres_opaque_sequence`](tests/cases/online/postgres_opaque_sequence.yaml): PostgreSQL applies an opaque sequence before a table default and ignores counter state during verify (`migrate, verify, data`)
 - [`postgres_pgcrypto_uuid`](tests/cases/online/postgres_pgcrypto_uuid.yaml): PostgreSQL pgcrypto generates UUID defaults without making UUID an extension type (`migrate, inspect, verify, data`)
 - [`postgres_range_partitioning`](tests/cases/online/postgres_range_partitioning.yaml): PostgreSQL creates routes and verifies monthly range partitions. (`migrate, verify, data`)
 - [`postgres_verify_enum_drift`](tests/cases/online/postgres_verify_enum_drift.yaml): PostgreSQL verify reports owned enum label order drift (`verify`)
@@ -576,6 +582,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`postgres_verify_live_only_enum_ignored`](tests/cases/online/postgres_verify_live_only_enum_ignored.yaml): PostgreSQL verify ignores live-only enums (`verify`)
 - [`postgres_verify_missing_enum`](tests/cases/online/postgres_verify_missing_enum.yaml): PostgreSQL verify reports missing owned enums (`verify`)
 - [`postgres_verify_missing_owned_trigger`](tests/cases/online/postgres_verify_missing_owned_trigger.yaml): PostgreSQL verify reports a missing owned trigger (`verify`)
+- [`postgres_verify_missing_sequence`](tests/cases/online/postgres_verify_missing_sequence.yaml): PostgreSQL verify detects a missing owned opaque sequence and plans recreation (`verify`)
 - [`postgres_verify_opaque_index_definition_ignored`](tests/cases/online/postgres_verify_opaque_index_definition_ignored.yaml): PostgreSQL verify treats changed owned opaque index definitions as present. (`verify`)
 - [`postgres_verify_opaque_index_presence`](tests/cases/online/postgres_verify_opaque_index_presence.yaml): PostgreSQL verify detects a missing owned opaque expression index. (`verify`)
 - [`postgres_verify_schema_qualified_no_drift`](tests/cases/online/postgres_verify_schema_qualified_no_drift.yaml): PostgreSQL verify accepts explicitly schema-qualified owned objects (`verify`)
@@ -632,6 +639,18 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`mysql_single_fk_actions`](tests/cases/online/mysql_single_fk_actions.yaml): MySQL preserves single-column foreign keys and update-delete actions. (`verify, data`)
 - [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
 
+##### MariaDB
+
+- [`legacy_inline_check_postgres`](tests/cases/online/legacy_inline_check_postgres.yaml): Legacy inline checks are created with canonical names and enforce data rules. (`migrate, verify, data`)
+- [`legacy_inline_check_then_drop`](tests/cases/online/legacy_inline_check_then_drop.yaml): A later migration drops a canonical constraint created from legacy inline shorthand. (`migrate, verify, data`)
+- [`mysql_column_default_drift`](tests/cases/online/mysql_column_default_drift.yaml): MySQL verify reports an observed column default that differs from migration history. (`verify`)
+- [`mysql_mariadb_advanced_index_inspection`](tests/cases/online/mysql_mariadb_advanced_index_inspection.yaml): MySQL invisible and MariaDB ignored indexes remain opaque without blocking verification. (`verify`)
+- [`mysql_mariadb_column_metadata_no_drift`](tests/cases/online/mysql_mariadb_column_metadata_no_drift.yaml): MySQL and MariaDB verify product-owned column metadata without false drift. (`verify`)
+- [`mysql_mariadb_row_format_inspection`](tests/cases/online/mysql_mariadb_row_format_inspection.yaml): MySQL and MariaDB inspect explicit row format without false drift. (`verify`)
+- [`mysql_opaque_objects`](tests/cases/online/mysql_opaque_objects.yaml): MySQL opaque views coexist with modeled verification. (`verify`)
+- [`mysql_single_fk_actions`](tests/cases/online/mysql_single_fk_actions.yaml): MySQL preserves single-column foreign keys and update-delete actions. (`verify, data`)
+- [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
+
 #### Ownership-scoped verify (`ownership_scoped_verify`)
 
 ##### PostgreSQL
@@ -646,6 +665,7 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`postgres_verify_live_only_enum_ignored`](tests/cases/online/postgres_verify_live_only_enum_ignored.yaml): PostgreSQL verify ignores live-only enums (`verify`)
 - [`postgres_verify_missing_enum`](tests/cases/online/postgres_verify_missing_enum.yaml): PostgreSQL verify reports missing owned enums (`verify`)
 - [`postgres_verify_missing_owned_trigger`](tests/cases/online/postgres_verify_missing_owned_trigger.yaml): PostgreSQL verify reports a missing owned trigger (`verify`)
+- [`postgres_verify_missing_sequence`](tests/cases/online/postgres_verify_missing_sequence.yaml): PostgreSQL verify detects a missing owned opaque sequence and plans recreation (`verify`)
 - [`postgres_verify_opaque_index_definition_ignored`](tests/cases/online/postgres_verify_opaque_index_definition_ignored.yaml): PostgreSQL verify treats changed owned opaque index definitions as present. (`verify`)
 - [`postgres_verify_opaque_index_presence`](tests/cases/online/postgres_verify_opaque_index_presence.yaml): PostgreSQL verify detects a missing owned opaque expression index. (`verify`)
 - [`postgres_verify_schema_qualified_no_drift`](tests/cases/online/postgres_verify_schema_qualified_no_drift.yaml): PostgreSQL verify accepts explicitly schema-qualified owned objects (`verify`)
@@ -687,6 +707,11 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`mysql_column_default_drift`](tests/cases/online/mysql_column_default_drift.yaml): MySQL verify reports an observed column default that differs from migration history. (`verify`)
 - [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
 
+##### MariaDB
+
+- [`mysql_column_default_drift`](tests/cases/online/mysql_column_default_drift.yaml): MySQL verify reports an observed column default that differs from migration history. (`verify`)
+- [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
+
 #### Tables and columns (`tables_columns`)
 
 ##### PostgreSQL
@@ -714,6 +739,14 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`mysql_mariadb_row_format_inspection`](tests/cases/online/mysql_mariadb_row_format_inspection.yaml): MySQL and MariaDB inspect explicit row format without false drift. (`verify`)
 - [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
 
+##### MariaDB
+
+- [`mysql_column_default_drift`](tests/cases/online/mysql_column_default_drift.yaml): MySQL verify reports an observed column default that differs from migration history. (`verify`)
+- [`mysql_mariadb_advanced_index_inspection`](tests/cases/online/mysql_mariadb_advanced_index_inspection.yaml): MySQL invisible and MariaDB ignored indexes remain opaque without blocking verification. (`verify`)
+- [`mysql_mariadb_column_metadata_no_drift`](tests/cases/online/mysql_mariadb_column_metadata_no_drift.yaml): MySQL and MariaDB verify product-owned column metadata without false drift. (`verify`)
+- [`mysql_mariadb_row_format_inspection`](tests/cases/online/mysql_mariadb_row_format_inspection.yaml): MySQL and MariaDB inspect explicit row format without false drift. (`verify`)
+- [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
+
 #### Type/null/default changes (`type_null_default_changes`)
 
 ##### PostgreSQL
@@ -723,6 +756,10 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`verify_detects_changed_column_metadata`](tests/cases/online/verify_detects_changed_column_metadata.yaml): verify reports changed metadata for owned columns (`verify`)
 
 ##### MySQL
+
+- [`mysql_column_default_drift`](tests/cases/online/mysql_column_default_drift.yaml): MySQL verify reports an observed column default that differs from migration history. (`verify`)
+
+##### MariaDB
 
 - [`mysql_column_default_drift`](tests/cases/online/mysql_column_default_drift.yaml): MySQL verify reports an observed column default that differs from migration history. (`verify`)
 
@@ -744,6 +781,11 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`mysql_mariadb_column_metadata_no_drift`](tests/cases/online/mysql_mariadb_column_metadata_no_drift.yaml): MySQL and MariaDB verify product-owned column metadata without false drift. (`verify`)
 - [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
 
+##### MariaDB
+
+- [`mysql_mariadb_column_metadata_no_drift`](tests/cases/online/mysql_mariadb_column_metadata_no_drift.yaml): MySQL and MariaDB verify product-owned column metadata without false drift. (`verify`)
+- [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
+
 #### Single-column primary keys (`single_primary_keys`)
 
 ##### PostgreSQL
@@ -751,6 +793,10 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`postgres_default_canonical_forms`](tests/cases/online/postgres_default_canonical_forms.yaml): PostgreSQL catalog formatting for serial boolean numeric and escaped text defaults does not drift. (`migrate, verify`)
 
 ##### MySQL
+
+- [`mysql_single_fk_actions`](tests/cases/online/mysql_single_fk_actions.yaml): MySQL preserves single-column foreign keys and update-delete actions. (`verify, data`)
+
+##### MariaDB
 
 - [`mysql_single_fk_actions`](tests/cases/online/mysql_single_fk_actions.yaml): MySQL preserves single-column foreign keys and update-delete actions. (`verify, data`)
 
@@ -770,6 +816,10 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
 
 ##### MySQL
+
+- [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
+
+##### MariaDB
 
 - [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
 
@@ -794,6 +844,10 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 
 - [`mysql_single_fk_actions`](tests/cases/online/mysql_single_fk_actions.yaml): MySQL preserves single-column foreign keys and update-delete actions. (`verify, data`)
 
+##### MariaDB
+
+- [`mysql_single_fk_actions`](tests/cases/online/mysql_single_fk_actions.yaml): MySQL preserves single-column foreign keys and update-delete actions. (`verify, data`)
+
 #### Composite foreign keys (`composite_foreign_keys`)
 
 ##### PostgreSQL
@@ -811,6 +865,10 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`verify_sqlite_detects_missing_index_constraint_fk`](tests/cases/online/verify_sqlite_detects_missing_index_constraint_fk.yaml): SQLite verify reports missing owned indexes constraints and foreign keys (`verify`)
 
 ##### MySQL
+
+- [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
+
+##### MariaDB
 
 - [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
 
@@ -847,6 +905,11 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`legacy_inline_check_postgres`](tests/cases/online/legacy_inline_check_postgres.yaml): Legacy inline checks are created with canonical names and enforce data rules. (`migrate, verify, data`)
 - [`legacy_inline_check_then_drop`](tests/cases/online/legacy_inline_check_then_drop.yaml): A later migration drops a canonical constraint created from legacy inline shorthand. (`migrate, verify, data`)
 
+##### MariaDB
+
+- [`legacy_inline_check_postgres`](tests/cases/online/legacy_inline_check_postgres.yaml): Legacy inline checks are created with canonical names and enforce data rules. (`migrate, verify, data`)
+- [`legacy_inline_check_then_drop`](tests/cases/online/legacy_inline_check_then_drop.yaml): A later migration drops a canonical constraint created from legacy inline shorthand. (`migrate, verify, data`)
+
 #### Indexes and constraints (`indexes_constraints`)
 
 ##### PostgreSQL
@@ -864,6 +927,11 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`verify_sqlite_detects_missing_index_constraint_fk`](tests/cases/online/verify_sqlite_detects_missing_index_constraint_fk.yaml): SQLite verify reports missing owned indexes constraints and foreign keys (`verify`)
 
 ##### MySQL
+
+- [`mysql_mariadb_advanced_index_inspection`](tests/cases/online/mysql_mariadb_advanced_index_inspection.yaml): MySQL invisible and MariaDB ignored indexes remain opaque without blocking verification. (`verify`)
+- [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
+
+##### MariaDB
 
 - [`mysql_mariadb_advanced_index_inspection`](tests/cases/online/mysql_mariadb_advanced_index_inspection.yaml): MySQL invisible and MariaDB ignored indexes remain opaque without blocking verification. (`verify`)
 - [`verify_no_drift_representative_schema`](tests/cases/online/verify_no_drift_representative_schema.yaml): verify reports no drift for a representative owned schema (`verify`)
@@ -938,6 +1006,10 @@ Inspection evidence lists online cases whose checks include `inspect`, filtered 
 - [`verify_view_missing_owned`](tests/cases/online/verify_view_missing_owned.yaml): verify reports missing owned views (`verify`)
 
 ##### MySQL
+
+- [`mysql_opaque_objects`](tests/cases/online/mysql_opaque_objects.yaml): MySQL opaque views coexist with modeled verification. (`verify`)
+
+##### MariaDB
 
 - [`mysql_opaque_objects`](tests/cases/online/mysql_opaque_objects.yaml): MySQL opaque views coexist with modeled verification. (`verify`)
 

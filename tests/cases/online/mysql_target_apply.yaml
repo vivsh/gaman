@@ -2,7 +2,7 @@ description: MySQL target application stops at the requested migration.
 features: [live_migration_application, target_migrations, migration_tracking, tables_columns, column_add_drop_rename]
 migrations: []
 dialects:
-  mysql:
+  mysql: &family
     checks: [migrate_to, migration_records, data]
     target: 0002_mysql_email
     migrations:
@@ -36,3 +36,4 @@ dialects:
       expect: ['0']
     - sql: SELECT COUNT(*) FROM audit_log
       expect_error: doesn't exist
+  mariadb: *family

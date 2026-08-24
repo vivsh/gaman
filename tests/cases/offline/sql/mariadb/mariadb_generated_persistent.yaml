@@ -17,4 +17,4 @@ migrations:
         generated: base_value * 2
         generated_storage: stored
 expect_sql: |
-  CREATE TABLE `metrics` (`base_value` INT NOT NULL, `doubled` INT GENERATED ALWAYS AS (base_value * 2) PERSISTENT NOT NULL)
+      CREATE TABLE `metrics` (`base_value` INT NOT NULL, `doubled` INT GENERATED ALWAYS AS (base_value * 2) PERSISTENT)

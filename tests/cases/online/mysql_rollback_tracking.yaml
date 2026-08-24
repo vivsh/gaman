@@ -2,7 +2,7 @@ description: MySQL rollback reverses later migrations and removes their tracking
 features: [live_migration_application, rollback_migrations, migration_tracking, tables_columns, column_add_drop_rename, data_preservation]
 migrations: []
 dialects:
-  mysql:
+  mysql: &family
     checks: [rollback, migration_records, data]
     target: 0001_mysql_profiles
     migrations:
@@ -31,3 +31,4 @@ dialects:
       expect: [Ada]
     - sql: SELECT email FROM profiles
       expect_error: Unknown column
+  mariadb: *family

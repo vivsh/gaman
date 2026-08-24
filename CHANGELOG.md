@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.36] - 2026-08-24
+
+### Fixed
+
+- Prevented false MySQL 8.4 and MariaDB drift findings for equivalent column
+  defaults, generated columns, metadata, and foreign-key actions.
+- Generated valid MariaDB SQL for generated columns, nullable defaults, and
+  check-constraint removal.
+
 ## [0.3.35] - 2026-08-24
 
 ### Added

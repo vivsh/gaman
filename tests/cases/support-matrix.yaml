@@ -488,11 +488,17 @@ rows:
           - sql
         online: []
     mariadb:
-      status: planned
-      note: MariaDB dialect support is not implemented yet.
+      status: supported
       evidence:
+        offline:
+        - case: mariadb_create_table
+          assertions:
+          - end_to_end
+          - operations
+          - replayed_schema
+          - sql
         online: []
-        offline: []
+
 - id: sequences_opaque
   label: PostgreSQL sequences as opaque schema objects
   dialects:
@@ -714,11 +720,19 @@ rows:
           - sql
         online: []
     mariadb:
-      status: planned
-      note: MariaDB SQL rendering is planned after the dialect exists.
+      status: supported
       evidence:
+        offline:
+        - case: mariadb_column_metadata
+          assertions: [migration_to_sql, sql]
+        - case: mariadb_generated_persistent
+          assertions: [migration_to_sql, sql]
+        - case: mariadb_fk_actions
+          assertions: [migration_to_sql, sql]
+        - case: mariadb_table_column_operations
+          assertions: [migration_to_sql, sql]
         online: []
-        offline: []
+
 - id: live_migration_application
   label: Live migration application
   dialects:
@@ -1099,11 +1113,28 @@ rows:
       note: Apply, target application, rollback, idempotency, and partial-failure
         behavior are live-tested. Fake application is not yet accepted evidence.
     mariadb:
-      status: planned
-      note: MariaDB executor support is not implemented yet.
+      status: partial
       evidence:
-        online: []
+        online:
+        - case: mysql_lifecycle_tracking
+          checks: [migrate_twice, migration_records, data]
+        - case: mysql_lock_cleanup
+          checks: [migrate, lock_behavior]
+        - case: mysql_opaque_objects
+          checks: [verify]
+        - case: mysql_partial_failure
+          checks: [migrate, error, migration_records, data]
+        - case: mysql_rename_table_column
+          checks: [migrate, migration_records, data]
+        - case: mysql_rollback_tracking
+          checks: [rollback, migration_records, data]
+        - case: mysql_single_fk_actions
+          checks: [verify, data]
+        - case: mysql_target_apply
+          checks: [migrate_to, migration_records, data]
         offline: []
+      note: Apply, target application, rollback, idempotency, and partial-failure behavior are live-tested. Direct table-drop and lock-contention coverage is not yet accepted evidence.
+
 - id: live_introspection
   label: Live database introspection
   dialects:
@@ -1406,11 +1437,25 @@ rows:
           - verify
         offline: []
     mariadb:
-      status: planned
-      note: MariaDB introspection is not implemented yet.
+      status: supported
       evidence:
-        online: []
+        online:
+        - case: mysql_column_default_drift
+          checks: [verify]
+        - case: mysql_mariadb_advanced_index_inspection
+          checks: [verify]
+        - case: mysql_mariadb_column_metadata_no_drift
+          checks: [verify]
+        - case: mysql_mariadb_row_format_inspection
+          checks: [verify]
+        - case: mysql_opaque_objects
+          checks: [verify]
+        - case: mysql_single_fk_actions
+          checks: [verify, data]
+        - case: verify_no_drift_representative_schema
+          checks: [verify]
         offline: []
+
 - id: live_verify_db
   label: Live `verify_db`
   dialects:
@@ -1562,11 +1607,17 @@ rows:
           - verify
         offline: []
     mariadb:
-      status: planned
-      note: MariaDB verify is not implemented yet.
+      status: supported
       evidence:
-        online: []
+        online:
+        - case: mysql_column_default_drift
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
         offline: []
+
 - id: non_transactional_failure_reporting
   label: Non-transactional partial-failure reporting
   dialects:
@@ -1596,11 +1647,17 @@ rows:
           - data
         offline: []
     mariadb:
-      status: planned
-      note: MariaDB partial-failure reporting has not been validated online.
+      status: supported
       evidence:
-        online: []
+        online:
+        - case: mysql_partial_failure
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - data
         offline: []
+
 - id: migration_tracking
   label: Migration tracking table
   dialects:
@@ -1713,11 +1770,36 @@ rows:
           - data
         offline: []
     mariadb:
-      status: planned
-      note: MariaDB tracking table support is not implemented yet.
+      status: supported
       evidence:
-        online: []
+        online:
+        - case: mysql_lifecycle_tracking
+          checks:
+          - migrate_twice
+          - migration_records
+          - data
+        - case: mysql_lock_cleanup
+          checks:
+          - migrate
+          - lock_behavior
+        - case: mysql_partial_failure
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - data
+        - case: mysql_rollback_tracking
+          checks:
+          - rollback
+          - migration_records
+          - data
+        - case: mysql_target_apply
+          checks:
+          - migrate_to
+          - migration_records
+          - data
         offline: []
+
 - id: dedicated_migration_lock
   label: Dedicated migration lock
   dialects:
@@ -1750,11 +1832,17 @@ rows:
       note: Named-lock release after application is live-tested; contention and timeout
         behavior are not yet accepted evidence.
     mariadb:
-      status: planned
-      note: MariaDB locking is planned with the MariaDB executor.
+      status: partial
       evidence:
-        online: []
+        online:
+        - case: mysql_lock_cleanup
+          checks:
+          - migrate
+          - lock_behavior
         offline: []
+      note: Named-lock release after application is live-tested; contention and timeout
+        behavior are not yet accepted evidence.
+
 - id: table_create_drop_rename
   label: 'Tables: create, drop, rename'
   dialects:
@@ -1869,11 +1957,58 @@ rows:
       note: MySQL table creation and rename are live-tested; direct live table-drop
         coverage is not yet accepted evidence.
     mariadb:
-      status: planned
-      note: MariaDB table operations are planned after the dialect exists.
+      status: partial
       evidence:
-        online: []
+        online:
+        - case: mysql_column_default_drift
+          checks:
+          - verify
+        - case: mysql_lifecycle_tracking
+          checks:
+          - migrate_twice
+          - migration_records
+          - data
+        - case: mysql_lock_cleanup
+          checks:
+          - migrate
+          - lock_behavior
+        - case: mysql_mariadb_advanced_index_inspection
+          checks:
+          - verify
+        - case: mysql_mariadb_column_metadata_no_drift
+          checks:
+          - verify
+        - case: mysql_mariadb_row_format_inspection
+          checks:
+          - verify
+        - case: mysql_partial_failure
+          checks:
+          - migrate
+          - error
+          - migration_records
+          - data
+        - case: mysql_rollback_tracking
+          checks:
+          - rollback
+          - migration_records
+          - data
+        - case: mysql_target_apply
+          checks:
+          - migrate_to
+          - migration_records
+          - data
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
+        - case: mysql_rename_table_column
+          checks:
+          - migrate
+          - migration_records
+          - data
         offline: []
+      note: MariaDB table creation and rename are live-tested; direct live table-drop
+        coverage is not yet accepted evidence.
+
 - id: column_add_drop_rename
   label: 'Columns: add, drop, rename'
   dialects:
@@ -1972,11 +2107,23 @@ rows:
           - migration_to_sql
           - sql
     mariadb:
-      status: planned
-      note: MariaDB column operations are planned after the dialect exists.
+      status: supported
       evidence:
-        online: []
-        offline: []
+        online:
+        - case: mysql_rename_table_column
+          checks: [migrate, migration_records, data]
+        - case: mysql_rollback_tracking
+          checks: [rollback, migration_records, data]
+        - case: mysql_target_apply
+          checks: [migrate_to, migration_records, data]
+        offline:
+        - case: mariadb_column_metadata
+          assertions: [migration_to_sql, sql]
+        - case: mariadb_fk_actions
+          assertions: [migration_to_sql, sql]
+        - case: mariadb_table_column_operations
+          assertions: [migration_to_sql, sql]
+
 - id: column_type_null_default
   label: 'Columns: type, nullability, default changes'
   dialects:
@@ -2126,11 +2273,24 @@ rows:
       note: MySQL column type, nullability, default, and product metadata round trips
         are live-tested; mutation cases are not yet accepted evidence.
     mariadb:
-      status: planned
-      note: MariaDB column alteration support is planned after the dialect exists.
+      status: partial
       evidence:
-        online: []
-        offline: []
+        online:
+        - case: mysql_column_default_drift
+          checks: [verify]
+        - case: mysql_mariadb_column_metadata_no_drift
+          checks: [verify]
+        - case: mysql_mariadb_row_format_inspection
+          checks: [verify]
+        - case: verify_no_drift_representative_schema
+          checks: [verify]
+        offline:
+        - case: mariadb_column_metadata
+          assertions: [migration_to_sql, sql]
+        - case: mariadb_table_column_operations
+          assertions: [migration_to_sql, sql]
+      note: Column defaults and product metadata round trips are live-tested, while type and nullability mutation cases are proven offline but not yet accepted as live evidence.
+
 - id: generated_columns
   label: Generated columns
   dialects:
@@ -2185,11 +2345,17 @@ rows:
           - verify
         offline: []
     mariadb:
-      status: planned
-      note: MariaDB generated columns are planned after the dialect exists.
+      status: supported
       evidence:
-        online: []
+        online:
+        - case: mysql_mariadb_column_metadata_no_drift
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
         offline: []
+
 - id: single_primary_keys
   label: Single-column primary keys
   dialects:
@@ -2266,11 +2432,20 @@ rows:
           - data
         offline: []
     mariadb:
-      status: planned
-      note: MariaDB primary keys are planned after the dialect exists.
+      status: supported
       evidence:
-        online: []
+        online:
+        - case: mysql_rename_table_column
+          checks:
+          - migrate
+          - migration_records
+          - data
+        - case: mysql_single_fk_actions
+          checks:
+          - verify
+          - data
         offline: []
+
 - id: composite_primary_keys
   label: Multi-column / composite primary keys
   dialects:
@@ -2324,11 +2499,14 @@ rows:
           - verify
         offline: []
     mariadb:
-      status: planned
-      note: MariaDB composite primary keys are planned after the dialect exists.
+      status: supported
       evidence:
-        online: []
+        online:
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
         offline: []
+
 - id: primary_key_mutation_generation
   label: Automatic primary-key mutation generation
   dialects:
@@ -2440,11 +2618,15 @@ rows:
           - data
         offline: []
     mariadb:
-      status: planned
-      note: MariaDB foreign keys are planned after the dialect exists.
+      status: supported
       evidence:
-        online: []
+        online:
+        - case: mysql_single_fk_actions
+          checks:
+          - verify
+          - data
         offline: []
+
 - id: composite_foreign_keys
   label: Multi-column / composite foreign keys
   dialects:
@@ -2523,11 +2705,14 @@ rows:
           - verify
         offline: []
     mariadb:
-      status: planned
-      note: MariaDB composite foreign keys are planned after the dialect exists.
+      status: supported
       evidence:
-        online: []
+        online:
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
         offline: []
+
 - id: unique_constraints
   label: Unique constraints
   dialects:
@@ -2569,11 +2754,17 @@ rows:
           - verify
         offline: []
     mariadb:
-      status: planned
-      note: MariaDB unique constraints are planned after the dialect exists.
+      status: supported
       evidence:
-        online: []
+        online:
+        - case: mysql_mariadb_advanced_index_inspection
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
         offline: []
+
 - id: check_constraints
   label: Check constraints
   dialects:
@@ -2621,11 +2812,17 @@ rows:
           - verify
         offline: []
     mariadb:
-      status: planned
-      note: MariaDB check constraints are planned after the dialect exists.
+      status: supported
       evidence:
-        online: []
+        online:
+        - case: mysql_mariadb_advanced_index_inspection
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
         offline: []
+
 - id: indexes
   label: Indexes
   dialects:
@@ -2687,11 +2884,17 @@ rows:
           - verify
         offline: []
     mariadb:
-      status: planned
-      note: MariaDB indexes are planned after the dialect exists.
+      status: supported
       evidence:
-        online: []
+        online:
+        - case: mysql_mariadb_advanced_index_inspection
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
         offline: []
+
 - id: partial_indexes
   label: Partial indexes
   dialects:
@@ -2968,11 +3171,14 @@ rows:
       note: MySQL stored functions are accepted as opaque SQL offline; live function
         inspection and verification are not yet accepted evidence.
     mariadb:
-      status: planned
-      note: MariaDB stored function support is not implemented.
+      status: partial
       evidence:
+        offline:
+        - case: mariadb_create_function_parse_error
+          assertions: [parser, schema_or_error]
         online: []
-        offline: []
+      note: MariaDB stored functions are accepted as opaque SQL offline; live function inspection and verification are not yet accepted evidence.
+
 - id: trigger_query_objects
   label: Trigger query schema objects
   dialects:
@@ -3023,11 +3229,14 @@ rows:
       note: MySQL triggers are accepted as opaque SQL offline; live trigger inspection
         and verification are not yet accepted evidence.
     mariadb:
-      status: planned
-      note: MariaDB triggers are planned after the dialect exists.
+      status: partial
       evidence:
+        offline:
+        - case: mariadb_create_trigger
+          assertions: [parser, schema_or_error]
         online: []
-        offline: []
+      note: MariaDB triggers are accepted as opaque SQL offline; live trigger inspection and verification are not yet accepted evidence.
+
 - id: views
   label: Views as opaque schema objects
   dialects:
@@ -3082,11 +3291,16 @@ rows:
       note: Opaque view creation and inspection coexistence are live-tested; missing-view
         presence drift and repair are not yet accepted evidence.
     mariadb:
-      status: planned
-      note: MariaDB views are planned after the dialect exists.
+      status: partial
       evidence:
-        online: []
+        online:
+        - case: mysql_opaque_objects
+          checks:
+          - verify
         offline: []
+      note: Opaque view creation and inspection coexistence are live-tested; missing-view
+        presence drift and repair are not yet accepted evidence.
+
 - id: raw_sql_statements
   label: Raw SQL statements
   dialects:
@@ -3138,11 +3352,19 @@ rows:
           - verify
         offline: []
     mariadb:
-      status: planned
-      note: MariaDB raw SQL execution is planned after the executor exists.
+      status: supported
       evidence:
-        online: []
+        online:
+        - case: mysql_lifecycle_tracking
+          checks:
+          - migrate_twice
+          - migration_records
+          - data
+        - case: mysql_opaque_objects
+          checks:
+          - verify
         offline: []
+
 - id: sqlite_table_rebuilds
   label: SQLite table-rebuild planner for ALTER TABLE
   dialects:
@@ -3423,8 +3645,13 @@ rows:
           - verify
         offline: []
     mariadb:
-      status: planned
-      note: MariaDB verify is not implemented yet.
+      status: supported
       evidence:
-        online: []
+        online:
+        - case: mysql_column_default_drift
+          checks:
+          - verify
+        - case: verify_no_drift_representative_schema
+          checks:
+          - verify
         offline: []

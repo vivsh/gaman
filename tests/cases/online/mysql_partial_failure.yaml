@@ -2,7 +2,7 @@ description: MySQL reports non-transactional partial failure without recording t
 features: [live_migration_application, non_transactional_failure_reporting, migration_tracking, tables_columns]
 migrations: []
 dialects:
-  mysql:
+  mysql: &family
     checks: [migrate, error, migration_records, data]
     expect_error: missing_table
     migrations:
@@ -20,3 +20,4 @@ dialects:
     data:
     - sql: SELECT CAST(COUNT(*) AS CHAR) FROM partial_rows
       expect: ['0']
+  mariadb: *family

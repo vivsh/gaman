@@ -741,7 +741,7 @@ async fn fetch_extensions(
         .collect())
 }
 
-/// Reflects sequence identities without reading mutable counter state.
+/// Reflects standalone sequence identities without exposing column-owned implementation sequences.
 async fn fetch_sequences(
     conn: &mut PgConnection,
     schemas: &[String],
@@ -751,6 +751,14 @@ async fn fetch_sequences(
          FROM pg_class c \
          JOIN pg_namespace n ON n.oid = c.relnamespace \
          WHERE c.relkind = 'S' AND n.nspname = ANY($1) \
+         AND NOT EXISTS ( \
+             SELECT 1 FROM pg_depend d \
+             WHERE d.classid = 'pg_class'::regclass \
+             AND d.objid = c.oid \
+             AND d.refclassid = 'pg_class'::regclass \
+             AND d.refobjsubid > 0 \
+             AND d.deptype IN ('a', 'i') \
+         ) \
          ORDER BY n.nspname, c.relname",
     )
     .bind(schemas)

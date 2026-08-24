@@ -1,0 +1,16 @@
+---
+description: MariaDB triggers are accepted as opaque table-owned entities.
+group: parser
+features:
+- group.parser
+- kind.parser
+- parser.mariadb.parser_mariadb_create_trigger
+kind: parser
+parser_dialect: mariadb
+sql: |
+  CREATE TABLE users (created_at timestamp);
+  CREATE TRIGGER users_bi
+  BEFORE INSERT ON users
+  FOR EACH ROW SET NEW.created_at = NOW();
+expect_parse: ok
+expect_lowering: ok

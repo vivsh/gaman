@@ -13,7 +13,10 @@ dialects:
             name: tasks
             columns:
             - {name: id, type: INT, primary_key: true}
-            - {name: status, type: VARCHAR(32), default: "'todo'"}
+            - name: status
+              type: VARCHAR(32)
+              default: "'todo'"
+              mysql: {character_set: utf8mb4, collation: utf8mb4_0900_ai_ci}
     mutate_sql: ALTER TABLE tasks ALTER COLUMN status SET DEFAULT 'done';
     expect_verification:
       findings:
@@ -37,3 +40,41 @@ dialects:
           type: VARCHAR(32)
           default: "'todo'"
           mysql: {character_set: utf8mb4, collation: utf8mb4_0900_ai_ci}
+  mariadb:
+    checks: [verify]
+    migrations:
+    - id: 0001_mariadb_tasks
+      atomic: false
+      operations:
+        - type: create_table
+          table:
+            name: tasks
+            columns:
+            - {name: id, type: INT, primary_key: true}
+            - name: status
+              type: VARCHAR(32)
+              default: "'todo'"
+              mariadb: {character_set: utf8mb4, collation: utf8mb4_unicode_ci}
+    mutate_sql: ALTER TABLE tasks ALTER COLUMN status SET DEFAULT 'done';
+    expect_verification:
+      findings:
+      - operation: alter_column
+        entity_kind: column
+        entity_name: tasks.status
+        property: default
+        expected: "'todo'"
+        observed: "'done'"
+        note: null
+      operations:
+      - type: alter_column
+        table_name: tasks
+        old:
+          name: status
+          type: varchar(32)
+          default: "'done'"
+          mariadb: {character_set: utf8mb4, collation: utf8mb4_unicode_ci}
+        new:
+          name: status
+          type: VARCHAR(32)
+          default: "'todo'"
+          mariadb: {character_set: utf8mb4, collation: utf8mb4_unicode_ci}

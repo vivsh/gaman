@@ -55,7 +55,7 @@ struct ColumnRow {
     is_nullable: String,
     column_default: Option<String>,
     extra: String,
-    generation_expression: String,
+    generation_expression: Option<String>,
     character_set_name: Option<String>,
     collation_name: Option<String>,
     column_comment: String,
@@ -137,16 +137,16 @@ async fn inspect(
     database: &str,
     dialect: Dialect,
 ) -> Result<Schema, ExecutorError> {
-    let tables: Vec<TableRow> = sqlx::query_as("SELECT TABLE_NAME table_name, CAST(ENGINE AS CHAR) engine, CAST(TABLE_COLLATION AS CHAR) table_collation, CAST(ROW_FORMAT AS CHAR) row_format, CAST(TABLE_COMMENT AS CHAR) table_comment FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' AND TABLE_NAME <> ? ORDER BY TABLE_NAME").bind(database).bind(TRACKING_TABLE).fetch_all(&mut *conn).await.map_err(|error| fetch("tables", error))?;
-    let columns: Vec<ColumnRow> = sqlx::query_as("SELECT c.TABLE_NAME table_name, c.COLUMN_NAME column_name, CAST(c.COLUMN_TYPE AS CHAR) column_type, CAST(c.DATA_TYPE AS CHAR) data_type, CAST(c.IS_NULLABLE AS CHAR) is_nullable, CAST(c.COLUMN_DEFAULT AS CHAR) column_default, CAST(c.EXTRA AS CHAR) extra, CAST(c.GENERATION_EXPRESSION AS CHAR) generation_expression, CAST(c.CHARACTER_SET_NAME AS CHAR) character_set_name, CAST(c.COLLATION_NAME AS CHAR) collation_name, CAST(c.COLUMN_COMMENT AS CHAR) column_comment FROM INFORMATION_SCHEMA.COLUMNS c JOIN INFORMATION_SCHEMA.TABLES t ON t.TABLE_SCHEMA=c.TABLE_SCHEMA AND t.TABLE_NAME=c.TABLE_NAME WHERE c.TABLE_SCHEMA = ? AND t.TABLE_TYPE='BASE TABLE' AND c.TABLE_NAME <> ? ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION").bind(database).bind(TRACKING_TABLE).fetch_all(&mut *conn).await.map_err(|error| fetch("columns", error))?;
-    let keys: Vec<KeyRow> = sqlx::query_as("SELECT tc.TABLE_NAME table_name, tc.CONSTRAINT_NAME constraint_name, CAST(tc.CONSTRAINT_TYPE AS CHAR) constraint_type, kcu.COLUMN_NAME column_name, CAST(kcu.ORDINAL_POSITION AS SIGNED) ordinal_position FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu ON kcu.CONSTRAINT_SCHEMA=tc.CONSTRAINT_SCHEMA AND kcu.TABLE_NAME=tc.TABLE_NAME AND kcu.CONSTRAINT_NAME=tc.CONSTRAINT_NAME WHERE tc.CONSTRAINT_SCHEMA=? AND tc.CONSTRAINT_TYPE IN ('PRIMARY KEY','UNIQUE') ORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION").bind(database).fetch_all(&mut *conn).await.map_err(|error| fetch("keys", error))?;
-    let foreign_keys: Vec<ForeignKeyRow> = sqlx::query_as("SELECT kcu.TABLE_NAME table_name, kcu.CONSTRAINT_NAME constraint_name, kcu.COLUMN_NAME column_name, kcu.REFERENCED_TABLE_NAME referenced_table_name, kcu.REFERENCED_COLUMN_NAME referenced_column_name, CAST(kcu.ORDINAL_POSITION AS SIGNED) ordinal_position, CAST(rc.DELETE_RULE AS CHAR) delete_rule, CAST(rc.UPDATE_RULE AS CHAR) update_rule FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc ON rc.CONSTRAINT_SCHEMA=kcu.CONSTRAINT_SCHEMA AND rc.CONSTRAINT_NAME=kcu.CONSTRAINT_NAME WHERE kcu.CONSTRAINT_SCHEMA=? AND kcu.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY kcu.TABLE_NAME, kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION").bind(database).fetch_all(&mut *conn).await.map_err(|error| fetch("foreign keys", error))?;
+    let tables: Vec<TableRow> = sqlx::query_as("SELECT CAST(TABLE_NAME AS CHAR) table_name, CAST(ENGINE AS CHAR) engine, CAST(TABLE_COLLATION AS CHAR) table_collation, CAST(ROW_FORMAT AS CHAR) row_format, CAST(TABLE_COMMENT AS CHAR) table_comment FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' AND TABLE_NAME <> ? ORDER BY TABLE_NAME").bind(database).bind(TRACKING_TABLE).fetch_all(&mut *conn).await.map_err(|error| fetch("tables", error))?;
+    let columns: Vec<ColumnRow> = sqlx::query_as("SELECT CAST(c.TABLE_NAME AS CHAR) table_name, CAST(c.COLUMN_NAME AS CHAR) column_name, CAST(c.COLUMN_TYPE AS CHAR) column_type, CAST(c.DATA_TYPE AS CHAR) data_type, CAST(c.IS_NULLABLE AS CHAR) is_nullable, CAST(c.COLUMN_DEFAULT AS CHAR) column_default, CAST(c.EXTRA AS CHAR) extra, CAST(c.GENERATION_EXPRESSION AS CHAR) generation_expression, CAST(c.CHARACTER_SET_NAME AS CHAR) character_set_name, CAST(c.COLLATION_NAME AS CHAR) collation_name, CAST(c.COLUMN_COMMENT AS CHAR) column_comment FROM INFORMATION_SCHEMA.COLUMNS c JOIN INFORMATION_SCHEMA.TABLES t ON t.TABLE_SCHEMA=c.TABLE_SCHEMA AND t.TABLE_NAME=c.TABLE_NAME WHERE c.TABLE_SCHEMA = ? AND t.TABLE_TYPE='BASE TABLE' AND c.TABLE_NAME <> ? ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION").bind(database).bind(TRACKING_TABLE).fetch_all(&mut *conn).await.map_err(|error| fetch("columns", error))?;
+    let keys: Vec<KeyRow> = sqlx::query_as("SELECT CAST(tc.TABLE_NAME AS CHAR) table_name, CAST(tc.CONSTRAINT_NAME AS CHAR) constraint_name, CAST(tc.CONSTRAINT_TYPE AS CHAR) constraint_type, CAST(kcu.COLUMN_NAME AS CHAR) column_name, CAST(kcu.ORDINAL_POSITION AS SIGNED) ordinal_position FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu ON kcu.CONSTRAINT_SCHEMA=tc.CONSTRAINT_SCHEMA AND kcu.TABLE_NAME=tc.TABLE_NAME AND kcu.CONSTRAINT_NAME=tc.CONSTRAINT_NAME WHERE tc.CONSTRAINT_SCHEMA=? AND tc.CONSTRAINT_TYPE IN ('PRIMARY KEY','UNIQUE') ORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION").bind(database).fetch_all(&mut *conn).await.map_err(|error| fetch("keys", error))?;
+    let foreign_keys: Vec<ForeignKeyRow> = sqlx::query_as("SELECT CAST(kcu.TABLE_NAME AS CHAR) table_name, CAST(kcu.CONSTRAINT_NAME AS CHAR) constraint_name, CAST(kcu.COLUMN_NAME AS CHAR) column_name, CAST(kcu.REFERENCED_TABLE_NAME AS CHAR) referenced_table_name, CAST(kcu.REFERENCED_COLUMN_NAME AS CHAR) referenced_column_name, CAST(kcu.ORDINAL_POSITION AS SIGNED) ordinal_position, CAST(rc.DELETE_RULE AS CHAR) delete_rule, CAST(rc.UPDATE_RULE AS CHAR) update_rule FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc ON rc.CONSTRAINT_SCHEMA=kcu.CONSTRAINT_SCHEMA AND rc.CONSTRAINT_NAME=kcu.CONSTRAINT_NAME WHERE kcu.CONSTRAINT_SCHEMA=? AND kcu.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY kcu.TABLE_NAME, kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION").bind(database).fetch_all(&mut *conn).await.map_err(|error| fetch("foreign keys", error))?;
     let index_sql = match dialect {
         Dialect::Mysql => {
-            "SELECT TABLE_NAME table_name, INDEX_NAME index_name, CAST(NON_UNIQUE AS SIGNED) non_unique, CAST(SEQ_IN_INDEX AS SIGNED) seq_in_index, COLUMN_NAME column_name, CAST(SUB_PART AS SIGNED) sub_part, CAST(COLLATION AS CHAR) collation, CAST(INDEX_TYPE AS CHAR) index_type, CAST(EXPRESSION AS CHAR) expression, CAST(IS_VISIBLE AS CHAR) enabled, CAST(INDEX_COMMENT AS CHAR) index_comment FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=? AND INDEX_NAME <> 'PRIMARY' ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX"
+            "SELECT CAST(TABLE_NAME AS CHAR) table_name, CAST(INDEX_NAME AS CHAR) index_name, CAST(NON_UNIQUE AS SIGNED) non_unique, CAST(SEQ_IN_INDEX AS SIGNED) seq_in_index, CAST(COLUMN_NAME AS CHAR) column_name, CAST(SUB_PART AS SIGNED) sub_part, CAST(COLLATION AS CHAR) collation, CAST(INDEX_TYPE AS CHAR) index_type, CAST(EXPRESSION AS CHAR) expression, CAST(IS_VISIBLE AS CHAR) enabled, CAST(INDEX_COMMENT AS CHAR) index_comment FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=? AND INDEX_NAME <> 'PRIMARY' ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX"
         }
         Dialect::Mariadb => {
-            "SELECT TABLE_NAME table_name, INDEX_NAME index_name, CAST(NON_UNIQUE AS SIGNED) non_unique, CAST(SEQ_IN_INDEX AS SIGNED) seq_in_index, COLUMN_NAME column_name, CAST(SUB_PART AS SIGNED) sub_part, CAST(COLLATION AS CHAR) collation, CAST(INDEX_TYPE AS CHAR) index_type, CAST(NULL AS CHAR) expression, CAST(IF(IGNORED='YES','NO','YES') AS CHAR) enabled, CAST(INDEX_COMMENT AS CHAR) index_comment FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=? AND INDEX_NAME <> 'PRIMARY' ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX"
+            "SELECT CAST(TABLE_NAME AS CHAR) table_name, CAST(INDEX_NAME AS CHAR) index_name, CAST(NON_UNIQUE AS SIGNED) non_unique, CAST(SEQ_IN_INDEX AS SIGNED) seq_in_index, CAST(COLUMN_NAME AS CHAR) column_name, CAST(SUB_PART AS SIGNED) sub_part, CAST(COLLATION AS CHAR) collation, CAST(INDEX_TYPE AS CHAR) index_type, CAST(NULL AS CHAR) expression, CAST(IF(IGNORED='YES','NO','YES') AS CHAR) enabled, CAST(INDEX_COMMENT AS CHAR) index_comment FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=? AND INDEX_NAME <> 'PRIMARY' ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX"
         }
         _ => {
             return Err(ExecutorError::Fetch(
@@ -159,10 +159,10 @@ async fn inspect(
         .fetch_all(&mut *conn)
         .await
         .map_err(|error| fetch("indexes", error))?;
-    let checks: Vec<CheckRow> = sqlx::query_as("SELECT tc.TABLE_NAME table_name, tc.CONSTRAINT_NAME constraint_name, CAST(cc.CHECK_CLAUSE AS CHAR) check_clause FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc JOIN INFORMATION_SCHEMA.CHECK_CONSTRAINTS cc ON cc.CONSTRAINT_SCHEMA=tc.CONSTRAINT_SCHEMA AND cc.CONSTRAINT_NAME=tc.CONSTRAINT_NAME WHERE tc.CONSTRAINT_SCHEMA=? AND tc.CONSTRAINT_TYPE='CHECK' ORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME").bind(database).fetch_all(&mut *conn).await.map_err(|error| fetch("checks", error))?;
-    let mut views: Vec<ViewRow> = sqlx::query_as("SELECT TABLE_NAME table_name FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA=? ORDER BY TABLE_NAME").bind(database).fetch_all(&mut *conn).await.map_err(|error| fetch("views", error))?;
-    let mut triggers: Vec<TriggerRow> = sqlx::query_as("SELECT TRIGGER_NAME trigger_name, EVENT_OBJECT_TABLE event_object_table FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA=? ORDER BY TRIGGER_NAME").bind(database).fetch_all(&mut *conn).await.map_err(|error| fetch("triggers", error))?;
-    let mut functions: Vec<FunctionRow> = sqlx::query_as("SELECT ROUTINE_NAME routine_name FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA=? AND ROUTINE_TYPE='FUNCTION' ORDER BY ROUTINE_NAME").bind(database).fetch_all(&mut *conn).await.map_err(|error| fetch("functions", error))?;
+    let checks: Vec<CheckRow> = sqlx::query_as("SELECT CAST(tc.TABLE_NAME AS CHAR) table_name, CAST(tc.CONSTRAINT_NAME AS CHAR) constraint_name, CAST(cc.CHECK_CLAUSE AS CHAR) check_clause FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc JOIN INFORMATION_SCHEMA.CHECK_CONSTRAINTS cc ON cc.CONSTRAINT_SCHEMA=tc.CONSTRAINT_SCHEMA AND cc.CONSTRAINT_NAME=tc.CONSTRAINT_NAME WHERE tc.CONSTRAINT_SCHEMA=? AND tc.CONSTRAINT_TYPE='CHECK' ORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME").bind(database).fetch_all(&mut *conn).await.map_err(|error| fetch("checks", error))?;
+    let mut views: Vec<ViewRow> = sqlx::query_as("SELECT CAST(TABLE_NAME AS CHAR) table_name FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA=? ORDER BY TABLE_NAME").bind(database).fetch_all(&mut *conn).await.map_err(|error| fetch("views", error))?;
+    let mut triggers: Vec<TriggerRow> = sqlx::query_as("SELECT CAST(TRIGGER_NAME AS CHAR) trigger_name, CAST(EVENT_OBJECT_TABLE AS CHAR) event_object_table FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA=? ORDER BY TRIGGER_NAME").bind(database).fetch_all(&mut *conn).await.map_err(|error| fetch("triggers", error))?;
+    let mut functions: Vec<FunctionRow> = sqlx::query_as("SELECT CAST(ROUTINE_NAME AS CHAR) routine_name FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA=? AND ROUTINE_TYPE='FUNCTION' ORDER BY ROUTINE_NAME").bind(database).fetch_all(&mut *conn).await.map_err(|error| fetch("functions", error))?;
     for view in &mut views {
         view.create_sql = show_create(
             &mut *conn,
@@ -321,11 +321,13 @@ fn assemble(
             name: row.column_name,
             col_type: row.column_type,
             nullable: row.is_nullable == "YES",
-            default: decoded_default(&row.data_type, row.column_default, &extra),
+            default: decoded_default(dialect, &row.data_type, row.column_default, &extra),
             primary_key: false,
             references: None,
             check: None,
-            generated: (!row.generation_expression.is_empty()).then_some(row.generation_expression),
+            generated: row
+                .generation_expression
+                .filter(|expression| !expression.is_empty()),
             generated_storage: if extra.contains("stored generated") {
                 Some(GeneratedStorage::Stored)
             } else if extra.contains("virtual generated") {
@@ -403,8 +405,21 @@ fn canonicalize_mariadb_json_alias(table: &mut Table, check: &CheckRow) -> bool 
 }
 
 /// Converts catalog defaults back into executable SQL without confusing literals and expressions.
-fn decoded_default(data_type: &str, value: Option<String>, extra: &str) -> Option<String> {
+fn decoded_default(
+    dialect: Dialect,
+    data_type: &str,
+    value: Option<String>,
+    extra: &str,
+) -> Option<String> {
     let value = value?;
+    if matches!(dialect, Dialect::Mariadb) {
+        if value.eq_ignore_ascii_case("NULL") {
+            return None;
+        }
+        if is_single_quoted_literal(&value) {
+            return Some(value);
+        }
+    }
     if extra.contains("default_generated")
         || is_default_keyword(&value)
         || is_numeric_type(data_type)
@@ -419,6 +434,10 @@ fn decoded_default(data_type: &str, value: Option<String>, extra: &str) -> Optio
         return Some(value);
     }
     Some(format!("'{}'", value.replace('\'', "''")))
+}
+
+fn is_single_quoted_literal(value: &str) -> bool {
+    value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'')
 }
 
 fn is_default_keyword(value: &str) -> bool {
@@ -442,6 +461,36 @@ fn is_numeric_type(value: &str) -> bool {
             | "real"
             | "year"
     )
+}
+
+#[cfg(test)]
+mod default_tests {
+    use super::decoded_default;
+    use gaman_core::dialects::Dialect;
+
+    /// MariaDB catalog string literals remain executable SQL without acquiring another quote layer.
+    #[test]
+    fn preserves_mariadb_quoted_string_defaults() {
+        let default = decoded_default(Dialect::Mariadb, "varchar", Some("'done'".to_string()), "");
+
+        assert_eq!(default.as_deref(), Some("'done'"));
+    }
+
+    /// MySQL catalog string values continue to receive SQL quoting during inspection.
+    #[test]
+    fn quotes_mysql_unquoted_string_defaults() {
+        let default = decoded_default(Dialect::Mysql, "varchar", Some("done".to_string()), "");
+
+        assert_eq!(default.as_deref(), Some("'done'"));
+    }
+
+    /// MariaDB's catalog sentinel for an absent default does not become an explicit SQL default.
+    #[test]
+    fn omits_mariadb_null_default_sentinel() {
+        let default = decoded_default(Dialect::Mariadb, "varchar", Some("NULL".to_string()), "");
+
+        assert_eq!(default, None);
+    }
 }
 
 fn apply_keys(schema: &mut Schema, rows: Vec<KeyRow>) {

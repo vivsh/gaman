@@ -2,7 +2,7 @@ description: MySQL preserves single-column foreign keys and update-delete action
 features: [live_migration_application, live_inspect_verify, single_primary_keys, single_foreign_keys, foreign_key_actions, data_preservation]
 migrations: []
 dialects:
-  mysql:
+  mysql: &family
     checks: [verify, data]
     migrations:
     - id: 0001_mysql_fk_actions
@@ -39,3 +39,4 @@ dialects:
     data:
     - sql: SELECT IF(parent_id IS NULL, 'null', 'value') FROM children WHERE id = 10
       expect: ['null']
+  mariadb: *family

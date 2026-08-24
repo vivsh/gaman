@@ -445,14 +445,19 @@ fn column_sql(column: &Column, flavor: FamilyFlavor) -> String {
             };
             sql.push_str(&format!(" {storage}"));
         }
-    } else if let Some(default) = &column.default {
+    }
+    if column.generated.is_none() || matches!(flavor, FamilyFlavor::Mysql) {
+        sql.push_str(if column.nullable {
+            " NULL"
+        } else {
+            " NOT NULL"
+        });
+    }
+    if column.generated.is_none()
+        && let Some(default) = &column.default
+    {
         sql.push_str(&format!(" DEFAULT {default}"));
     }
-    sql.push_str(if column.nullable {
-        " NULL"
-    } else {
-        " NOT NULL"
-    });
     if options.auto_increment {
         sql.push_str(" AUTO_INCREMENT");
     }
@@ -772,10 +777,16 @@ fn operation_sql(operation: &Operation, flavor: FamilyFlavor) -> Result<Vec<Stri
         } => Ok(vec![format!(
             "ALTER TABLE {} DROP {}",
             quote_name(table_name),
-            if matches!(constraint, Constraint::Unique { .. }) {
-                format!("INDEX {}", quote_ident(constraint.name()))
-            } else {
-                format!("CHECK {}", quote_ident(constraint.name()))
+            match (flavor, constraint) {
+                (_, Constraint::Unique { .. }) => {
+                    format!("INDEX {}", quote_ident(constraint.name()))
+                }
+                (FamilyFlavor::Mysql, Constraint::Check { .. } | Constraint::Opaque { .. }) => {
+                    format!("CHECK {}", quote_ident(constraint.name()))
+                }
+                (FamilyFlavor::Mariadb, Constraint::Check { .. } | Constraint::Opaque { .. }) => {
+                    format!("CONSTRAINT {}", quote_ident(constraint.name()))
+                }
             }
         )]),
         Operation::Statement { up, .. } => Ok(vec![up.clone()]),
@@ -897,6 +908,58 @@ mod tests {
             .expect("render mariadb table")
             .join("\n");
         assert!(sql.contains("PERSISTENT"));
+        assert!(!sql.contains("PERSISTENT NOT NULL"));
+        assert!(!sql.contains("PERSISTENT NULL"));
+    }
+
+    /// Verifies family column clauses and MariaDB check removal use accepted product syntax.
+    #[test]
+    fn renders_product_specific_mariadb_syntax() {
+        let schema = crate::parsers::parse_sql(
+            "CREATE TABLE events (changed_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)",
+            crate::dialects::Dialect::Mariadb,
+        )
+        .expect("parse MariaDB table");
+        let create = Migration {
+            id: "0001_events".to_string(),
+            dependencies: Vec::new(),
+            operations: vec![Operation::CreateTable {
+                table: schema.tables["events"].clone(),
+            }],
+            atomic: false,
+        };
+        let sql = migration_to_sql(FamilyFlavor::Mariadb, &create, &Schema::default())
+            .expect("render MariaDB table")
+            .join("\n");
+        assert!(
+            sql.contains("DATETIME NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")
+        );
+
+        let constraint = Constraint::Check {
+            name: "events_check".to_string(),
+            expression: "1 = 1".to_string(),
+        };
+        let mut start = schema;
+        start
+            .tables
+            .get_mut("events")
+            .expect("events table")
+            .constraints
+            .push(constraint.clone());
+        let drop = Migration {
+            id: "0002_check".to_string(),
+            dependencies: Vec::new(),
+            operations: vec![Operation::DropConstraint {
+                table_name: "events".to_string(),
+                constraint,
+            }],
+            atomic: false,
+        };
+        assert_eq!(
+            migration_to_sql(FamilyFlavor::Mariadb, &drop, &start)
+                .expect("render MariaDB check removal"),
+            ["ALTER TABLE `events` DROP CONSTRAINT `events_check`"]
+        );
     }
 
     /// Verifies modeled family DDL cannot claim multi-statement transaction atomicity.

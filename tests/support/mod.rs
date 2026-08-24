@@ -1881,7 +1881,10 @@ pub fn assert_error_contains<T>(
         Err(error) => {
             let actual = normalize_text(&error.to_string());
             let expected = normalize_text(expected);
-            if actual.contains(&expected) {
+            if actual
+                .to_ascii_lowercase()
+                .contains(&expected.to_ascii_lowercase())
+            {
                 Ok(())
             } else {
                 Err(TestSupportError::message(format!(

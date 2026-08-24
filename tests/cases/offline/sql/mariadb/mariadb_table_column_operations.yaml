@@ -1,10 +1,10 @@
-description: MySQL renders complete table and column mutation operations.
+description: MariaDB renders complete table and column mutation operations.
 group: sql_rendering
 features: [group.sql_rendering, kind.migration_to_sql, operation.create_table, operation.rename_table, operation.add_column, operation.rename_column, operation.alter_column, operation.drop_column, operation.drop_table]
-dialect: mysql
+dialect: mariadb
 kind: migration_to_sql
 migrations:
-- id: 0001_mysql_mutations
+- id: 0001_mariadb_mutations
   atomic: false
   operations:
   - type: create_table

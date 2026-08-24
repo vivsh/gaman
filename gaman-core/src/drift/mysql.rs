@@ -109,11 +109,15 @@ static FOREIGN_KEYS: &[ForeignKeyProperty] = &[
     },
     ForeignKeyProperty {
         name: "on_delete",
-        compare: |a, b, _| exact_option(&a.on_delete, &b.on_delete),
+        compare: |a, b, context| {
+            mysql_family::foreign_key_action(&a.on_delete, &b.on_delete, context)
+        },
     },
     ForeignKeyProperty {
         name: "on_update",
-        compare: |a, b, _| exact_option(&a.on_update, &b.on_update),
+        compare: |a, b, context| {
+            mysql_family::foreign_key_action(&a.on_update, &b.on_update, context)
+        },
     },
 ];
 static INDEXES: &[IndexProperty] = &[
@@ -142,10 +146,7 @@ fn column_type(a: &Column, b: &Column, ctx: DriftContext<'_>) -> PropertyMatch {
     )
 }
 fn column_default(a: &Column, b: &Column, ctx: DriftContext<'_>) -> PropertyMatch {
-    match (&a.default, &b.default) {
-        (Some(a), Some(b)) if ctx.dialect.default_expressions_equal(a, b) => PropertyMatch::Match,
-        _ => exact_option(&a.default, &b.default),
-    }
+    mysql_family::optional_expression(&a.default, &b.default, ctx)
 }
 fn optional_pin_charset(a: &Column, b: &Column, _: DriftContext<'_>) -> PropertyMatch {
     if mysql(a).character_set.is_none() {

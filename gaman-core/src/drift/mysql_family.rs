@@ -1,6 +1,7 @@
 //! Shared semantic comparison for MySQL-family catalog expressions.
 
-use crate::parsers::tokens::{SqlTokenKind, SqlTokenizer};
+use crate::dialects::Dialect;
+use crate::parsers::tokens::SqlTokenKind;
 use crate::states::{Column, Constraint, GeneratedStorage};
 
 use super::{DriftContext, PropertyMatch};
@@ -28,7 +29,7 @@ pub(super) fn optional_expression(
     match (expected, observed) {
         (None, None) => PropertyMatch::Match,
         (Some(expected), Some(observed))
-            if expressions_equal(context.dialect.tokenizer(), expected, observed) =>
+            if expressions_equal(&context.dialect, expected, observed) =>
         {
             PropertyMatch::Match
         }
@@ -65,6 +66,30 @@ pub(super) fn generated_storage(
             observed: format!("{observed:?}"),
             note: None,
         }
+    }
+}
+
+/// Treats omitted and explicit `RESTRICT` actions as the same family default.
+pub(super) fn foreign_key_action(
+    expected: &Option<String>,
+    observed: &Option<String>,
+    _: DriftContext<'_>,
+) -> PropertyMatch {
+    if effective_foreign_key_action(expected) == effective_foreign_key_action(observed) {
+        PropertyMatch::Match
+    } else {
+        PropertyMatch::Drift {
+            expected: expected.as_deref().unwrap_or("<none>").to_string(),
+            observed: observed.as_deref().unwrap_or("<none>").to_string(),
+            note: None,
+        }
+    }
+}
+
+fn effective_foreign_key_action(value: &Option<String>) -> Option<&str> {
+    match value.as_deref() {
+        None | Some("restrict") => None,
+        action => action,
     }
 }
 
@@ -105,13 +130,13 @@ fn effective_storage(column: &Column) -> Option<GeneratedStorage> {
     }
 }
 
-fn expressions_equal(tokenizer: &dyn SqlTokenizer, left: &str, right: &str) -> bool {
+fn expressions_equal(dialect: &Dialect, left: &str, right: &str) -> bool {
     if left == right {
         return true;
     }
     match (
-        expression_tokens(tokenizer, left),
-        expression_tokens(tokenizer, right),
+        expression_tokens(dialect, left),
+        expression_tokens(dialect, right),
     ) {
         (Ok(left), Ok(right)) => canonical_expression(&left) == canonical_expression(&right),
         _ => left == right,
@@ -165,10 +190,11 @@ fn split_logical<'a>(
 }
 
 fn expression_tokens(
-    tokenizer: &dyn SqlTokenizer,
+    dialect: &Dialect,
     source: &str,
 ) -> Result<Vec<ExpressionToken>, crate::parsers::tokens::TokenizeError> {
-    tokenizer
+    let tokens = dialect
+        .tokenizer()
         .tokenize(source)?
         .into_iter()
         .filter(|token| !token.is_trivia())
@@ -177,7 +203,11 @@ fn expression_tokens(
                 SqlTokenKind::LeftParen => ExpressionToken::LeftParen,
                 SqlTokenKind::RightParen => ExpressionToken::RightParen,
                 SqlTokenKind::Word { canonical, .. } => {
-                    ExpressionToken::Value(format!("word:{}", canonical.to_ascii_lowercase()))
+                    let mut canonical = canonical.to_ascii_lowercase();
+                    if matches!(dialect, Dialect::Mariadb) && canonical == "length" {
+                        canonical = "octet_length".to_string();
+                    }
+                    ExpressionToken::Value(format!("word:{canonical}"))
                 }
                 SqlTokenKind::QuotedIdentifier { value, .. } => {
                     ExpressionToken::Value(format!("word:{}", value.to_ascii_lowercase()))
@@ -187,7 +217,28 @@ fn expression_tokens(
             };
             Ok(value)
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(normalize_empty_temporal_calls(tokens))
+}
+
+/// Removes optional empty call syntax from SQL temporal keywords.
+fn normalize_empty_temporal_calls(tokens: Vec<ExpressionToken>) -> Vec<ExpressionToken> {
+    let mut normalized = Vec::with_capacity(tokens.len());
+    let mut index = 0;
+    while index < tokens.len() {
+        let temporal = matches!(tokens.get(index), Some(ExpressionToken::Value(value)) if matches!(value.as_str(), "word:current_timestamp" | "word:current_date" | "word:current_time" | "word:localtime" | "word:localtimestamp"));
+        if temporal
+            && tokens.get(index + 1) == Some(&ExpressionToken::LeftParen)
+            && tokens.get(index + 2) == Some(&ExpressionToken::RightParen)
+        {
+            normalized.push(tokens[index].clone());
+            index += 3;
+        } else {
+            normalized.push(tokens[index].clone());
+            index += 1;
+        }
+    }
+    normalized
 }
 
 fn strip_outer_parentheses(mut tokens: &[ExpressionToken]) -> &[ExpressionToken] {
@@ -223,23 +274,23 @@ fn wraps_expression(tokens: &[ExpressionToken]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parsers::tokens::MYSQL_TOKENIZER;
+    use crate::dialects::Dialect;
 
     /// Verifies catalog quoting, case, trivia, and outer parentheses are semantically ignored.
     #[test]
     fn compares_family_catalog_expressions() {
         assert!(expressions_equal(
-            &MYSQL_TOKENIZER,
+            &Dialect::Mysql,
             "length(email)",
             "( LENGTH(`email`) )"
         ));
         assert!(expressions_equal(
-            &MYSQL_TOKENIZER,
+            &Dialect::Mysql,
             "CURRENT_TIMESTAMP(6)",
             "current_timestamp(6)"
         ));
         assert!(expressions_equal(
-            &MYSQL_TOKENIZER,
+            &Dialect::Mysql,
             "confidence >= 0 AND confidence <= 1",
             "((`confidence` >= 0) and (`confidence` <= 1))"
         ));
@@ -249,12 +300,12 @@ mod tests {
     #[test]
     fn preserves_logical_grouping() {
         assert!(!expressions_equal(
-            &MYSQL_TOKENIZER,
+            &Dialect::Mysql,
             "a AND (b OR c)",
             "(a AND b) OR c"
         ));
         assert!(expressions_equal(
-            &MYSQL_TOKENIZER,
+            &Dialect::Mysql,
             "score BETWEEN 0 AND 1",
             "(score between 0 and 1)"
         ));
@@ -264,9 +315,38 @@ mod tests {
     #[test]
     fn preserves_string_literal_semantics() {
         assert!(!expressions_equal(
-            &MYSQL_TOKENIZER,
+            &Dialect::Mysql,
             "status = 'Open'",
             "status = 'open'"
         ));
+    }
+
+    /// Verifies MariaDB catalog aliases retain the same generated and temporal semantics.
+    #[test]
+    fn compares_mariadb_catalog_aliases() {
+        assert!(expressions_equal(
+            &Dialect::Mariadb,
+            "length(email)",
+            "octet_length(`email`)"
+        ));
+        assert!(expressions_equal(
+            &Dialect::Mariadb,
+            "CURRENT_TIMESTAMP",
+            "current_timestamp()"
+        ));
+    }
+
+    /// Verifies an omitted foreign-key action equals the family default of `RESTRICT`.
+    #[test]
+    fn compares_implicit_restrict_actions() {
+        assert_eq!(effective_foreign_key_action(&None), None);
+        assert_eq!(
+            effective_foreign_key_action(&Some("restrict".to_string())),
+            None
+        );
+        assert_eq!(
+            effective_foreign_key_action(&Some("cascade".to_string())),
+            Some("cascade")
+        );
     }
 }

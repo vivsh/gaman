@@ -1,4 +1,4 @@
-generation: 20260819T075134Z-95479
+generation: 20260824T161607Z-38144
 features:
   answer.keep_type:
     mariadb:
@@ -1112,8 +1112,16 @@ features:
       reason: no offline evidence recorded
   foreign_key_actions:
     mariadb:
-      status: skipped
-      reason: no offline evidence recorded
+      status: success
+      evidence:
+      - case: mariadb_fk_actions
+        description: MariaDB renders only supported foreign key actions.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: mariadb
+        assertions:
+        - migration_to_sql
+        - sql
     mysql:
       status: success
       evidence:
@@ -1869,8 +1877,18 @@ features:
         - sql
   group.end_to_end:
     mariadb:
-      status: skipped
-      reason: no offline evidence recorded
+      status: success
+      evidence:
+      - case: mariadb_create_table
+        description: MariaDB offline planning creates replays and renders a modeled table.
+        group: end_to_end
+        kind: end_to_end
+        dialect: mariadb
+        assertions:
+        - end_to_end
+        - operations
+        - replayed_schema
+        - sql
     mysql:
       status: success
       evidence:
@@ -1902,8 +1920,24 @@ features:
       reason: no offline evidence recorded
   group.parser:
     mariadb:
-      status: skipped
-      reason: no offline evidence recorded
+      status: success
+      evidence:
+      - case: mariadb_create_function_parse_error
+        description: MariaDB stored functions are accepted through opaque source fallback.
+        group: parser
+        kind: parser
+        dialect: mariadb
+        assertions:
+        - parser
+        - schema_or_error
+      - case: mariadb_create_trigger
+        description: MariaDB triggers are accepted as opaque table-owned entities.
+        group: parser
+        kind: parser
+        dialect: mariadb
+        assertions:
+        - parser
+        - schema_or_error
     mysql:
       status: success
       evidence:
@@ -2313,8 +2347,24 @@ features:
         assertions:
         - migration_to_sql
         - sql
+      - case: mariadb_fk_actions
+        description: MariaDB renders only supported foreign key actions.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: mariadb
+        assertions:
+        - migration_to_sql
+        - sql
       - case: mariadb_generated_persistent
         description: MariaDB renders stored generated columns using PERSISTENT.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: mariadb
+        assertions:
+        - migration_to_sql
+        - sql
+      - case: mariadb_table_column_operations
+        description: MariaDB renders complete table and column mutation operations.
         group: sql_rendering
         kind: migration_to_sql
         dialect: mariadb
@@ -2797,8 +2847,18 @@ features:
         - sql
   kind.end_to_end:
     mariadb:
-      status: skipped
-      reason: no offline evidence recorded
+      status: success
+      evidence:
+      - case: mariadb_create_table
+        description: MariaDB offline planning creates replays and renders a modeled table.
+        group: end_to_end
+        kind: end_to_end
+        dialect: mariadb
+        assertions:
+        - end_to_end
+        - operations
+        - replayed_schema
+        - sql
     mysql:
       status: success
       evidence:
@@ -2925,8 +2985,24 @@ features:
         assertions:
         - migration_to_sql
         - sql
+      - case: mariadb_fk_actions
+        description: MariaDB renders only supported foreign key actions.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: mariadb
+        assertions:
+        - migration_to_sql
+        - sql
       - case: mariadb_generated_persistent
         description: MariaDB renders stored generated columns using PERSISTENT.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: mariadb
+        assertions:
+        - migration_to_sql
+        - sql
+      - case: mariadb_table_column_operations
+        description: MariaDB renders complete table and column mutation operations.
         group: sql_rendering
         kind: migration_to_sql
         dialect: mariadb
@@ -3296,8 +3372,24 @@ features:
         - sql
   kind.parser:
     mariadb:
-      status: skipped
-      reason: no offline evidence recorded
+      status: success
+      evidence:
+      - case: mariadb_create_function_parse_error
+        description: MariaDB stored functions are accepted through opaque source fallback.
+        group: parser
+        kind: parser
+        dialect: mariadb
+        assertions:
+        - parser
+        - schema_or_error
+      - case: mariadb_create_trigger
+        description: MariaDB triggers are accepted as opaque table-owned entities.
+        group: parser
+        kind: parser
+        dialect: mariadb
+        assertions:
+        - parser
+        - schema_or_error
     mysql:
       status: success
       evidence:
@@ -3557,8 +3649,18 @@ features:
         - schema_or_error
   kind.schema_to_migration:
     mariadb:
-      status: skipped
-      reason: no offline evidence recorded
+      status: success
+      evidence:
+      - case: mariadb_create_table
+        description: MariaDB offline planning creates replays and renders a modeled table.
+        group: end_to_end
+        kind: end_to_end
+        dialect: mariadb
+        assertions:
+        - end_to_end
+        - operations
+        - replayed_schema
+        - sql
     mysql:
       status: success
       evidence:
@@ -4467,8 +4569,16 @@ features:
       reason: no offline evidence recorded
   operation.add_column:
     mariadb:
-      status: skipped
-      reason: no offline evidence recorded
+      status: success
+      evidence:
+      - case: mariadb_table_column_operations
+        description: MariaDB renders complete table and column mutation operations.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: mariadb
+        assertions:
+        - migration_to_sql
+        - sql
     mysql:
       status: success
       evidence:
@@ -4591,8 +4701,16 @@ features:
         - sql
   operation.alter_column:
     mariadb:
-      status: skipped
-      reason: no offline evidence recorded
+      status: success
+      evidence:
+      - case: mariadb_table_column_operations
+        description: MariaDB renders complete table and column mutation operations.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: mariadb
+        assertions:
+        - migration_to_sql
+        - sql
     mysql:
       status: success
       evidence:
@@ -4800,8 +4918,26 @@ features:
       reason: no offline evidence recorded
   operation.create_table:
     mariadb:
-      status: skipped
-      reason: no offline evidence recorded
+      status: success
+      evidence:
+      - case: mariadb_create_table
+        description: MariaDB offline planning creates replays and renders a modeled table.
+        group: end_to_end
+        kind: end_to_end
+        dialect: mariadb
+        assertions:
+        - end_to_end
+        - operations
+        - replayed_schema
+        - sql
+      - case: mariadb_table_column_operations
+        description: MariaDB renders complete table and column mutation operations.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: mariadb
+        assertions:
+        - migration_to_sql
+        - sql
     mysql:
       status: success
       evidence:
@@ -4891,8 +5027,16 @@ features:
       reason: no offline evidence recorded
   operation.drop_column:
     mariadb:
-      status: skipped
-      reason: no offline evidence recorded
+      status: success
+      evidence:
+      - case: mariadb_table_column_operations
+        description: MariaDB renders complete table and column mutation operations.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: mariadb
+        assertions:
+        - migration_to_sql
+        - sql
     mysql:
       status: success
       evidence:
@@ -5056,8 +5200,16 @@ features:
       reason: no offline evidence recorded
   operation.drop_table:
     mariadb:
-      status: skipped
-      reason: no offline evidence recorded
+      status: success
+      evidence:
+      - case: mariadb_table_column_operations
+        description: MariaDB renders complete table and column mutation operations.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: mariadb
+        assertions:
+        - migration_to_sql
+        - sql
     mysql:
       status: success
       evidence:
@@ -5152,8 +5304,16 @@ features:
       reason: no offline evidence recorded
   operation.rename_column:
     mariadb:
-      status: skipped
-      reason: no offline evidence recorded
+      status: success
+      evidence:
+      - case: mariadb_table_column_operations
+        description: MariaDB renders complete table and column mutation operations.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: mariadb
+        assertions:
+        - migration_to_sql
+        - sql
     mysql:
       status: success
       evidence:
@@ -5206,8 +5366,16 @@ features:
       reason: no offline evidence recorded
   operation.rename_table:
     mariadb:
-      status: skipped
-      reason: no offline evidence recorded
+      status: success
+      evidence:
+      - case: mariadb_table_column_operations
+        description: MariaDB renders complete table and column mutation operations.
+        group: sql_rendering
+        kind: migration_to_sql
+        dialect: mariadb
+        assertions:
+        - migration_to_sql
+        - sql
     mysql:
       status: success
       evidence:
@@ -5276,6 +5444,48 @@ features:
         assertions:
         - migration_to_sql
         - sql
+    sqlite:
+      status: skipped
+      reason: no offline evidence recorded
+  parser.mariadb.parser_mariadb_create_function_parse_error:
+    mariadb:
+      status: success
+      evidence:
+      - case: mariadb_create_function_parse_error
+        description: MariaDB stored functions are accepted through opaque source fallback.
+        group: parser
+        kind: parser
+        dialect: mariadb
+        assertions:
+        - parser
+        - schema_or_error
+    mysql:
+      status: skipped
+      reason: no offline evidence recorded
+    postgres:
+      status: skipped
+      reason: no offline evidence recorded
+    sqlite:
+      status: skipped
+      reason: no offline evidence recorded
+  parser.mariadb.parser_mariadb_create_trigger:
+    mariadb:
+      status: success
+      evidence:
+      - case: mariadb_create_trigger
+        description: MariaDB triggers are accepted as opaque table-owned entities.
+        group: parser
+        kind: parser
+        dialect: mariadb
+        assertions:
+        - parser
+        - schema_or_error
+    mysql:
+      status: skipped
+      reason: no offline evidence recorded
+    postgres:
+      status: skipped
+      reason: no offline evidence recorded
     sqlite:
       status: skipped
       reason: no offline evidence recorded

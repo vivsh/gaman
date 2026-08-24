@@ -315,6 +315,14 @@ features:
   label: parser / mysql / parser mysql create trigger
   category: parser
   dialect: mysql
+- id: parser.mariadb.parser_mariadb_create_function_parse_error
+  label: parser / mariadb / parser mariadb create function parse error
+  category: parser
+  dialect: mariadb
+- id: parser.mariadb.parser_mariadb_create_trigger
+  label: parser / mariadb / parser mariadb create trigger
+  category: parser
+  dialect: mariadb
 - id: parser.postgres.parser_postgres_comment_unsupported
   label: parser / postgres / parser postgres comment unsupported
   category: parser

@@ -26,4 +26,4 @@ migrations:
           invisible: true
           comment: private
 expect_sql: |
-  CREATE TABLE `users` (`id` BIGINT NOT NULL AUTO_INCREMENT, `code` VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT 'unknown' NOT NULL INVISIBLE COMMENT 'private', CONSTRAINT `users_pkey` PRIMARY KEY (`id`))
+      CREATE TABLE `users` (`id` BIGINT NOT NULL AUTO_INCREMENT, `code` VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT 'unknown' INVISIBLE COMMENT 'private', CONSTRAINT `users_pkey` PRIMARY KEY (`id`))

@@ -2,7 +2,7 @@ description: MySQL opaque views coexist with modeled verification.
 features: [live_migration_application, live_inspect_verify, views_opaque, raw_sql_statements]
 migrations: []
 dialects:
-  mysql:
+  mysql: &family
     checks: [verify]
     migrations:
     - id: 0001_mysql_opaque_objects
@@ -20,3 +20,4 @@ dialects:
     expect_verification:
       findings: []
       operations: []
+  mariadb: *family

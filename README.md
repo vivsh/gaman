@@ -203,6 +203,9 @@ Configuration can also come from environment variables:
 
 Run `gaman --help` or `gaman <command> --help` for the complete option set.
 
+For a concise overview of Gaman's lifecycle and ownership boundaries, see
+[Architecture](ARCHITECTURE.md).
+
 ## Database Support
 
 Migration files are dialect-specific. Gaman does not pretend that one migration
@@ -211,36 +214,66 @@ is portable across engines.
 Legend: ✅ accepted evidence, ◐ bounded support, 🚧 planned or not evidenced
 yet, ❌ unsupported by design or by the database engine.
 
+Gaman targets a consistent migration lifecycle across PostgreSQL, SQLite, MySQL, and MariaDB. Capability parity is intentionally not a goal: each dialect exposes only behavior that its database can support reliably. Unsupported operations fail clearly, and dialect support claims require independent live evidence.
+
 <!-- gaman:support-matrix:start -->
-<!-- evidence-generation: 20260819T075134Z-95479 -->
+<!-- evidence-generation: 20260824T161607Z-38144 -->
 | Feature | PostgreSQL | SQLite | MySQL | MariaDB |
 | --- | --- | --- | --- | --- |
-| Offline replay, diff, and migration generation | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
-| Live migration application | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
-| Live database introspection | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
-| Live `verify_db` | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
-| Tables: create, drop, rename | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
-| Columns: add, drop, rename | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
-| Columns: type, nullability, default changes | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
-| Multi-column / composite primary keys | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
-| Single-column foreign keys | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
-| Multi-column / composite foreign keys | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
-| Unique constraints | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
-| Indexes | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Offline replay, diff, and migration generation | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) |
+| Live migration application | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) |
+| Live database introspection | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) |
+| Live `verify_db` | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) |
+| Tables: create, drop, rename | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) |
+| Columns: add, drop, rename | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) |
+| Columns: type, nullability, default changes | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) |
+| Multi-column / composite primary keys | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) |
+| Single-column foreign keys | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) |
+| Multi-column / composite foreign keys | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) |
+| Unique constraints | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) |
+| Indexes | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) |
 | Extensions as opaque schema objects | [✅](docs/support-evidence.md#lifecycle-compatibility) | [❌](docs/support-evidence.md#lifecycle-compatibility) | [❌](docs/support-evidence.md#lifecycle-compatibility) | [❌](docs/support-evidence.md#lifecycle-compatibility) |
 | Enums | [✅](docs/support-evidence.md#lifecycle-compatibility) | [❌](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
-| Functions as opaque schema objects | [✅](docs/support-evidence.md#lifecycle-compatibility) | [❌](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
-| Trigger query schema objects | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [🚧](docs/support-evidence.md#lifecycle-compatibility) |
+| Functions as opaque schema objects | [✅](docs/support-evidence.md#lifecycle-compatibility) | [❌](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) |
+| Trigger query schema objects | [✅](docs/support-evidence.md#lifecycle-compatibility) | [✅](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) | [◐](docs/support-evidence.md#lifecycle-compatibility) |
 <!-- gaman:support-matrix:end -->
 
 PostgreSQL has the broadest coverage. SQLite uses engine-specific table rebuilds
-for changes its native `ALTER TABLE` cannot express. MySQL support is useful but
-still bounded in parts of the live lifecycle. MariaDB has parser and offline
-coverage but does not yet have accepted live-server evidence.
+for changes its native `ALTER TABLE` cannot express. MySQL and MariaDB are tested
+independently rather than treated as interchangeable products. The generated
+matrix above and its linked evidence are authoritative; a dialect gains a
+support claim only after its dedicated evidence is accepted. Older MySQL and
+MariaDB release lines are rejected before migration work begins.
 
 The [detailed support evidence](docs/support-evidence.md) is authoritative. It
 contains the complete feature matrix, limitations, parser boundaries, live
 fixtures, and the exact properties used by drift verification.
+
+### Reproducible MySQL-family tests
+
+The independent `dbharness` project provides disposable servers for live
+compatibility testing. Gaman's online fixtures create temporary databases, so
+they must receive the harness's administrative URL rather than its application
+URL:
+
+```bash
+HARNESS=../dbharness/bin/dbharness
+TARGET=mysql:8.4
+NAMESPACE=gaman-mysql84
+trap '"$HARNESS" down "$TARGET" --namespace "$NAMESPACE"' EXIT
+
+"$HARNESS" up "$TARGET" --namespace "$NAMESPACE"
+eval "$("$HARNESS" env "$TARGET" --namespace "$NAMESPACE" --prefix MYSQL)"
+export MYSQL_DATABASE_URL="$MYSQL_ADMIN_DATABASE_URL"
+cargo test -p gaman --features mysql --test online -- --dialect mysql
+```
+
+Use `mariadb:11.4` or `mariadb:11.8`, the `MARIADB` prefix, and the `mariadb`
+Cargo feature/dialect for MariaDB. The same suite confirms that MySQL 8.0 and
+MariaDB 10.11 fail at Gaman's intentional minimum-version gate.
+
+Local test success is diagnostic evidence; it does not update the published
+support matrix until the complete evidence gate succeeds.
 
 ## Schema Input
 
@@ -330,7 +363,6 @@ reviewable SQL, and deployment verification should remain distinct.
 - `inspect` is broader than `verify`: reflection helps onboarding, while drift
   comparison includes only properties a dialect can recover deterministically.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete lifecycle contract.
 
 ## Ecosystem
 
@@ -340,7 +372,6 @@ standalone CLI.
 
 ## Project Documentation
 
-- [Architecture](ARCHITECTURE.md)
 - [Testing](TESTING.md)
 - [Detailed support evidence](docs/support-evidence.md)
 - [Command protocol](docs/command-protocol.md)
