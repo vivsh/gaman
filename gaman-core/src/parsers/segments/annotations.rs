@@ -60,7 +60,11 @@ pub(super) fn parse(source: &str) -> Result<(Vec<SqlAnnotation>, String), String
                     }),
                     _ => return Err(format!("unknown SQL annotation '@{directive}'")),
                 }
-                stripped.extend(content.chars().map(|character| if character == '\r' { '\r' } else { ' ' }));
+                stripped.extend(
+                    content
+                        .chars()
+                        .map(|character| if character == '\r' { '\r' } else { ' ' }),
+                );
                 stripped.push_str(newline);
                 start_byte += line.len();
                 continue;
@@ -85,7 +89,9 @@ mod tests {
     fn parses_only_leading_dependency_annotations() {
         let (annotations, _) = parse("-- @depends-on function::daily(date)\nCREATE FUNCTION daily_report() RETURNS int LANGUAGE sql AS $$ -- @unknown x\nSELECT 1 $$")
             .expect("annotation parsing");
-        assert!(matches!(annotations.as_slice(), [SqlAnnotation::DependsOn { dependency, span }] if dependency.target == "daily(date)" && span.line == 1));
+        assert!(
+            matches!(annotations.as_slice(), [SqlAnnotation::DependsOn { dependency, span }] if dependency.target == "daily(date)" && span.line == 1)
+        );
     }
 
     /// Verifies unknown reserved leading annotations fail instead of being silently ignored.
@@ -100,7 +106,14 @@ mod tests {
         let source = "-- @depends-on function::daily()\nCREATE FUNCTION report() RETURNS int LANGUAGE sql AS $$\n-- @depends-on ignored\nSELECT 1 $$";
         let (_, stripped) = parse(source).expect("annotation parsing");
         assert_eq!(source.len(), stripped.len());
-        assert!(stripped.lines().next().expect("directive line").trim().is_empty());
+        assert!(
+            stripped
+                .lines()
+                .next()
+                .expect("directive line")
+                .trim()
+                .is_empty()
+        );
         assert!(stripped.contains("-- @depends-on ignored"));
     }
 }

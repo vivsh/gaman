@@ -3,12 +3,12 @@ use std::collections::BTreeMap;
 use sqlx::PgConnection;
 
 use super::{BoxFuture, ExecutorError, InspectionError, SchemaInspector};
-use gaman_core::{Dialect, TRACKING_TABLE};
 use gaman_core::states::{
     Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, OpaqueMeta,
-    PrimaryKey, Schema, SequenceDef, Table, TableOptionsMeta, TriggerDef, TriggerEvent, TriggerScope,
-    TriggerTiming, ViewDef, Volatility, schema_qualified_key,
+    PrimaryKey, Schema, SequenceDef, Table, TableOptionsMeta, TriggerDef, TriggerEvent,
+    TriggerScope, TriggerTiming, ViewDef, Volatility, schema_qualified_key,
 };
+use gaman_core::{Dialect, TRACKING_TABLE};
 
 /// Wraps a live Postgres connection and manages transaction boundaries explicitly.
 /// Call `begin()` before a migration and `commit()` or `rollback()` after.
@@ -760,10 +760,8 @@ async fn fetch_sequences(
     Ok(rows
         .into_iter()
         .map(|row| {
-            let sequence = SequenceDef::trusted_identity(
-                row.name,
-                schema_for_output(&row.schema_name),
-            );
+            let sequence =
+                SequenceDef::trusted_identity(row.name, schema_for_output(&row.schema_name));
             (sequence.qualified_name(), sequence)
         })
         .collect())

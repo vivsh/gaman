@@ -4,7 +4,6 @@ use sqlparser::parser::Parser;
 
 use super::error::ParseError;
 use super::segments::{SqlObjectName, SqlSegment, SqlStatementKind, segment_sql};
-use std::collections::BTreeSet;
 use super::table_recovery::recover_table_sql;
 use super::tokens::{SqlToken, SqlTokenKind};
 use super::{postgres, sqlite};
@@ -14,6 +13,7 @@ use crate::states::{
     EnumDef, ExtensionDef, FunctionDef, Index, OpaqueMeta, Schema, SequenceDef, Table, TriggerDef,
     ViewDef, schema_qualified_key,
 };
+use std::collections::BTreeSet;
 
 /// One classifiable opaque CREATE declaration shared by SQL and Rust ingestion.
 #[derive(Debug)]
@@ -223,7 +223,12 @@ pub(crate) fn parse_sql_raw(sql: &str, dialect: Dialect) -> Result<Schema, Parse
     let segments = segment_sql(sql, dialect)?;
     let mut ctx = ParseContext::new();
     for segment in segments {
-        let functions_before = ctx.schema.functions.keys().cloned().collect::<BTreeSet<_>>();
+        let functions_before = ctx
+            .schema
+            .functions
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
         ensure_schema_segment(&segment, dialect)?;
         if matches!(segment.kind, Some(SqlStatementKind::Ddl(ref ddl)) if ddl.entity == EntityKind::Sequence)
         {
@@ -285,7 +290,8 @@ fn apply_function_annotations(
     if segment.annotations.is_empty() {
         return Ok(());
     }
-    if !matches!(segment.kind, Some(SqlStatementKind::Ddl(ref ddl)) if ddl.entity == EntityKind::Function) {
+    if !matches!(segment.kind, Some(SqlStatementKind::Ddl(ref ddl)) if ddl.entity == EntityKind::Function)
+    {
         return Err(ParseError::unsupported(
             dialect,
             segment.sql.clone(),
@@ -307,7 +313,11 @@ fn apply_function_annotations(
         ));
     }
     let function = ctx.schema.functions.get_mut(&keys[0]).ok_or_else(|| {
-        ParseError::unsupported(dialect, segment.sql.clone(), "annotated function disappeared during lowering")
+        ParseError::unsupported(
+            dialect,
+            segment.sql.clone(),
+            "annotated function disappeared during lowering",
+        )
     })?;
     for annotation in &segment.annotations {
         match annotation {
@@ -530,19 +540,22 @@ fn opaque_sequence(
     let key = schema_qualified_key(&name, schema.as_deref());
     let mut sequence = SequenceDef::from_raw(name, segment.sql.clone());
     sequence.schema = schema;
-    Ok(OpaqueDeclaration::Sequence { key, value: sequence })
+    Ok(OpaqueDeclaration::Sequence {
+        key,
+        value: sequence,
+    })
 }
 
-fn validate_sequence_lifecycle(
-    segment: &SqlSegment,
-    dialect: Dialect,
-) -> Result<(), ParseError> {
+fn validate_sequence_lifecycle(segment: &SqlSegment, dialect: Dialect) -> Result<(), ParseError> {
     let words = significant_tokens(dialect, &segment.sql)
         .map_err(|error| ParseError::unsupported(dialect, &segment.sql, error.to_string()))?
         .into_iter()
         .filter_map(|token| token.canonical_word().map(str::to_string))
         .collect::<Vec<_>>();
-    if words.iter().any(|word| word == "TEMP" || word == "TEMPORARY") {
+    if words
+        .iter()
+        .any(|word| word == "TEMP" || word == "TEMPORARY")
+    {
         return Err(ParseError::unsupported(
             dialect,
             &segment.sql,
@@ -885,7 +898,10 @@ mod recovery_tests {
             ),
             ("CREATE VIEW active_users AS SELECT 1", EntityKind::View),
             ("CREATE EXTENSION pg_trgm", EntityKind::Extension),
-            ("CREATE SEQUENCE event_ids START WITH 100", EntityKind::Sequence),
+            (
+                "CREATE SEQUENCE event_ids START WITH 100",
+                EntityKind::Sequence,
+            ),
             (
                 "CREATE TYPE user_state AS ENUM ('active')",
                 EntityKind::Enum,
@@ -936,7 +952,10 @@ mod recovery_tests {
         let OpaqueDeclaration::Sequence { value, .. } = declaration else {
             panic!("expected sequence declaration");
         };
-        assert_eq!(value.raw_sql(), Some("CREATE SEQUENCE audit.event_ids START WITH 100 INCREMENT BY 5"));
+        assert_eq!(
+            value.raw_sql(),
+            Some("CREATE SEQUENCE audit.event_ids START WITH 100 INCREMENT BY 5")
+        );
     }
 
     /// Verifies comments, terminators, and protected modifier text remain valid source content.

@@ -22,6 +22,6 @@ mod types;
 #[cfg(test)]
 mod tests;
 
-pub use scanner::segment_sql;
 pub use annotations::SqlAnnotation;
+pub use scanner::segment_sql;
 pub use types::{DdlStatementKind, DmlStatementKind, SqlObjectName, SqlSegment, SqlStatementKind};

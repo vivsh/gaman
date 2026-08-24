@@ -33,8 +33,8 @@ pub mod command_args;
 pub mod dialects;
 pub mod diff;
 pub mod drift;
-pub mod entity_selector;
 mod entity_filter;
+pub mod entity_selector;
 pub mod graphs;
 pub mod managed_rows;
 pub mod migration_engine;
@@ -81,11 +81,10 @@ pub mod schema {
     pub use crate::states::{
         Column, ColumnBuilder, ColumnRef, Constraint, ConstraintInput, EnumDef, EnumInput,
         ExtensionDef, ExtensionInput, ForeignKey, FunctionBuilder, FunctionDef, FunctionIdentity,
-        FunctionInput, FunctionParameter, GeneratedStorage,
-        Index, IndexInput, InputSchema, IntoTable, PostgresRangePartition,
-        PostgresRangePartitioning, PrimaryKey, ReplayError, Schema, SchemaBuilder, SchemaLoadError,
-        SchemaValidationError, SequenceDef, SequenceInput, Table, TableBuilder, TableInput, TriggerDef, TriggerEvent,
-        TriggerInput, TriggerScope, TriggerTiming, ViewDef, ViewInput, Volatility, is_volatile,
-        schema_qualified_key,
+        FunctionInput, FunctionParameter, GeneratedStorage, Index, IndexInput, InputSchema,
+        IntoTable, PostgresRangePartition, PostgresRangePartitioning, PrimaryKey, ReplayError,
+        Schema, SchemaBuilder, SchemaLoadError, SchemaValidationError, SequenceDef, SequenceInput,
+        Table, TableBuilder, TableInput, TriggerDef, TriggerEvent, TriggerInput, TriggerScope,
+        TriggerTiming, ViewDef, ViewInput, Volatility, is_volatile, schema_qualified_key,
     };
 }

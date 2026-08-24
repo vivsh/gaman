@@ -595,19 +595,16 @@ fn sort_sql_function_body_dependencies_before_dependent_alter() {
 
     let mut provider_daily = basic_function("dynrs_report_provider_daily");
     provider_daily.body = "SELECT dynrs_report_provider_sessions();".to_string();
-    provider_daily.depends_on = vec![
-        crate::EntityDependency::parse("function::dynrs_report_provider_sessions").unwrap(),
-    ];
+    provider_daily.depends_on =
+        vec![crate::EntityDependency::parse("function::dynrs_report_provider_sessions").unwrap()];
     let mut provider_earnings = basic_function("dynrs_report_provider_earnings");
     provider_earnings.body = "SELECT dynrs_report_provider_daily();".to_string();
-    provider_earnings.depends_on = vec![
-        crate::EntityDependency::parse("function::dynrs_report_provider_daily").unwrap(),
-    ];
+    provider_earnings.depends_on =
+        vec![crate::EntityDependency::parse("function::dynrs_report_provider_daily").unwrap()];
     let mut report_aggregate = basic_function("dynrs_report_aggregate");
     report_aggregate.body = "SELECT dynrs_report_provider_daily();".to_string();
-    report_aggregate.depends_on = vec![
-        crate::EntityDependency::parse("function::dynrs_report_provider_daily").unwrap(),
-    ];
+    report_aggregate.depends_on =
+        vec![crate::EntityDependency::parse("function::dynrs_report_provider_daily").unwrap()];
 
     let sorted = sort_operations(vec![
         Operation::AlterFunction {
@@ -632,7 +629,12 @@ fn sort_sql_function_body_dependencies_before_dependent_alter() {
         .iter()
         .map(|operation| operation.entity_name().to_string())
         .collect::<Vec<_>>();
-    let position = |name| names.iter().position(|candidate| candidate == name).unwrap();
+    let position = |name| {
+        names
+            .iter()
+            .position(|candidate| candidate == name)
+            .unwrap()
+    };
 
     assert!(position("dynrs_report_provider_sessions") < position("dynrs_report_provider_daily"));
     assert!(position("dynrs_report_provider_daily") < position("dynrs_report_provider_earnings"));

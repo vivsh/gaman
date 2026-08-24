@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.35] - 2026-08-24
+
 ### Added
 
 - Added top-level managed rows for application-owned records identified by an
@@ -22,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   complete table-owned operation groups are included automatically.
 
 ### Changed
+
+- Replaced the overlapping `TableBuilder` index helpers with the composable
+  `TableBuilder::index(Index::columns(...))` API. Explicit names, uniqueness,
+  composite columns, and partial predicates remain available on `Index`;
+  advanced index SQL remains a top-level `SchemaBuilder::opaque` declaration.
+
+| Before `0.3.35` | `0.3.35` |
+| --- | --- |
+| `.index_columns(&["email"])` | `.index(Index::columns(["email"]))` |
+| `.index("users_email_idx", &["email"])` | `.index(Index::columns(["email"]).named("users_email_idx"))` |
+| `.unique_index_columns(&["tenant_id", "slug"])` | `.index(Index::columns(["tenant_id", "slug"]).unique())` |
+| `.index_columns_with(&["created_at"], \|index\| index.predicate("deleted_at IS NULL"))` | `.index(Index::columns(["created_at"]).predicate("deleted_at IS NULL"))` |
+| `TableBuilder` plus `Index::from_raw(...)` | `SchemaBuilder::opaque("CREATE INDEX ...")` |
 
 - Bumped the portable command protocol to version 4. Version 3 introduced
   managed-row protocol variants; version 4 adds migration-generation filters

@@ -1,8 +1,8 @@
 use super::{
     Column, ColumnRef, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef,
-    FunctionParameter, Index,
-    OpaqueMeta, PrimaryKey, Schema, SchemaBuilderIssue, SchemaLoadError, Table, TableOptionsMeta,
-    TriggerDef, ViewDef, names, parse_qualified_name, schema_qualified_key,
+    FunctionParameter, Index, OpaqueMeta, PrimaryKey, Schema, SchemaBuilderIssue, SchemaLoadError,
+    Table, TableOptionsMeta, TriggerDef, ViewDef, names, parse_qualified_name,
+    schema_qualified_key,
 };
 use crate::column_type::ColumnType;
 use crate::dialects::Dialect;
@@ -276,35 +276,6 @@ impl TableBuilder {
         self
     }
 
-    fn push_index(mut self, name: impl Into<String>, columns: &[&str], unique: bool) -> Self {
-        self.table.indexes.push(Index {
-            name: name.into(),
-            columns: columns.iter().map(|s| s.to_string()).collect(),
-            unique,
-            predicate: None,
-            opaque: OpaqueMeta::default(),
-        });
-        self
-    }
-
-    fn push_index_with(
-        mut self,
-        name: impl Into<String>,
-        columns: &[&str],
-        unique: bool,
-        f: impl FnOnce(Index) -> Index,
-    ) -> Self {
-        let index = Index {
-            name: name.into(),
-            columns: columns.iter().map(|s| s.to_string()).collect(),
-            unique,
-            predicate: None,
-            opaque: OpaqueMeta::default(),
-        };
-        self.table.indexes.push(f(index));
-        self
-    }
-
     pub fn new(name: impl Into<String>) -> Self {
         let name = name.into();
         Self {
@@ -493,58 +464,13 @@ impl TableBuilder {
         self
     }
 
-    pub fn index_columns(self, columns: &[&str]) -> Self {
-        let name = names::index(&self.table.name, columns);
-        self.push_index(name, columns, false)
-    }
-
-    /// Add an index with generated name and advanced metadata.
-    pub fn index_columns_with(self, columns: &[&str], f: impl FnOnce(Index) -> Index) -> Self {
-        let name = names::index(&self.table.name, columns);
-        self.push_index_with(name, columns, false, f)
-    }
-
-    pub fn unique_index_columns(self, columns: &[&str]) -> Self {
-        let name = names::index(&self.table.name, columns);
-        self.push_index(name, columns, true)
-    }
-
-    /// Add a unique index with generated name and advanced metadata.
-    pub fn unique_index_columns_with(
-        self,
-        columns: &[&str],
-        f: impl FnOnce(Index) -> Index,
-    ) -> Self {
-        let name = names::index(&self.table.name, columns);
-        self.push_index_with(name, columns, true, f)
-    }
-
-    pub fn index(self, name: impl Into<String>, columns: &[&str]) -> Self {
-        self.push_index(name, columns, false)
-    }
-
-    /// Add an index and let the caller set advanced metadata.
-    pub fn index_with(
-        self,
-        name: impl Into<String>,
-        columns: &[&str],
-        f: impl FnOnce(Index) -> Index,
-    ) -> Self {
-        self.push_index_with(name, columns, false, f)
-    }
-
-    pub fn unique_index(self, name: impl Into<String>, columns: &[&str]) -> Self {
-        self.push_index(name, columns, true)
-    }
-
-    /// Add a unique index and let the caller set advanced metadata.
-    pub fn unique_index_with(
-        self,
-        name: impl Into<String>,
-        columns: &[&str],
-        f: impl FnOnce(Index) -> Index,
-    ) -> Self {
-        self.push_index_with(name, columns, true, f)
+    /// Adds a modeled index to this table.
+    ///
+    /// Advanced index SQL belongs to [`SchemaBuilder::opaque`], which preserves
+    /// its ownership and lifecycle without pretending it is a modeled index.
+    pub fn index(mut self, index: Index) -> Self {
+        self.table.indexes.push(index);
+        self
     }
 
     pub fn check(mut self, name: impl Into<String>, expression: impl Into<String>) -> Self {

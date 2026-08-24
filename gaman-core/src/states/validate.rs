@@ -87,13 +87,19 @@ fn resolve_function_dependencies(schema: &mut Schema) -> Result<(), SchemaValida
     for function in schema.functions.values_mut() {
         for dependency in &mut function.depends_on {
             let target = match dependency.kind {
-                EntityKind::Function => resolve_function_dependency(&dependency.target, &functions)?,
+                EntityKind::Function => {
+                    resolve_function_dependency(&dependency.target, &functions)?
+                }
                 EntityKind::Table => resolve_root_dependency(&dependency.target, &tables)?,
                 EntityKind::View => resolve_root_dependency(&dependency.target, &views)?,
                 EntityKind::Enum => resolve_root_dependency(&dependency.target, &enums)?,
                 EntityKind::Extension => resolve_root_dependency(&dependency.target, &extensions)?,
                 EntityKind::Sequence => resolve_root_dependency(&dependency.target, &sequences)?,
-                _ => return Err(SchemaValidationError::Invalid("function dependencies must target root entities".to_string())),
+                _ => {
+                    return Err(SchemaValidationError::Invalid(
+                        "function dependencies must target root entities".to_string(),
+                    ));
+                }
             };
             dependency.target = target;
         }
@@ -165,25 +171,55 @@ fn visit_function_dependencies(
     Ok(())
 }
 
-fn resolve_function_dependency(target: &str, functions: &[(String, String)]) -> Result<String, SchemaValidationError> {
+fn resolve_function_dependency(
+    target: &str,
+    functions: &[(String, String)],
+) -> Result<String, SchemaValidationError> {
     let matches = if target.contains('(') {
-        functions.iter().filter(|(key, _)| key == target || (target.ends_with("()") && key == target.trim_end_matches("()"))).map(|(key, _)| key.clone()).collect::<Vec<_>>()
+        functions
+            .iter()
+            .filter(|(key, _)| {
+                key == target || (target.ends_with("()") && key == target.trim_end_matches("()"))
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>()
     } else {
-        functions.iter().filter(|(_, name)| name == target || (!name.contains('.') && target == format!("public.{name}"))).map(|(key, _)| key.clone()).collect::<Vec<_>>()
+        functions
+            .iter()
+            .filter(|(_, name)| {
+                name == target || (!name.contains('.') && target == format!("public.{name}"))
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>()
     };
     match matches.as_slice() {
         [only] => Ok(only.clone()),
-        [] => Err(SchemaValidationError::Invalid(format!("function dependency '{target}' does not resolve"))),
-        _ => Err(SchemaValidationError::Invalid(format!("function dependency '{target}' is ambiguous; use one of: {}", matches.join(", ")))),
+        [] => Err(SchemaValidationError::Invalid(format!(
+            "function dependency '{target}' does not resolve"
+        ))),
+        _ => Err(SchemaValidationError::Invalid(format!(
+            "function dependency '{target}' is ambiguous; use one of: {}",
+            matches.join(", ")
+        ))),
     }
 }
 
 fn resolve_root_dependency(target: &str, keys: &[String]) -> Result<String, SchemaValidationError> {
-    let matches = keys.iter().filter(|key| key.as_str() == target || (!key.contains('.') && target == format!("public.{key}"))).cloned().collect::<Vec<_>>();
+    let matches = keys
+        .iter()
+        .filter(|key| {
+            key.as_str() == target || (!key.contains('.') && target == format!("public.{key}"))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     match matches.as_slice() {
         [only] => Ok(only.clone()),
-        [] => Err(SchemaValidationError::Invalid(format!("dependency '{target}' does not resolve"))),
-        _ => Err(SchemaValidationError::Invalid(format!("dependency '{target}' is ambiguous"))),
+        [] => Err(SchemaValidationError::Invalid(format!(
+            "dependency '{target}' does not resolve"
+        ))),
+        _ => Err(SchemaValidationError::Invalid(format!(
+            "dependency '{target}' is ambiguous"
+        ))),
     }
 }
 
@@ -199,15 +235,25 @@ fn validate_function_parameters(schema: &Schema) -> Result<(), SchemaValidationE
         let mut names = HashSet::new();
         for parameter in &function.parameters {
             if parameter.type_name.trim().is_empty() {
-                return Err(SchemaValidationError::Invalid(format!("function '{}' has a parameter without a type", function.qualified_name())));
+                return Err(SchemaValidationError::Invalid(format!(
+                    "function '{}' has a parameter without a type",
+                    function.qualified_name()
+                )));
             }
             if !parameter.name.is_empty() && !names.insert(parameter.name.as_str()) {
-                return Err(SchemaValidationError::Invalid(format!("function '{}' repeats parameter '{}'", function.qualified_name(), parameter.name)));
+                return Err(SchemaValidationError::Invalid(format!(
+                    "function '{}' repeats parameter '{}'",
+                    function.qualified_name(),
+                    parameter.name
+                )));
             }
             if parameter.default.is_some() {
                 default_seen = true;
             } else if default_seen {
-                return Err(SchemaValidationError::Invalid(format!("function '{}' has a non-default parameter after a default parameter", function.qualified_name())));
+                return Err(SchemaValidationError::Invalid(format!(
+                    "function '{}' has a non-default parameter after a default parameter",
+                    function.qualified_name()
+                )));
             }
         }
     }
@@ -278,6 +324,22 @@ fn validate_table_references(
         }
         if index.is_opaque() {
             continue;
+        }
+        if index.columns.is_empty() {
+            return Err(SchemaValidationError::Invalid(format!(
+                "table '{table_name}' index '{}' must reference at least one column",
+                index.name
+            )));
+        }
+        if index
+            .predicate
+            .as_deref()
+            .is_some_and(|predicate| predicate.trim().is_empty())
+        {
+            return Err(SchemaValidationError::Invalid(format!(
+                "table '{table_name}' index '{}' has a blank predicate",
+                index.name
+            )));
         }
         for column in &index.columns {
             if !column_names.contains(column.as_str()) {

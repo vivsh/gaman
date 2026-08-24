@@ -650,8 +650,8 @@ async fn run_family_checks(
             section.repair_allow_pending,
             section.repair_sql_only,
         )
-            .await
-            .map_err(|error| TestSupportError::message(error.to_string()))?;
+        .await
+        .map_err(|error| TestSupportError::message(error.to_string()))?;
         support::assert_repair_operations(
             name,
             &report.operations,
@@ -1137,8 +1137,8 @@ async fn run_sqlite_online_case(
                 section.repair_allow_pending,
                 section.repair_sql_only,
             )
-                .await
-                .map_err(|error| TestSupportError::message(error.to_string()))?;
+            .await
+            .map_err(|error| TestSupportError::message(error.to_string()))?;
             support::assert_repair_operations(
                 name,
                 &report.operations,

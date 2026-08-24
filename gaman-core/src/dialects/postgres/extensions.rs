@@ -52,7 +52,12 @@ const KNOWN_EXTENSIONS: &[KnownExtension] = &[
         description: "cryptographic functions and UUID generation",
     },
     KnownExtension {
-        name: "pgvector",
+        name: "pg_trgm",
+        bundled: true,
+        description: "trigram text similarity",
+    },
+    KnownExtension {
+        name: "vector",
         bundled: false,
         description: "vector similarity search",
     },
@@ -83,4 +88,21 @@ pub fn extension_description(name: &str) -> Option<&'static str> {
         .iter()
         .find(|extension| extension.name.eq_ignore_ascii_case(name.trim()))
         .map(|extension| extension.description)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extension_description, is_known_extension};
+
+    /// Verifies extension diagnostics use the actual PostgreSQL extension identities.
+    #[test]
+    fn search_extension_catalog_uses_database_names() {
+        assert!(is_known_extension("pg_trgm"));
+        assert!(is_known_extension("vector"));
+        assert!(!is_known_extension("pgvector"));
+        assert_eq!(
+            extension_description("vector"),
+            Some("vector similarity search")
+        );
+    }
 }

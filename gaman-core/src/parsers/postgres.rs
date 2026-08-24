@@ -12,8 +12,8 @@ use super::error::ParseError;
 use super::sql::ParseContext;
 use crate::dialects::Dialect;
 use crate::states::{
-    EnumDef, ExtensionDef, FunctionDef, FunctionParameter, OpaqueMeta, TriggerDef, TriggerEvent, TriggerScope,
-    TriggerTiming, ViewDef, Volatility, schema_qualified_key,
+    EnumDef, ExtensionDef, FunctionDef, FunctionParameter, OpaqueMeta, TriggerDef, TriggerEvent,
+    TriggerScope, TriggerTiming, ViewDef, Volatility, schema_qualified_key,
 };
 
 pub(super) fn lower_statement(stmt: &Statement, ctx: &mut ParseContext) -> Result<(), ParseError> {
@@ -124,7 +124,11 @@ fn parse_create_function(
         .unwrap_or(&[])
         .iter()
         .map(|arg| FunctionParameter {
-            name: arg.name.as_ref().map(|name| name.value.clone()).unwrap_or_default(),
+            name: arg
+                .name
+                .as_ref()
+                .map(|name| name.value.clone())
+                .unwrap_or_default(),
             type_name: data_type_to_str(&arg.data_type),
             default: arg.default_expr.as_ref().map(ToString::to_string),
         })
@@ -168,18 +172,18 @@ fn parse_create_function(
     };
 
     let function = FunctionDef {
-            name: fn_name,
-            schema,
-            parameters,
-            arguments: String::new(),
-            returns,
-            language,
-            body,
-            depends_on: Vec::new(),
-            volatility,
-            security_definer: matches!(&cf.security, Some(FunctionSecurity::Definer)),
-            opaque: OpaqueMeta::default(),
-        };
+        name: fn_name,
+        schema,
+        parameters,
+        arguments: String::new(),
+        returns,
+        language,
+        body,
+        depends_on: Vec::new(),
+        volatility,
+        security_definer: matches!(&cf.security, Some(FunctionSecurity::Definer)),
+        opaque: OpaqueMeta::default(),
+    };
     Ok((function.identity_key(), function))
 }
 

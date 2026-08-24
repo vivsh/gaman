@@ -1,6 +1,6 @@
 [package]
 name = "gaman-core"
-version = "0.3.34"
+version = "0.3.35"
 edition = "2024"
 description = "Offline core engine for Gaman migrations"
 license = "MIT"

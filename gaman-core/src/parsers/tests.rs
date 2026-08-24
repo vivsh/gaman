@@ -324,7 +324,11 @@ fn test_create_function() {
         AS $$ SELECT a + b; $$;
     "#;
     let schema = parse_sql(sql, crate::dialects::Dialect::Postgres).unwrap();
-    assert!(schema.functions.contains_key("add_numbers(integer, integer)"));
+    assert!(
+        schema
+            .functions
+            .contains_key("add_numbers(integer, integer)")
+    );
     let f = &schema.functions["add_numbers(integer, integer)"];
     assert_eq!(f.language, "sql");
     assert_eq!(f.parameters.len(), 2);

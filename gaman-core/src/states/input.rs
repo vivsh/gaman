@@ -313,7 +313,10 @@ impl FunctionInput {
         } else {
             self.parameters
         };
-        let arguments = parameters.is_empty().then_some(self.arguments).unwrap_or_default();
+        let arguments = parameters
+            .is_empty()
+            .then_some(self.arguments)
+            .unwrap_or_default();
         FunctionDef {
             name: self.name,
             schema: self.schema,
@@ -329,7 +332,6 @@ impl FunctionInput {
         }
     }
 }
-
 
 /// Authored view definition without opaque raw SQL metadata.
 #[derive(Debug, Clone, Deserialize, PartialEq)]

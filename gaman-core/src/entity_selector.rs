@@ -57,7 +57,10 @@ impl EntitySelector {
         if target.trim().is_empty() {
             return Err("entity filter pattern is empty".to_string());
         }
-        Ok(EntityFilter { kind, pattern: target.to_string() })
+        Ok(EntityFilter {
+            kind,
+            pattern: target.to_string(),
+        })
     }
 
     /// Parses one exact dependency without permitting globs or legacy syntax.
@@ -73,7 +76,10 @@ impl EntitySelector {
         if kind == EntityKind::Function && !valid_function_target(target) {
             return Err("function dependency signature is malformed".to_string());
         }
-        Ok(EntityDependency { kind, target: target.to_string() })
+        Ok(EntityDependency {
+            kind,
+            target: target.to_string(),
+        })
     }
 }
 
@@ -134,15 +140,26 @@ mod tests {
     /// Verifies filters accept canonical double-colon syntax and the legacy alias.
     #[test]
     fn filters_accept_canonical_and_legacy_syntax() {
-        assert_eq!(EntitySelector::parse_filter("table::users*").unwrap().kind, EntityKind::Table);
-        assert_eq!(EntitySelector::parse_filter("function:daily*").unwrap().kind, EntityKind::Function);
+        assert_eq!(
+            EntitySelector::parse_filter("table::users*").unwrap().kind,
+            EntityKind::Table
+        );
+        assert_eq!(
+            EntitySelector::parse_filter("function:daily*")
+                .unwrap()
+                .kind,
+            EntityKind::Function
+        );
     }
 
     /// Verifies dependencies reject glob patterns and preserve canonical typed signatures.
     #[test]
     fn dependencies_are_exact_and_serialize_canonically() {
         let dependency = EntityDependency::parse("function::daily(date, integer)").unwrap();
-        assert_eq!(serde_yaml::to_string(&dependency).unwrap().trim(), "function::daily(date, integer)");
+        assert_eq!(
+            serde_yaml::to_string(&dependency).unwrap().trim(),
+            "function::daily(date, integer)"
+        );
         assert!(EntityDependency::parse("function::daily*").is_err());
         assert!(EntityDependency::parse("function::daily(date))").is_err());
     }

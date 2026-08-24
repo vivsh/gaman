@@ -152,7 +152,8 @@ pub fn reorder_ops(ops: Vec<Operation>, previous: &Schema, current: &Schema) -> 
         .iter()
         .filter_map(|op| match op {
             Operation::AlterFunction { old, new }
-                if old.argument_types_sql() != new.argument_types_sql() => {
+                if old.argument_types_sql() != new.argument_types_sql() =>
+            {
                 Some(new.name.as_str())
             }
             _ => None,
@@ -693,7 +694,10 @@ fn operation_to_sql(op: &Operation) -> Result<Vec<String>, DialectError> {
             )]
         }
         Operation::AlterFunction { old, new } => {
-            if old.argument_types_sql() == new.argument_types_sql() && !old.is_opaque() && !new.is_opaque() {
+            if old.argument_types_sql() == new.argument_types_sql()
+                && !old.is_opaque()
+                && !new.is_opaque()
+            {
                 vec![create_function_sql(new)?]
             } else {
                 vec![

@@ -562,7 +562,10 @@ fn verify_sequence_presence(
 ) {
     for sequence in expected.values() {
         let identity = sequence.qualified_name();
-        if observed.values().any(|item| item.qualified_name() == identity) {
+        if observed
+            .values()
+            .any(|item| item.qualified_name() == identity)
+        {
             continue;
         }
         report.operations.push(Operation::CreateSequence {

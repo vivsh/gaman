@@ -1,6 +1,6 @@
+use gaman_core::Dialect;
 use gaman_core::diff::{generate_diff, sort_operations};
 use gaman_core::schema::{Operation, Schema, SchemaBuilder};
-use gaman_core::Dialect;
 
 /// Verifies structured YAML preserves one canonical opaque sequence definition.
 #[test]
@@ -65,31 +65,43 @@ fn sequence_source_formatting_is_a_noop() {
 /// Verifies sequence option changes are explicit drop-and-create replacements.
 #[test]
 fn sequence_definition_change_replaces_the_root() {
-    let previous = Schema::from_sql_str("CREATE SEQUENCE event_ids START WITH 1", Dialect::Postgres)
-        .expect("baseline sequence should prepare");
-    let desired = Schema::from_sql_str("CREATE SEQUENCE event_ids START WITH 100", Dialect::Postgres)
-        .expect("changed sequence should prepare");
+    let previous =
+        Schema::from_sql_str("CREATE SEQUENCE event_ids START WITH 1", Dialect::Postgres)
+            .expect("baseline sequence should prepare");
+    let desired = Schema::from_sql_str(
+        "CREATE SEQUENCE event_ids START WITH 100",
+        Dialect::Postgres,
+    )
+    .expect("changed sequence should prepare");
 
     let operations = sort_operations(generate_diff(&desired, &previous))
         .expect("sequence replacement should order");
-    assert!(matches!(operations.as_slice(), [Operation::DropSequence { .. }, Operation::CreateSequence { .. }]));
+    assert!(matches!(
+        operations.as_slice(),
+        [
+            Operation::DropSequence { .. },
+            Operation::CreateSequence { .. }
+        ]
+    ));
 }
 
 /// Verifies create and drop operations replay exactly and invert one another.
 #[test]
 fn sequence_operations_replay_and_invert() {
-    let desired = Schema::from_sql_str(
-        "CREATE SEQUENCE event_ids START WITH 10",
-        Dialect::Postgres,
-    )
-    .expect("sequence SQL should prepare");
+    let desired =
+        Schema::from_sql_str("CREATE SEQUENCE event_ids START WITH 10", Dialect::Postgres)
+            .expect("sequence SQL should prepare");
     let operations = generate_diff(&desired, &Schema::default());
     assert_eq!(operations.len(), 1);
     assert!(matches!(operations[0], Operation::CreateSequence { .. }));
 
-    let inverse = operations[0].inverse().expect("sequence create should invert");
+    let inverse = operations[0]
+        .inverse()
+        .expect("sequence create should invert");
     let mut replay = Schema::default();
-    replay.apply(&operations[0]).expect("sequence create should replay");
+    replay
+        .apply(&operations[0])
+        .expect("sequence create should replay");
     assert_eq!(replay.sequences, desired.sequences);
     replay.apply(&inverse).expect("sequence drop should replay");
     assert!(replay.sequences.is_empty());
@@ -166,7 +178,10 @@ fn unsupported_sequence_lifecycle_modifiers_are_rejected() {
         "CREATE SEQUENCE event_ids OWNED BY events.id",
         "CREATE SEQUENCE IF NOT EXISTS event_ids",
     ] {
-        assert!(Schema::from_sql_str(sql, Dialect::Postgres).is_err(), "{sql}");
+        assert!(
+            Schema::from_sql_str(sql, Dialect::Postgres).is_err(),
+            "{sql}"
+        );
     }
 }
 

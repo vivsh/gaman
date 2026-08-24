@@ -328,7 +328,9 @@ impl TryFrom<FunctionDefInput> for FunctionDef {
 
     fn try_from(value: FunctionDefInput) -> Result<Self, Self::Error> {
         if !value.arguments.trim().is_empty() && !value.parameters.is_empty() {
-            return Err("function cannot specify both legacy arguments and typed parameters".to_string());
+            return Err(
+                "function cannot specify both legacy arguments and typed parameters".to_string(),
+            );
         }
         let parameters = if value.parameters.is_empty() {
             legacy_function_parameters(&value.arguments).unwrap_or_default()
@@ -366,17 +368,25 @@ pub(crate) fn legacy_function_parameters(arguments: &str) -> Option<Vec<Function
     let source = format!(
         "CREATE FUNCTION gaman_legacy({arguments}) RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$"
     );
-    let statement = Parser::parse_sql(&PostgreSqlDialect {}, &source).ok()?.pop()?;
+    let statement = Parser::parse_sql(&PostgreSqlDialect {}, &source)
+        .ok()?
+        .pop()?;
     let Statement::CreateFunction(function) = statement else {
         return None;
     };
-    function.args?.into_iter().map(|parameter| {
-        parameter.mode.is_none().then(|| FunctionParameter {
-            name: parameter.name.map(|name| name.value).unwrap_or_default(),
-            type_name: parameter.data_type.to_string(),
-            default: parameter.default_expr.map(|expression| expression.to_string()),
+    function
+        .args?
+        .into_iter()
+        .map(|parameter| {
+            parameter.mode.is_none().then(|| FunctionParameter {
+                name: parameter.name.map(|name| name.value).unwrap_or_default(),
+                type_name: parameter.data_type.to_string(),
+                default: parameter
+                    .default_expr
+                    .map(|expression| expression.to_string()),
+            })
         })
-    }).collect()
+        .collect()
 }
 
 /// One stored-function parameter and optional SQL default expression.
@@ -433,7 +443,11 @@ impl FunctionDef {
     pub fn identity(&self) -> FunctionIdentity {
         FunctionIdentity {
             name: self.qualified_name(),
-            argument_types: self.parameters.iter().map(|value| value.type_name.clone()).collect(),
+            argument_types: self
+                .parameters
+                .iter()
+                .map(|value| value.type_name.clone())
+                .collect(),
         }
     }
 
@@ -473,12 +487,20 @@ impl FunctionDef {
         if self.parameters.is_empty() {
             return self.arguments.clone();
         }
-        self.parameters.iter().map(|parameter| match (&parameter.name, &parameter.default) {
-            (name, Some(default)) if name.is_empty() => format!("{} DEFAULT {}", parameter.type_name, default),
-            (name, None) if name.is_empty() => parameter.type_name.clone(),
-            (name, Some(default)) => format!("{} {} DEFAULT {}", name, parameter.type_name, default),
-            (name, None) => format!("{} {}", name, parameter.type_name),
-        }).collect::<Vec<_>>().join(", ")
+        self.parameters
+            .iter()
+            .map(|parameter| match (&parameter.name, &parameter.default) {
+                (name, Some(default)) if name.is_empty() => {
+                    format!("{} DEFAULT {}", parameter.type_name, default)
+                }
+                (name, None) if name.is_empty() => parameter.type_name.clone(),
+                (name, Some(default)) => {
+                    format!("{} {} DEFAULT {}", name, parameter.type_name, default)
+                }
+                (name, None) => format!("{} {}", name, parameter.type_name),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Renders only overload types for DROP FUNCTION.
@@ -486,7 +508,11 @@ impl FunctionDef {
         if self.parameters.is_empty() {
             return self.arguments.clone();
         }
-        self.parameters.iter().map(|parameter| parameter.type_name.as_str()).collect::<Vec<_>>().join(", ")
+        self.parameters
+            .iter()
+            .map(|parameter| parameter.type_name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     #[doc(hidden)]
@@ -946,12 +972,33 @@ pub struct Index {
 }
 
 impl Index {
+    /// Creates a modeled index over the supplied table columns.
+    pub fn columns<I, S>(columns: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            columns: columns.into_iter().map(Into::into).collect(),
+            ..Self::default()
+        }
+    }
+
+    /// Overrides the deterministic name derived during schema normalization.
+    pub fn named(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    /// Marks this modeled index as unique.
+    pub fn unique(mut self) -> Self {
+        self.unique = true;
+        self
+    }
+
     /// Attach a partial-index predicate.
     pub fn predicate(mut self, expression: impl Into<String>) -> Self {
-        let expression = expression.into();
-        if !expression.trim().is_empty() {
-            self.predicate = Some(expression);
-        }
+        self.predicate = Some(expression.into());
         self
     }
 

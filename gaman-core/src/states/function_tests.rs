@@ -22,7 +22,10 @@ fn function_builder_preserves_defaults_and_dependencies() {
         )
         .build()
         .expect("valid typed function schema");
-    let function = schema.functions.get("daily_report(date, integer)").expect("function");
+    let function = schema
+        .functions
+        .get("daily_report(date, integer)")
+        .expect("function");
     assert_eq!(function.parameters[1].default.as_deref(), Some("NULL"));
     assert_eq!(function.depends_on[0].target, "providers");
 }
@@ -51,7 +54,11 @@ fn rejects_mixed_legacy_and_typed_parameters() {
         .function(function)
         .build()
         .expect_err("mixed parameters must fail");
-    assert!(error.to_string().contains("both legacy arguments and typed parameters"));
+    assert!(
+        error
+            .to_string()
+            .contains("both legacy arguments and typed parameters")
+    );
 }
 
 /// Verifies function dependency cycles fail during whole-schema preparation.
@@ -74,8 +81,8 @@ functions:
     body: SELECT 1
     depends_on: [function::first]
 "#;
-    let error = Schema::from_yaml_str(yaml, Dialect::Postgres)
-        .expect_err("dependency cycle must fail");
+    let error =
+        Schema::from_yaml_str(yaml, Dialect::Postgres).expect_err("dependency cycle must fail");
     assert!(error.to_string().contains("function dependency cycle"));
 }
 

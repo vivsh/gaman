@@ -273,6 +273,34 @@ same schema model. SQL schema input describes desired `CREATE` state only;
 `ALTER`, `DROP`, DML, data migrations, and unsupported structural surgery remain
 explicit migration SQL rather than tracked desired state.
 
+Rust declarations use one composable modeled-index API:
+
+```rust
+use gaman::schema::{Index, TableBuilder};
+
+let users = TableBuilder::new("users")
+    .column("email", "text", |column| column.not_null())
+    .index(Index::columns(["email"]).unique())
+    .build();
+```
+
+Expression indexes, operator classes, included columns, and other advanced
+forms remain fully managed through a top-level opaque declaration:
+
+```rust
+use gaman::core::Dialect;
+use gaman::schema::SchemaBuilder;
+
+let schema = SchemaBuilder::new(Dialect::Postgres)
+    .table_def(users)
+    .opaque(
+        "CREATE INDEX users_email_lower_idx \
+         ON users ((lower(email)))",
+    )
+    .build()?;
+# Ok::<(), gaman::schema::SchemaLoadError>(())
+```
+
 PostgreSQL sequences may be declared with `CREATE SEQUENCE`, through
 `SchemaBuilder::opaque`, or under structured `sequences` entries containing
 `sql`. Gaman owns the normalized definition and presence only; runtime counter

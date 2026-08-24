@@ -75,12 +75,11 @@ pub mod schema {
     pub use gaman_core::states::{
         Column, ColumnBuilder, ColumnRef, Constraint, ConstraintInput, EnumDef, EnumInput,
         ExtensionDef, ExtensionInput, ForeignKey, FunctionBuilder, FunctionDef, FunctionIdentity,
-        FunctionInput, FunctionParameter, GeneratedStorage,
-        Index, IndexInput, InputSchema, IntoTable, PostgresRangePartition,
-        PostgresRangePartitioning, PrimaryKey, ReplayError, Schema, SchemaBuilder, SchemaLoadError,
-        SchemaValidationError, Table, TableBuilder, TableInput, TriggerDef, TriggerEvent,
-        TriggerInput, TriggerScope, TriggerTiming, ViewDef, ViewInput, Volatility, is_volatile,
-        schema_qualified_key,
+        FunctionInput, FunctionParameter, GeneratedStorage, Index, IndexInput, InputSchema,
+        IntoTable, PostgresRangePartition, PostgresRangePartitioning, PrimaryKey, ReplayError,
+        Schema, SchemaBuilder, SchemaLoadError, SchemaValidationError, Table, TableBuilder,
+        TableInput, TriggerDef, TriggerEvent, TriggerInput, TriggerScope, TriggerTiming, ViewDef,
+        ViewInput, Volatility, is_volatile, schema_qualified_key,
     };
 }
 

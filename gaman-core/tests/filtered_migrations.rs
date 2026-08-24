@@ -775,27 +775,28 @@ fn public_alias_and_overlapping_filters_are_canonical() {
 /// Verifies sequence filters select qualified opaque roots and leave independent roots pending.
 #[test]
 fn sequence_filter_selects_only_the_requested_root() {
-    let desired = postgres_schema(
-        "CREATE SEQUENCE audit.event_ids;\nCREATE SEQUENCE billing.invoice_ids;",
-    );
+    let desired =
+        postgres_schema("CREATE SEQUENCE audit.event_ids;\nCREATE SEQUENCE billing.invoice_ids;");
     let planner = OfflinePlanner::new(Dialect::Postgres);
     let pending = planner
         .make_migration_filtered(desired.clone(), &[], &[filter("sequence::audit.*")])
         .expect_err("opaque sequence should require explicit acceptance");
     let clarification_id = match pending {
-        OfflineError::NeedsInput(clarifications) => clarifications
-            .into_iter()
-            .find(|clarification| {
-                matches!(
-                    clarification.kind,
-                    ClarificationKind::OpaqueEntity {
-                        kind: EntityKind::Sequence,
-                        ..
-                    }
-                )
-            })
-            .expect("sequence clarification should be present")
-            .id,
+        OfflineError::NeedsInput(clarifications) => {
+            clarifications
+                .into_iter()
+                .find(|clarification| {
+                    matches!(
+                        clarification.kind,
+                        ClarificationKind::OpaqueEntity {
+                            kind: EntityKind::Sequence,
+                            ..
+                        }
+                    )
+                })
+                .expect("sequence clarification should be present")
+                .id
+        }
         other => panic!("expected sequence clarification, got {other:?}"),
     };
     let first = planner
@@ -819,19 +820,21 @@ fn sequence_filter_selects_only_the_requested_root() {
         .make_migration(desired.clone(), &[])
         .expect_err("remaining opaque sequence should require explicit acceptance");
     let clarification_id = match pending {
-        OfflineError::NeedsInput(clarifications) => clarifications
-            .into_iter()
-            .find(|clarification| {
-                matches!(
-                    clarification.kind,
-                    ClarificationKind::OpaqueEntity {
-                        kind: EntityKind::Sequence,
-                        ..
-                    }
-                )
-            })
-            .expect("remaining sequence clarification should be present")
-            .id,
+        OfflineError::NeedsInput(clarifications) => {
+            clarifications
+                .into_iter()
+                .find(|clarification| {
+                    matches!(
+                        clarification.kind,
+                        ClarificationKind::OpaqueEntity {
+                            kind: EntityKind::Sequence,
+                            ..
+                        }
+                    )
+                })
+                .expect("remaining sequence clarification should be present")
+                .id
+        }
         other => panic!("expected sequence clarification, got {other:?}"),
     };
     let remaining = remaining_planner

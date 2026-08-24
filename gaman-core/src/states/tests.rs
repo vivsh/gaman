@@ -1537,7 +1537,7 @@ fn builder_exposes_modeled_action_generated_and_partial_index_fields() {
         .foreign_key_with("author_id", "users", "id", |fk| {
             fk.on_delete("set_null").on_update("cascade")
         })
-        .index_columns_with(&["slug"], |idx| idx.predicate("slug IS NOT NULL"))
+        .index(Index::columns(["slug"]).predicate("slug IS NOT NULL"))
         .build();
 
     assert_eq!(
@@ -1584,6 +1584,7 @@ fn builder_column_from_type_infers_type_and_allows_overrides() {
     assert!(!email.nullable);
 }
 
+/// Verifies unnamed builder declarations receive deterministic canonical names.
 #[test]
 fn builder_unnamed_helpers_generate_deterministic_names() {
     let table = TableBuilder::new("orders")
@@ -1592,10 +1593,14 @@ fn builder_unnamed_helpers_generate_deterministic_names() {
         .column("email", "text", |c| c)
         .primary_key_columns(&["tenant_id", "user_id"])
         .foreign_key_columns(&["tenant_id", "user_id"], "users", &["tenant_id", "id"])
-        .index_columns(&["email"])
+        .index(Index::columns(["email"]))
         .unique_columns(&["tenant_id", "email"])
         .check_expr("tenant_id > 0")
         .build();
+    let mut schema = Schema::default();
+    schema.tables.insert("orders".to_string(), table);
+    schema.normalize();
+    let table = &schema.tables["orders"];
 
     assert_eq!(table.primary_key.as_ref().unwrap().name, "orders_pkey");
     assert_eq!(table.foreign_keys[0].name, "orders_tenant_id_user_id_fkey");
@@ -1637,6 +1642,63 @@ fn builder_trigger_accepts_model_and_normalize_derives_name() {
         trigger.query.as_deref(),
         Some("INSERT INTO audit_log(order_id) VALUES (NEW.id);")
     );
+}
+
+/// Verifies modeled index options compose without multiplying table-builder methods.
+#[test]
+fn modeled_index_api_composes_name_uniqueness_and_predicate() {
+    let table = TableBuilder::new("documents")
+        .column("tenant_id", "integer", |column| column)
+        .column("slug", "text", |column| column)
+        .index(
+            Index::columns(["tenant_id", "slug"])
+                .named("documents_tenant_slug_idx")
+                .unique()
+                .predicate("slug IS NOT NULL"),
+        )
+        .build();
+
+    let index = &table.indexes[0];
+    assert_eq!(index.name, "documents_tenant_slug_idx");
+    assert_eq!(index.columns, ["tenant_id", "slug"]);
+    assert!(index.unique);
+    assert_eq!(index.predicate.as_deref(), Some("slug IS NOT NULL"));
+}
+
+/// Verifies terminal validation rejects modeled indexes without columns.
+#[test]
+fn modeled_index_requires_at_least_one_column() {
+    let error = SchemaBuilder::new(Dialect::Postgres)
+        .table_def(
+            TableBuilder::new("documents")
+                .column("id", "integer", |column| column)
+                .index(Index::columns(Vec::<String>::new()))
+                .build(),
+        )
+        .build()
+        .expect_err("empty modeled index must fail");
+
+    assert!(
+        error
+            .to_string()
+            .contains("must reference at least one column")
+    );
+}
+
+/// Verifies terminal validation rejects whitespace-only partial-index predicates.
+#[test]
+fn modeled_index_rejects_a_blank_predicate() {
+    let error = SchemaBuilder::new(Dialect::Postgres)
+        .table_def(
+            TableBuilder::new("documents")
+                .column("id", "integer", |column| column)
+                .index(Index::columns(["id"]).predicate("   "))
+                .build(),
+        )
+        .build()
+        .expect_err("blank predicate must fail");
+
+    assert!(error.to_string().contains("has a blank predicate"));
 }
 
 #[test]

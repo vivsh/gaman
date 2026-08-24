@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::managed_rows::ManagedRow;
 use crate::states::types::{Dep, EntityKind};
 use crate::states::{
-    Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, Table,
-    SequenceDef, TableOptionsMeta, TriggerDef, ViewDef,
+    Column, Constraint, EnumDef, ExtensionDef, ForeignKey, FunctionDef, Index, SequenceDef, Table,
+    TableOptionsMeta, TriggerDef, ViewDef,
 };
 
 /// All possible schema change operations.
@@ -259,9 +259,7 @@ impl Operation {
             Self::CreateExtension { .. } | Self::DropExtension { .. } => {
                 self.inverse_extension_op()
             }
-            Self::CreateSequence { .. } | Self::DropSequence { .. } => {
-                self.inverse_sequence_op()
-            }
+            Self::CreateSequence { .. } | Self::DropSequence { .. } => self.inverse_sequence_op(),
             Self::CreateEnum { .. }
             | Self::DropEnum { .. }
             | Self::RenameEnumValue { .. }
@@ -680,9 +678,7 @@ impl Operation {
             Self::CreateExtension { .. } | Self::DropExtension { .. } => {
                 Some(EntityKind::Extension)
             }
-            Self::CreateSequence { .. } | Self::DropSequence { .. } => {
-                Some(EntityKind::Sequence)
-            }
+            Self::CreateSequence { .. } | Self::DropSequence { .. } => Some(EntityKind::Sequence),
             Self::CreateView { .. } | Self::DropView { .. } | Self::ReplaceView { .. } => {
                 Some(EntityKind::View)
             }

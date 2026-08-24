@@ -42,7 +42,7 @@ const EXTENSION_TYPE_CATALOGS: &[ExtensionTypeCatalog] = &[
         types: &["lquery", "ltree", "ltxtquery"],
     },
     ExtensionTypeCatalog {
-        extension: "pgvector",
+        extension: "vector",
         types: &["halfvec", "sparsevec", "vector"],
     },
     ExtensionTypeCatalog {
