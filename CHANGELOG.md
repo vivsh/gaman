@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.37] - 2026-09-12
+
 ### Fixed
 
 - Fixed managed-row inserts, updates, deletes, and repairs through the native
