@@ -1,0 +1,28 @@
+id: 0008_model_profiles
+dependencies: [0007_personas]
+atomic: true
+operations:
+  - type: create_table
+    table:
+      name: model_profiles
+      columns:
+        - {name: id, type: text, primary_key: true}
+        - {name: name, type: text}
+  - type: add_column
+    table_name: personas
+    column: {name: model_profile_id, type: text, default: "'standard'"}
+  - type: insert_row
+    table_name: model_profiles
+    key: [id]
+    row: {id: standard, name: Standard}
+  - type: insert_row
+    table_name: model_profiles
+    key: [id]
+    row: {id: focused, name: Focused}
+  - type: add_foreign_key
+    table_name: personas
+    foreign_key:
+      name: personas_model_profile_id_fkey
+      columns: [model_profile_id]
+      to_table: model_profiles
+      to_columns: [id]

@@ -1,0 +1,16 @@
+id: 0003_atomic_failure
+dependencies: [0002_insert]
+atomic: true
+operations:
+  - type: add_column
+    table_name: items
+    column: {name: added, type: text, nullable: true}
+  - type: insert_row
+    table_name: items
+    key: [id]
+    row: {id: inserted_before_failure, name: temporary}
+  - type: update_row
+    table_name: items
+    key: [id]
+    old: {id: managed, name: first}
+    new: {id: managed, name: second}

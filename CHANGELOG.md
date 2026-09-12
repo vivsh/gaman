@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed managed-row inserts, updates, deletes, and repairs through the native
+  runner by forwarding checked affected-row execution to the database executor.
+  Affected-row counts, database error details, and transactional rollback are
+  preserved for directory-backed and embedded migrations.
+
 ## [0.3.36] - 2026-08-24
 
 ### Fixed

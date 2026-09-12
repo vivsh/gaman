@@ -1,0 +1,8 @@
+id: 0004_delete
+dependencies: [0003_update]
+atomic: true
+operations:
+  - type: delete_row
+    table_name: items
+    key: [id]
+    row: {id: managed, name: second}

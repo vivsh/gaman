@@ -74,6 +74,11 @@ path = "tests/directory_migration_store.rs"
 required-features = ["native"]
 
 [[test]]
+name = "native_runner"
+path = "tests/native_runner/main.rs"
+required-features = ["postgres", "fs"]
+
+[[test]]
 name = "evidence_publication"
 path = "tests/evidence_publication.rs"
 required-features = ["native"]

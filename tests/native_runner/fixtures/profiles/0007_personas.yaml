@@ -1,0 +1,12 @@
+id: 0007_personas
+atomic: true
+operations:
+  - type: create_table
+    table:
+      name: personas
+      columns:
+        - {name: id, type: integer, primary_key: true}
+        - {name: name, type: text}
+  - type: statement
+    up: "INSERT INTO personas VALUES (1, 'Alice'), (2, 'Bob')"
+    down: "DELETE FROM personas WHERE id IN (1, 2)"

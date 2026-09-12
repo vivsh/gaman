@@ -1,0 +1,8 @@
+id: 0002_insert
+dependencies: [0001_items]
+atomic: true
+operations:
+  - type: insert_row
+    table_name: items
+    key: [id]
+    row: {id: managed, name: first}

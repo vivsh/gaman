@@ -1,0 +1,13 @@
+id: 0001_items
+atomic: true
+operations:
+  - type: create_table
+    table:
+      name: items
+      columns:
+        - {name: id, type: text, primary_key: true}
+        - {name: name, type: text}
+        - {name: external_note, type: text, nullable: true}
+  - type: statement
+    up: "INSERT INTO items VALUES ('external', 'outside', 'keep-external')"
+    down: "DELETE FROM items WHERE id = 'external'"

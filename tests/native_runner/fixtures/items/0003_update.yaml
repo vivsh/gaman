@@ -1,0 +1,9 @@
+id: 0003_update
+dependencies: [0002_insert]
+atomic: true
+operations:
+  - type: update_row
+    table_name: items
+    key: [id]
+    old: {id: managed, name: first}
+    new: {id: managed, name: second}

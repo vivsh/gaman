@@ -62,6 +62,20 @@ impl Executor for LazyExecutor {
         })
     }
 
+    /// Preserves checked-write counts and database errors on the retained connection.
+    fn execute_affected<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> BoxFuture<'a, Result<u64, ExecutorError>> {
+        Box::pin(async move {
+            self.connection()
+                .await
+                .map_err(ExecutorError::Execute)?
+                .execute_affected(sql)
+                .await
+        })
+    }
+
     fn fetch_strings<'a>(
         &'a mut self,
         sql: &'a str,
