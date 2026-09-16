@@ -2,6 +2,9 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
+#[path = "managed_row_fields/engine.rs"]
+mod field_ownership;
+
 use gaman_core::managed_rows::{ManagedRow, ManagedRows, ManagedValue};
 use gaman_core::schema::Schema;
 use gaman_core::{

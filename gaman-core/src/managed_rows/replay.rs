@@ -36,6 +36,7 @@ pub(crate) fn apply_operation(
             old,
             new,
         } => {
+            super::update::validate(key, old, new).map_err(ReplayError::InvalidMigration)?;
             let declaration = schema.managed_rows.get_mut(table_name).ok_or_else(|| {
                 ReplayError::InvalidMigration(format!("managed rows for '{table_name}' not found"))
             })?;

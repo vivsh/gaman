@@ -153,6 +153,12 @@ Treat declared values like schema: change them through schema files and
 generated migrations, not application code or manual SQL. External changes are
 reported as drift, and checked writes refuse to overwrite unexpected values.
 
+Removing a field from a managed-row operation relinquishes ownership of that
+field; it does not clear its value or drop its column. When no retained values
+change, Gaman checks exactly one row against the complete old declaration
+without issuing an update. Setting a value to `null` and dropping a column remain
+separate operations. Rollback of an added managed field uses the same checks.
+
 ## How It Works
 
 ```text

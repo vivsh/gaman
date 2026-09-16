@@ -232,7 +232,7 @@ where
     async fn execute_untracked_locked(
         &mut self,
         sql: &[String],
-        checked: &mut std::collections::HashMap<String, usize>,
+        checked: &mut std::collections::HashMap<String, Vec<&Operation>>,
     ) -> Result<(), EngineError> {
         let atomic = self.dialect.supports_transactional_ddl();
         if atomic {
@@ -610,11 +610,12 @@ where
     }
 }
 
+/// Borrows the typed operation behind each checked statement for this execution only.
 fn checked_row_statements(
     dialect: Dialect,
     operations: &[Operation],
-) -> Result<std::collections::HashMap<String, usize>, EngineError> {
-    let mut checked = std::collections::HashMap::new();
+) -> Result<std::collections::HashMap<String, Vec<&Operation>>, EngineError> {
+    let mut checked = std::collections::HashMap::<String, Vec<&Operation>>::new();
     for operation in operations {
         if !matches!(
             operation,
@@ -625,29 +626,24 @@ fn checked_row_statements(
         let statements = crate::managed_rows::sql::render(dialect, operation)
             .map_err(|error| EngineError::Config(error.to_string()))?;
         for statement in statements {
-            *checked.entry(statement).or_insert(0) += 1;
+            checked.entry(statement).or_default().push(operation);
         }
     }
     Ok(checked)
 }
 
+/// Delegates managed statements using operation semantics, never SQL-text classification.
 async fn execute_statement<E: Executor>(
     executor: &mut E,
     statement: &str,
-    checked: &mut std::collections::HashMap<String, usize>,
+    checked: &mut std::collections::HashMap<String, Vec<&Operation>>,
 ) -> Result<(), ExecutorError> {
-    let managed = checked.get_mut(statement).is_some_and(|remaining| {
-        if *remaining == 0 {
-            false
-        } else {
-            *remaining -= 1;
-            true
+    match checked.get_mut(statement).and_then(Vec::pop) {
+        Some(operation) => {
+            crate::managed_rows::execute_checked(executor, operation, statement).await
         }
-    });
-    if !managed {
-        return executor.execute(statement).await;
+        None => executor.execute(statement).await,
     }
-    crate::managed_rows::ensure_one_affected(executor.execute_affected(statement).await?)
 }
 
 /// Preserves migration and bounded statement context when a live executor rejects rendered SQL.

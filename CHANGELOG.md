@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.38] - 2026-09-16
+
+### Fixed
+
+- Fixed rollback planning for managed-row updates that add fields. Their inverse
+  relinquishes field ownership using an exact-one-row old-state check without
+  clearing database values or firing update triggers. Checked writes, key
+  validation, and transactional rollback remain enforced.
+
 ## [0.3.37] - 2026-09-12
 
 ### Fixed

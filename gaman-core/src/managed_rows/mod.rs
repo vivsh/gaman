@@ -2,32 +2,23 @@
 
 mod diff;
 pub mod drift;
+mod execution;
 mod model;
 mod replay;
 pub mod sql;
+mod update;
 mod validation;
 
 pub(crate) use diff::{diff_schemas, order_operations};
+#[cfg(test)]
+pub(crate) use execution::ensure_one_affected;
+pub(crate) use execution::execute_checked;
 pub use model::{ManagedRow, ManagedRows, ManagedValue};
 pub(crate) use replay::apply_operation;
 pub(crate) use validation::canonicalize_schema;
 #[doc(hidden)]
 pub use validation::merge_declaration;
 pub(crate) use validation::validate_schema;
-
-pub(crate) fn ensure_one_affected(
-    affected: u64,
-) -> Result<(), crate::migration_engine::ExecutorError> {
-    match affected {
-        1 => Ok(()),
-        0 => Err(crate::migration_engine::ExecutorError::Execute(
-            "managed row expected-state precondition did not match".to_string(),
-        )),
-        affected => Err(crate::migration_engine::ExecutorError::Execute(format!(
-            "managed row integrity failure: expected one affected row, got {affected}"
-        ))),
-    }
-}
 
 #[cfg(test)]
 mod production_tests;

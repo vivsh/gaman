@@ -1,0 +1,35 @@
+id: 0001_profiles
+atomic: true
+operations:
+  - type: create_table
+    table:
+      name: model_profiles
+      columns:
+        - {name: id, type: 'varchar(64)', primary_key: true}
+        - {name: name, type: text}
+        - {name: output_limit, type: integer}
+        - {name: external_note, type: text, nullable: true}
+  - type: insert_row
+    table_name: model_profiles
+    key: [id]
+    row: {id: preset, name: standard, output_limit: 1024}
+  - type: statement
+    up: "INSERT INTO model_profiles VALUES ('external', 'outside', 512, 'keep-external')"
+    down: "DELETE FROM model_profiles WHERE id = 'external'"
+  - type: statement
+    up: "UPDATE model_profiles SET external_note = 'keep-managed' WHERE id = 'preset'"
+    down: "UPDATE model_profiles SET external_note = NULL WHERE id = 'preset'"
+  - type: create_table
+    table:
+      name: personas
+      columns:
+        - {name: id, type: integer, primary_key: true}
+        - {name: model_profile_id, type: 'varchar(64)'}
+      foreign_keys:
+        - name: personas_profile_fk
+          columns: [model_profile_id]
+          to_table: model_profiles
+          to_columns: [id]
+  - type: statement
+    up: "INSERT INTO personas VALUES (1, 'preset'), (2, 'external')"
+    down: "DELETE FROM personas"

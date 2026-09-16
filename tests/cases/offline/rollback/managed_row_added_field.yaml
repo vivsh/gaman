@@ -1,0 +1,42 @@
+description: Rollback checks an added managed field before reversing its backfill and dropping its column.
+group: rollback
+features:
+  - managed_rows
+  - group.rollback
+  - kind.migration_to_sql
+kind: migration_to_sql
+direction: rollback
+dialect: postgres
+migrations:
+  - id: 0001_profiles
+    operations:
+      - type: create_table
+        table:
+          name: model_profiles
+          columns:
+            - {name: id, type: text, primary_key: true}
+            - {name: name, type: text}
+      - type: insert_row
+        table_name: model_profiles
+        key: [id]
+        row: {id: preset, name: standard}
+  - id: 0002_add_field
+    dependencies: [0001_profiles]
+    operations:
+      - type: add_column
+        table_name: model_profiles
+        column: {name: auxiliary_output_limit, type: integer, default: '2048'}
+      - type: statement
+        up: UPDATE model_profiles SET auxiliary_output_limit = 1024
+        down: SELECT 1
+      - type: update_row
+        table_name: model_profiles
+        key: [id]
+        old: {id: preset, name: standard}
+        new: {id: preset, name: standard, auxiliary_output_limit: 3072}
+expect_sql: |
+  SELECT '1' FROM "model_profiles" WHERE "id" IS NOT DISTINCT FROM 'preset' AND "auxiliary_output_limit" IS NOT DISTINCT FROM 3072 AND "name" IS NOT DISTINCT FROM 'standard' FOR UPDATE
+  SELECT 1
+  ALTER TABLE "model_profiles" DROP COLUMN "auxiliary_output_limit"
+  DELETE FROM "model_profiles" WHERE "id" IS NOT DISTINCT FROM 'preset' AND "name" IS NOT DISTINCT FROM 'standard'
+  DROP TABLE "model_profiles"
