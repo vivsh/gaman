@@ -42,7 +42,7 @@ migrations:
       - type: create_view
         view:
           name: active_users
-          definition: "SELECT id, status FROM users WHERE status = 'active'"
+          definition: "SELECT users.id, users.status FROM users JOIN audit_log ON audit_log.user_id = users.id WHERE users.status = 'active'"
       - type: create_trigger
         table_name: users
         trigger:
@@ -102,4 +102,4 @@ dialects:
       views:
         active_users:
           name: active_users
-          definition: "SELECT users.id,\n    users.status\n   FROM users\n  WHERE (users.status = 'active'::user_status);"
+          definition: "SELECT users.id,\n    users.status\n   FROM (users\n     JOIN audit_log ON ((audit_log.user_id = users.id)))\n  WHERE (users.status = 'active'::user_status);"

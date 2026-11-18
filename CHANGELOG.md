@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.39] - 2026-11-19
+
+### Changed
+
+- Upgrade to SQLx 0.9.1 and Rust 1.94. Keep MySQL-family RSA authentication
+  enabled and require patched SQLite bindings for the bundled SQLite build.
+
 ## [0.3.38] - 2026-09-16
 
 ### Fixed

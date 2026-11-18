@@ -224,7 +224,7 @@ async fn show_create(
 ) -> Result<Option<String>, ExecutorError> {
     let quote = |value: &str| format!("`{}`", value.replace('`', "``"));
     let sql = format!("SHOW CREATE {kind} {}.{}", quote(database), quote(name));
-    let row = sqlx::query(&sql)
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
         .fetch_one(conn)
         .await
         .map_err(|error| fetch("show create", error))?;

@@ -49,7 +49,7 @@ async fn fetch_master_rows(conn: &mut SqliteConnection) -> Result<Vec<MasterRow>
          AND name != '{TRACKING_TABLE}' \
          ORDER BY type, name",
     );
-    let rows = sqlx::query(&query)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(query))
         .fetch_all(conn)
         .await
         .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
@@ -100,10 +100,12 @@ impl SchemaInspector for SqliteExecutor {
                     options: TableOptionsMeta::default(),
                 };
 
-                let col_rows = sqlx::query(&format!("PRAGMA table_xinfo({quoted_table})"))
-                    .fetch_all(&mut self.conn)
-                    .await
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let col_rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "PRAGMA table_xinfo({quoted_table})"
+                )))
+                .fetch_all(&mut self.conn)
+                .await
+                .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
 
                 let mut pk_columns: Vec<(i64, String)> = Vec::new();
                 for cr in col_rows {
@@ -153,10 +155,12 @@ impl SchemaInspector for SqliteExecutor {
                     });
                 }
 
-                let fk_rows = sqlx::query(&format!("PRAGMA foreign_key_list({quoted_table})"))
-                    .fetch_all(&mut self.conn)
-                    .await
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let fk_rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "PRAGMA foreign_key_list({quoted_table})"
+                )))
+                .fetch_all(&mut self.conn)
+                .await
+                .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                 let mut fk_map: SqliteFkGroups = std::collections::BTreeMap::new();
                 for fkr in fk_rows {
                     let id: i64 = fkr
@@ -211,10 +215,12 @@ impl SchemaInspector for SqliteExecutor {
                     table.foreign_keys.push(foreign_key);
                 }
 
-                let idx_rows = sqlx::query(&format!("PRAGMA index_list({quoted_table})"))
-                    .fetch_all(&mut self.conn)
-                    .await
-                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                let idx_rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "PRAGMA index_list({quoted_table})"
+                )))
+                .fetch_all(&mut self.conn)
+                .await
+                .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                 for idxr in idx_rows {
                     let idx_name: String = idxr
                         .try_get("name")
@@ -234,10 +240,12 @@ impl SchemaInspector for SqliteExecutor {
                         .find(|row| row.kind == "index" && row.name == idx_name)
                         .and_then(|row| row.sql.as_deref());
                     let parsed_index = index_sql.map(parse_create_index_sql).unwrap_or_default();
-                    let info_rows = sqlx::query(&format!("PRAGMA index_xinfo({quoted_idx})"))
-                        .fetch_all(&mut self.conn)
-                        .await
-                        .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
+                    let info_rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+                        "PRAGMA index_xinfo({quoted_idx})"
+                    )))
+                    .fetch_all(&mut self.conn)
+                    .await
+                    .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
                     let mut keyed_columns = Vec::new();
                     for ir in info_rows {
                         let key: i64 = ir

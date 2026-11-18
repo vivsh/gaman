@@ -12,8 +12,9 @@ strip = "symbols"
 
 [package]
 name = "gaman"
-version = "0.3.38"
+version = "0.3.39"
 edition = "2024"
+rust-version = "1.94"
 default-run = "gaman"
 description = "Schema-first SQL migration CLI for PostgreSQL, SQLite, and MySQL with offline planning, Django-style prompts, drift verification, and repair"
 license = "MIT"
@@ -100,17 +101,19 @@ db = ["native", "dep:sqlx", "dep:tokio"]
 json-types = ["native", "gaman-core/json-types"]
 cli = ["fs", "db", "dep:argh", "dep:dotenvy", "gaman-core/command-args"]
 postgres = ["db", "sqlx/postgres"]
-sqlite = ["db", "sqlx/sqlite"]
-mysql = ["db", "sqlx/mysql"]
-mariadb = ["db", "sqlx/mysql"]
+sqlite = ["db", "sqlx/sqlite", "dep:libsqlite3-sys"]
+mysql = ["db", "sqlx/mysql-rsa"]
+mariadb = ["db", "sqlx/mysql-rsa"]
 time-types = ["native", "gaman-core/time-types"]
 uuid-types = ["native", "gaman-core/uuid-types"]
 
 [dependencies]
 argh = { version = "0.1.19", optional = true }
 dotenvy = { version = "0.15.7", optional = true }
-gaman-core = { version = "0.3.38", path = "gaman-core", optional = true, default-features = false }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-native-tls", "derive"], optional = true }
+gaman-core = { version = "0.3.39", path = "gaman-core", optional = true, default-features = false }
+sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "tls-native-tls", "derive"], optional = true }
+# SQLx also accepts SQLite bindings below the fix for RUSTSEC-2026-0459.
+libsqlite3-sys = { version = ">=0.39.1, <0.41", optional = true, default-features = false }
 tokio = { version = "1", features = ["rt", "macros", "fs", "io-util"], optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
 serde_yaml = { version = "0.9.34", optional = true }

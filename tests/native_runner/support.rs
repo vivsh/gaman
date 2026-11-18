@@ -119,7 +119,7 @@ async fn temporary_directory() -> tempfile::TempDir {
 
 /// Executes setup or deliberately induced drift only inside the isolated test database.
 pub(super) async fn sql(connection: &mut PgConnection, statement: &str) {
-    sqlx::raw_sql(statement)
+    sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
         .execute(connection)
         .await
         .expect("fixture SQL");
@@ -127,7 +127,7 @@ pub(super) async fn sql(connection: &mut PgConnection, statement: &str) {
 
 /// Asserts externally observed text values without accessing the runner's connection.
 pub(super) async fn rows(connection: &mut PgConnection, query: &str, expected: &[&str]) {
-    let actual = sqlx::query_scalar::<_, String>(query)
+    let actual = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(query))
         .fetch_all(connection)
         .await
         .expect("observe fixture data");

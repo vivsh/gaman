@@ -21,6 +21,9 @@ migrations:
         view:
           name: visible_users
           definition: "SELECT id FROM users"
+      - type: statement
+        up: "INSERT INTO users (id) VALUES (1)"
+        down: "DELETE FROM users WHERE id = 1"
   - id: 0002_replace_view
     dependencies: [0001_create_view]
     operations:
@@ -30,11 +33,14 @@ migrations:
           definition: "SELECT id FROM users"
         new:
           name: visible_users
-          definition: "SELECT id FROM users WHERE active"
+          definition: "SELECT 0 AS id WHERE false"
 
 dialects:
   postgres:
-    checks: [migrate, inspect]
+    checks: [migrate, inspect, data]
+    data:
+      - sql: "SELECT id::text FROM visible_users"
+        expect: []
     expect_schema:
       tables:
         users:
@@ -52,4 +58,4 @@ dialects:
       views:
         visible_users:
           name: visible_users
-          definition: "SELECT users.id\n   FROM users\n  WHERE users.active;"
+          definition: "SELECT 0 AS id\n  WHERE false;"

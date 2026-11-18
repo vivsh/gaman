@@ -1,5 +1,6 @@
 /target
-/.github
+/.github/*
+!/.github/workflows/
 /migrations
 /playground
 .env

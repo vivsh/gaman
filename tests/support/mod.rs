@@ -669,12 +669,12 @@ impl Environment for PostgresHarnessEnvironment {
                 .connect()
                 .await
                 .map_err(|e| EnvironmentError::Connect(e.to_string()))?;
-            sqlx::query(&format!("SET search_path TO \"{schema}\""))
-                .execute(&mut conn)
-                .await
-                .map_err(|e| {
-                    EnvironmentError::Connect(format!("failed to set search_path: {e}"))
-                })?;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "SET search_path TO \"{schema}\""
+            )))
+            .execute(&mut conn)
+            .await
+            .map_err(|e| EnvironmentError::Connect(format!("failed to set search_path: {e}")))?;
             Ok(Box::new(PostgresExecutor::new(conn)) as Box<dyn EnvironmentExecutor + Send>)
         })
     }
@@ -2047,7 +2047,7 @@ impl PgHarness {
         let sql = format!(
             "DROP SCHEMA IF EXISTS \"{schema}\" CASCADE; CREATE SCHEMA \"{schema}\"; SET search_path TO \"{schema}\";"
         );
-        sqlx::raw_sql(&sql)
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
             .execute(&mut self.conn)
             .await
             .map_err(|e| {
@@ -2059,7 +2059,7 @@ impl PgHarness {
     pub async fn cleanup(&mut self) -> Result<(), TestSupportError> {
         let schema = self.schema.clone();
         let sql = format!("DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
-        sqlx::raw_sql(&sql)
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
             .execute(&mut self.conn)
             .await
             .map_err(|e| {
@@ -2073,7 +2073,7 @@ impl PgHarness {
     }
 
     pub async fn batch_execute(&mut self, sql: &str) -> Result<(), TestSupportError> {
-        sqlx::raw_sql(sql)
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
             .execute(&mut self.conn)
             .await
             .map_err(|e| TestSupportError::message(format!("execute failed: {e}\n  SQL: {sql}")))?;
@@ -2081,7 +2081,7 @@ impl PgHarness {
     }
 
     pub async fn fetch_strings(&mut self, sql: &str) -> Result<Vec<String>, TestSupportError> {
-        let rows = sqlx::query_scalar::<_, String>(sql)
+        let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
             .fetch_all(&mut self.conn)
             .await
             .map_err(|e| TestSupportError::message(format!("query failed: {e}\n  SQL: {sql}")))?;
@@ -2119,16 +2119,19 @@ impl PgHarness {
 impl Executor for PgHarness {
     fn prepare<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async move {
-            sqlx::Executor::prepare(&mut self.conn, sql)
-                .await
-                .map(|_| ())
-                .map_err(|error| ExecutorError::Prepare(format!("{error}\n  SQL: {sql}")))
+            sqlx::Executor::prepare(
+                &mut self.conn,
+                sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql)),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| ExecutorError::Prepare(format!("{error}\n  SQL: {sql}")))
         })
     }
 
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async move {
-            sqlx::query(sql)
+            sqlx::query(sqlx::AssertSqlSafe(sql))
                 .execute(&mut self.conn)
                 .await
                 .map(|_| ())
@@ -2141,7 +2144,7 @@ impl Executor for PgHarness {
         sql: &'a str,
     ) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> {
         Box::pin(async move {
-            let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(sql)
+            let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .fetch_all(&mut self.conn)
                 .await
                 .map_err(|e| ExecutorError::Fetch(e.to_string()))?;
@@ -2254,9 +2257,12 @@ impl SqliteHarness {
 
     pub async fn batch_execute(&self, sql: &str) -> Result<(), TestSupportError> {
         self.with_connection(|mut conn| async move {
-            sqlx::raw_sql(sql).execute(&mut conn).await.map_err(|e| {
-                TestSupportError::message(format!("execute failed: {e}\n  SQL: {sql}"))
-            })?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+                .execute(&mut conn)
+                .await
+                .map_err(|e| {
+                    TestSupportError::message(format!("execute failed: {e}\n  SQL: {sql}"))
+                })?;
             Ok(())
         })
         .await
@@ -2264,7 +2270,7 @@ impl SqliteHarness {
 
     pub async fn fetch_strings(&self, sql: &str) -> Result<Vec<String>, TestSupportError> {
         self.with_connection(|mut conn| async move {
-            let rows = sqlx::query_scalar::<_, String>(sql)
+            let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
                 .fetch_all(&mut conn)
                 .await
                 .map_err(|e| {
@@ -2387,7 +2393,7 @@ impl MysqlFamilyHarness {
             .connect()
             .await
             .map_err(|error| TestSupportError::message(error.to_string()))?;
-        sqlx::query(&format!("CREATE DATABASE `{database}`"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE `{database}`")))
             .execute(&mut conn)
             .await
             .map_err(|error| {
@@ -2411,11 +2417,14 @@ impl MysqlFamilyHarness {
             .connect()
             .await
             .map_err(|error| TestSupportError::message(error.to_string()))?;
-        sqlx::query(&format!("DROP DATABASE IF EXISTS `{}`", self.database))
-            .execute(&mut conn)
-            .await
-            .map(|_| ())
-            .map_err(|error| TestSupportError::message(error.to_string()))
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS `{}`",
+            self.database
+        )))
+        .execute(&mut conn)
+        .await
+        .map(|_| ())
+        .map_err(|error| TestSupportError::message(error.to_string()))
     }
     pub async fn batch_execute(&self, sql: &str) -> Result<(), TestSupportError> {
         let options = self
@@ -2426,7 +2435,7 @@ impl MysqlFamilyHarness {
             .connect()
             .await
             .map_err(|error| TestSupportError::message(error.to_string()))?;
-        sqlx::raw_sql(sql)
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
             .execute(&mut conn)
             .await
             .map(|_| ())
@@ -2443,7 +2452,7 @@ impl MysqlFamilyHarness {
             .connect()
             .await
             .map_err(|error| TestSupportError::message(error.to_string()))?;
-        sqlx::query_scalar(sql)
+        sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .fetch_all(&mut conn)
             .await
             .map_err(|error| TestSupportError::message(error.to_string()))

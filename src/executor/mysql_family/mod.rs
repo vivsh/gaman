@@ -85,17 +85,21 @@ fn mysql_version(version: &str) -> Result<(u64, u64), ConnectError> {
 impl Executor for MysqlFamilyExecutor {
     fn prepare<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async move {
-            sqlx::Executor::prepare(&mut self.conn, sql)
-                .await
-                .map(|_| ())
-                .map_err(|error| {
-                    ExecutorError::PrepareDatabase(DatabaseFailure::message(error.to_string()))
-                })
+            sqlx::Executor::prepare(
+                &mut self.conn,
+                sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql)),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                ExecutorError::PrepareDatabase(DatabaseFailure::message(error.to_string()))
+            })
         })
     }
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, Result<(), ExecutorError>> {
         Box::pin(async move {
-            sqlx::Executor::execute(&mut self.conn, sql)
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+                .execute(&mut self.conn)
                 .await
                 .map(|_| ())
                 .map_err(|error| {
@@ -108,7 +112,7 @@ impl Executor for MysqlFamilyExecutor {
         sql: &'a str,
     ) -> BoxFuture<'a, Result<u64, ExecutorError>> {
         Box::pin(async move {
-            sqlx::query(sql)
+            sqlx::query(sqlx::AssertSqlSafe(sql))
                 .execute(&mut self.conn)
                 .await
                 .map(|result| result.rows_affected())
@@ -122,7 +126,7 @@ impl Executor for MysqlFamilyExecutor {
         sql: &'a str,
     ) -> BoxFuture<'a, Result<Vec<String>, ExecutorError>> {
         Box::pin(async move {
-            sqlx::query_scalar(sql)
+            sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .fetch_all(&mut self.conn)
                 .await
                 .map_err(|error| ExecutorError::Fetch(error.to_string()))

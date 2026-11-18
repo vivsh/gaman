@@ -1,0 +1,5 @@
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "Maintenance notice for the supported chrono API and SQLx integration. Revisit when chrono support changes." },
+    { id = "RUSTSEC-2024-0449", reason = "Maintenance notice for serde_yaml's parser. Revisit when the schema and migration YAML implementation changes." },
+]

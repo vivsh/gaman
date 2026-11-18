@@ -97,7 +97,8 @@ waiting for input.
 
 ## Quick Start
 
-Install the CLI and point it at a PostgreSQL project:
+Building Gaman from source requires Rust 1.94 or newer. Install the CLI and
+point it at a PostgreSQL project:
 
 ```bash
 cargo install --locked gaman
