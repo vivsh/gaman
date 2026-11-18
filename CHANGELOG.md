@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- PostgreSQL 18 inspection exports ordinary `NOT NULL` as column nullability
+  and retains constraints with unmodeled semantics as opaque metadata.
+
 ## [0.3.39] - 2026-11-19
 
 ### Changed

@@ -3,6 +3,7 @@
 mod failures;
 mod fields;
 mod forwarding;
+mod inspection;
 mod lifecycle;
 mod profiles;
 mod support;

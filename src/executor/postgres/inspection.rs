@@ -10,6 +10,9 @@ use gaman_core::states::{
 };
 use gaman_core::{Dialect, TRACKING_TABLE};
 
+mod constraints;
+use constraints::attach_opaque_constraints;
+
 /// Wraps a live Postgres connection and manages transaction boundaries explicitly.
 /// Call `begin()` before a migration and `commit()` or `rollback()` after.
 use super::PostgresExecutor;
@@ -460,40 +463,6 @@ async fn attach_check_constraints(
                 name: row.constraint_name,
                 expression: strip_check_wrapper(&row.definition).to_string(),
             });
-        }
-    }
-    Ok(())
-}
-
-/// Preserves named PostgreSQL table constraints outside Gaman's modeled subset.
-async fn attach_opaque_constraints(
-    conn: &mut PgConnection,
-    schemas: &[String],
-    tables: &mut BTreeMap<i64, Table>,
-) -> Result<(), ExecutorError> {
-    let rows = sqlx::query_as::<_, PgCheckRow>(
-        "SELECT rel.oid::int8 AS table_oid, con.conname AS constraint_name, \
-         pg_get_constraintdef(con.oid, true) AS definition \
-         FROM pg_constraint con \
-         JOIN pg_class rel ON rel.oid = con.conrelid \
-         JOIN pg_namespace ns ON ns.oid = rel.relnamespace \
-         WHERE con.contype NOT IN ('p', 'u', 'f', 'c') \
-         AND con.conrelid != 0 AND ns.nspname = ANY($1) \
-         AND rel.relname != $2 \
-         ORDER BY rel.oid, con.conname",
-    )
-    .bind(schemas)
-    .bind(TRACKING_TABLE)
-    .fetch_all(conn)
-    .await
-    .map_err(|error| ExecutorError::Fetch(error.to_string()))?;
-
-    for row in rows {
-        if let Some(table) = tables.get_mut(&row.table_oid) {
-            table.constraints.push(Constraint::from_trusted_raw(
-                row.constraint_name,
-                row.definition,
-            ));
         }
     }
     Ok(())
